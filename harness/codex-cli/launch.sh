@@ -26,6 +26,16 @@ else
 	fi
 fi
 
+# Codex copies to the native clipboard first and writes OSC 52 to its terminal
+# only when it sees an SSH (or tmux) session. The image's DISPLAY=:0 gives it a
+# native clipboard that works — the box's own X server, which nothing outside
+# the box reads — so without this a copy succeeds into that and never reaches
+# the user's terminal. A sandbox is a remote session in every sense Codex
+# means, and Codex tests only that the variable is set; the value is the
+# variable's documented shape ("client_ip client_port server_ip server_port")
+# with nothing real to put in it. A real SSH session's value is kept.
+export SSH_CONNECTION="${SSH_CONNECTION:-127.0.0.1 0 127.0.0.1 0}"
+
 # Codex has no supported setting for moving only its consolidated memory
 # workspace, and deliberately rejects a symlinked memory root. Keep CODEX_HOME
 # (auth, config, sessions, and SQLite coordination) sandbox-local and bind the
