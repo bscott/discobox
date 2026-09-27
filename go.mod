@@ -381,7 +381,7 @@ tool (
 	golang.org/x/tools/gopls
 )
 
-replace github.com/charmbracelet/x/ansi => github.com/discobox-ai/charm-x/ansi v0.11.9-0.20260813023456-57e8cef06953
+replace github.com/charmbracelet/x/ansi => github.com/discobox-ai/charm-x/ansi v0.11.9-0.20260926040046-9d904b1c7255
 
 // goproxy drops the bytes a client sends in the same write as an upgrade
 // request: net/http has already read them into the request parser's buffer, and
@@ -395,3 +395,5 @@ replace github.com/charmbracelet/x/ansi => github.com/discobox-ai/charm-x/ansi v
 // in websocket.go — is untouched by it. discobox-ai/discobox#25 tracks that, and
 // proxy's TestHTTPProxyUpgradeEarlyClientBytes is what says whether it is safe.
 replace github.com/elazarl/goproxy => github.com/discobox-ai/goproxy v0.0.0-20260912041536-a9c9419932d8
+
+replace github.com/charmbracelet/ultraviolet => github.com/discobox-ai/ultraviolet v0.0.0-20260926043624-eff2d8acf8a4

@@ -4,8 +4,6 @@ github.com/aymanbagabas/go-udiff v0.4.1 h1:OEIrQ8maEeDBXQDoGCbbTTXYJMYRCRO1fnodZ
 github.com/aymanbagabas/go-udiff v0.4.1/go.mod h1:0L9PGwj20lrtmEMeyw4WKJ/TMyDtvAoK9bf2u/mNo3w=
 github.com/charmbracelet/colorprofile v0.4.3 h1:QPa1IWkYI+AOB+fE+mg/5/4HRMZcaXex9t5KX76i20Q=
 github.com/charmbracelet/colorprofile v0.4.3/go.mod h1:/zT4BhpD5aGFpqQQqw7a+VtHCzu+zrQtt1zhMt9mR4Q=
-github.com/charmbracelet/ultraviolet v0.0.0-20260703014108-f5a850f9c2b7 h1:3FmWoGNWK4STvqg0O0Aeav2T7rodWJAPeF0QpH+8gFw=
-github.com/charmbracelet/ultraviolet v0.0.0-20260703014108-f5a850f9c2b7/go.mod h1:f/jRa757WUmaOZrbPspXymbg/GnbF+rwe4OLsG7aXYo=
 github.com/charmbracelet/x/exp/golden v0.0.0-20250806222409-83e3a29d542f h1:pk6gmGpCE7F3FcjaOEKYriCvpmIN4+6OS/RD0vm4uIA=
 github.com/charmbracelet/x/exp/golden v0.0.0-20250806222409-83e3a29d542f/go.mod h1:IfZAMTHB6XkZSeXUqriemErjAWCCzT0LwjKFYCZyw0I=
 github.com/charmbracelet/x/exp/ordered v0.1.0 h1:55/qLwjIh0gL0Vni+QAWk7T/qRVP6sBf+2agPBgnOFE=
@@ -20,10 +18,12 @@ github.com/clipperhouse/displaywidth v0.11.0 h1:lBc6kY44VFw+TDx4I8opi/EtL9m20WSE
 github.com/clipperhouse/displaywidth v0.11.0/go.mod h1:bkrFNkf81G8HyVqmKGxsPufD3JhNl3dSqnGhOoSD/o0=
 github.com/clipperhouse/uax29/v2 v2.7.0 h1:+gs4oBZ2gPfVrKPthwbMzWZDaAFPGYK72F0NJv2v7Vk=
 github.com/clipperhouse/uax29/v2 v2.7.0/go.mod h1:EFJ2TJMRUaplDxHKj1qAEhCtQPW2tJSwu5BF98AuoVM=
-github.com/discobox-ai/charm-x/ansi v0.11.9-0.20260813023456-57e8cef06953 h1:2QDmFSCtLohuzmqiaYuDU6R44S6UvCcftwo+Cf6Rhto=
-github.com/discobox-ai/charm-x/ansi v0.11.9-0.20260813023456-57e8cef06953/go.mod h1:DG/hpOnaI2QJ/KMMqLL2h0KVhluuJLazf8973P+Vy5w=
-github.com/discobox-ai/charm-x/vt v0.0.0-20260918234547-859a09c25845 h1:UajBzo3nkGw6YA/tSAuc+J/rGkGD6IMzVVRwgUxVSvM=
-github.com/discobox-ai/charm-x/vt v0.0.0-20260918234547-859a09c25845/go.mod h1:u1LOIABor9JqY54oZdktK3TCRrgzP6tzHrDYx1nd3wY=
+github.com/discobox-ai/charm-x/ansi v0.11.9-0.20260926040046-9d904b1c7255 h1:d0ZnwjYS8WTsF3N7t/0dgfjUvEJd18H3QNTICJjs/I0=
+github.com/discobox-ai/charm-x/ansi v0.11.9-0.20260926040046-9d904b1c7255/go.mod h1:DG/hpOnaI2QJ/KMMqLL2h0KVhluuJLazf8973P+Vy5w=
+github.com/discobox-ai/charm-x/vt v0.0.0-20260926040046-9d904b1c7255 h1:RAnleGvxVxZ5sw3M4eAY8+iQ+rgwK8+w99/0BwcL6b8=
+github.com/discobox-ai/charm-x/vt v0.0.0-20260926040046-9d904b1c7255/go.mod h1:u1LOIABor9JqY54oZdktK3TCRrgzP6tzHrDYx1nd3wY=
+github.com/discobox-ai/ultraviolet v0.0.0-20260926043624-eff2d8acf8a4 h1:YtkB9JJlFU0mtgxCkK98Ck98u9BkD/cX9rcCzber6gk=
+github.com/discobox-ai/ultraviolet v0.0.0-20260926043624-eff2d8acf8a4/go.mod h1:f/jRa757WUmaOZrbPspXymbg/GnbF+rwe4OLsG7aXYo=
 github.com/discobox-ai/x v0.0.0-20260917050848-32cef8aa6b78 h1:TTmY77R6ujhCecDQY+DjdJ3PqZxZwB8bOOTs9iUVuMg=
 github.com/discobox-ai/x v0.0.0-20260917050848-32cef8aa6b78/go.mod h1:ozoGHzU8woLHyDsmXikg5H1raf07miXC7vg51QtkQew=
 github.com/lucasb-eyer/go-colorful v1.4.1 h1:1EO+WB73+EH8EVbzlrG3KLAfEypQWVHIBqlTf+2hNss=
