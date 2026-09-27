@@ -334,6 +334,17 @@ half survived; truncation keeps escape sequences, so the link opened around it
 survives the cut. Detection is scheme-led and stops at the row: a URL wrapped
 across the right edge is not one.
 
+**Every link is named by an OSC 8 id of the pane's own** (`idLink`). Every row
+is rendered on its own and opens its links afresh, and to a terminal an id-less
+link is the cells one OSC 8 opened — so a URL wrapped across rows is a link per
+row, and hover lights them one at a time. An id-less link is named for its
+target, which makes the rows of a wrap one link again. Not for where it sits:
+the grid has forgotten which rows were a wrap, and a position changes as the
+view scrolls and as a full scrollback shifts under it, each change a cell the
+host redraws for nothing. The cost is that separate links to one place hover as
+one. An id the application chose is its own grouping and is kept, under the
+pane's name, since the same program in two panes chooses the same ids.
+
 **Selection is a cell-space overlay, mouse only** (ADR 0036). The gesture
 machine and extraction are not here at all: they live in
 [`discobox-ai/x/selection`](https://github.com/discobox-ai/x/tree/main/selection),

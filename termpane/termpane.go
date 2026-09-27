@@ -31,6 +31,7 @@ package termpane
 import (
 	"image/color"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -110,6 +111,9 @@ type Model struct {
 	seized  bool
 	selShot string
 	selAlt  bool
+
+	// linkPrefix begins the id of every link this pane names; see idLink.
+	linkPrefix string
 
 	// Written by the emulator's callbacks, which run on whichever goroutine is
 	// feeding it, and read when a frame is drawn.
@@ -303,7 +307,10 @@ func bindPrefix(key string, binding prefixBinding) Option {
 // New builds a pane. It is not drawing anything until [Model.Attach] is given a
 // stream, and it draws nothing at all until it has been sized.
 func New(opts ...Option) *Model {
-	m := &Model{cursorVisible: true}
+	m := &Model{
+		cursorVisible: true,
+		linkPrefix:    "termpane-" + strconv.FormatUint(linkIDSeq.Add(1), 10),
+	}
 	for _, opt := range opts {
 		opt(&m.opts)
 	}
@@ -929,7 +936,7 @@ func (m *Model) View() []string {
 		// URL the truncation cuts in half would otherwise be read as whatever
 		// half survived. Truncation keeps the sequences and drops only cells,
 		// so the link opened around it survives the cut.
-		out[i] = fitCells(rewriteLinks(row, m.opts.linkRewrite), m.cols)
+		out[i] = fitCells(m.idLink(rewriteLinks(row, m.opts.linkRewrite)), m.cols)
 	}
 	return out
 }

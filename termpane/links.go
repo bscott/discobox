@@ -1,9 +1,12 @@
 package termpane
 
 import (
+	"hash/fnv"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -232,4 +235,77 @@ func trimURL(url string) string {
 		url = url[:len(url)-1]
 	}
 	return url
+}
+
+// linkIDSeq numbers panes, so the ids one pane names its links by are never
+// another's. Two panes can show the same link, and a shared id would light both
+// up under one hover.
+var linkIDSeq atomic.Uint64
+
+// idLink names every link in a rendered row by an OSC 8 id that is this pane's
+// own.
+//
+// The id is how a terminal knows which cells are one link. Without one, a link
+// is the cells a single OSC 8 opened, which in a terminal of its own is the
+// whole of a wrapped URL. Drawn in a pane it is not: every row is rendered on
+// its own and opens the link afresh, so each row becomes a link of its own and
+// hover lights them up one row at a time.
+//
+// An id-less link is named for its target, so every row of a wrapped URL is
+// one link again. That is all a name can be taken from: the grid has forgotten
+// which rows were a wrap, and a name taken from where a link sits changes as
+// the view scrolls, as the scrollback fills and shifts under it, and when the
+// row the link began on is above the view — each change a cell the host redraws
+// for nothing. The cost is that separate links to the same place are one link
+// to hover.
+//
+// An id the application chose is its own grouping and is kept, under the
+// pane's name: the same program in two panes chooses the same ids.
+func (m *Model) idLink(row string) string {
+	if !strings.Contains(row, oscHyperlink) {
+		return row
+	}
+	tokens, _, _ := scanRow(row)
+	changed := false
+	for i, token := range tokens {
+		uri, params, term, ok := parseHyperlink(token.s)
+		if !ok || uri == "" {
+			continue
+		}
+		tokens[i].s = oscHyperlink + m.linkParams(uri, params) + ";" + uri + term
+		changed = true
+	}
+	if !changed {
+		return row
+	}
+	var out strings.Builder
+	out.Grow(len(row) + 32)
+	for _, token := range tokens {
+		out.WriteString(token.s)
+	}
+	return out.String()
+}
+
+// linkParams is an OSC 8 link's params — colon-separated key=value pairs —
+// with its id named in this pane: the application's own under an "a" for
+// application, or else one for the target under a "u" for URI, so the two can
+// never be each other's.
+func (m *Model) linkParams(uri, params string) string {
+	var kept []string
+	id := ""
+	for param := range strings.SplitSeq(params, ":") {
+		if v, found := strings.CutPrefix(param, "id="); found {
+			id = m.linkPrefix + "-a" + v
+			continue
+		}
+		if param != "" {
+			kept = append(kept, param)
+		}
+	}
+	if id == "" {
+		h := fnv.New64a()
+		_, _ = h.Write([]byte(uri))
+		id = m.linkPrefix + "-u" + strconv.FormatUint(h.Sum64(), 36)
+	}
+	return strings.Join(append(kept, "id="+id), ":")
 }
