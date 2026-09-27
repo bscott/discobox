@@ -1,6 +1,7 @@
 package judge_test
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -158,8 +159,35 @@ func TestAJobAdmitsOnlyARouteDerivedFromItsOwnEvidence(t *testing.T) {
 	if _, err := request(1, &judge.Body{MediaType: "application/json", Length: 10}).Admits(standing); err != nil {
 		t.Fatalf("a described, unshown body refused the route: %v", err)
 	}
-	if _, err := request(2, &judge.Body{Length: 10, Form: judge.FormJSON, Content: "{}"}).Admits(standing); err == nil {
+	body := "{}"
+	if _, err := request(2, &judge.Body{Length: 10, Content: &body}).Admits(standing); err == nil {
 		t.Fatal("an allow that needed the body was let stand")
+	}
+	// A JSON object's keys are its shape, not its operation: the calls a
+	// standing allow is for — one review comment each — carry bodies too.
+	described := &judge.Body{Length: 10, Parser: &judge.Recognition{Name: judge.ParserJSON, Version: 1},
+		Metadata: json.RawMessage(`{"keys":["body"]}`)}
+	if _, err := request(1, described).Admits(standing); err != nil {
+		t.Fatalf("a body described only by its shape refused the route: %v", err)
+	}
+	// A push is its ref updates whether or not they were read, so no push
+	// stands — the one whose metadata never arrived least of all.
+	push := request(1, &judge.Body{Length: 10})
+	push.Request.Protocol = &judge.Recognition{Name: judge.ProtocolGitReceivePack, Version: 1}
+	if _, err := push.Admits(standing); err == nil {
+		t.Fatal("an allow for a recognized protocol was let stand")
+	}
+	// Sent with no body, a fork is still an endpoint that reads its body:
+	// the next one, naming another organization, would otherwise stand.
+	fork := request(1, nil)
+	fork.Request.Endpoint = &judge.Recognition{Name: judge.EndpointGitHubFork, Version: 1}
+	if _, err := fork.Admits(standing); err == nil {
+		t.Fatal("an allow for an endpoint that reads its body was let stand")
+	}
+	unreadable := &judge.Body{Length: 10, Parser: &judge.Recognition{Name: judge.ParserJSON, Version: 1},
+		ParseError: "the body is encoded as \"br\", which this proxy does not decode"}
+	if _, err := request(1, unreadable).Admits(standing); err == nil {
+		t.Fatal("an allow for a body nobody could read was let stand")
 	}
 	if _, err := request(1, nil).Admits(judge.Standing{Route: "GET /repos/org/other/pulls", Seconds: 300}); err == nil {
 		t.Fatal("a route that does not cover its own request was let stand")

@@ -5941,6 +5941,9 @@ type JudgeJob struct {
 	Command []string `json:"command"`
 	// The credential in the words a person reads, never its value.
 	Credential OptString `json:"credential"`
+	// What Discobox knows about what the request was recognized as, set by the control plane from the
+	// judge package and never by a pool. It explains; it never authorizes.
+	Guidance []string `json:"guidance"`
 	// The host the use was approved for.
 	Host string `json:"host"`
 	// What is being judged: a command about to run, or a request the proxy observed.
@@ -5961,6 +5964,11 @@ func (s *JudgeJob) GetCommand() []string {
 // GetCredential returns the value of Credential.
 func (s *JudgeJob) GetCredential() OptString {
 	return s.Credential
+}
+
+// GetGuidance returns the value of Guidance.
+func (s *JudgeJob) GetGuidance() []string {
+	return s.Guidance
 }
 
 // GetHost returns the value of Host.
@@ -5996,6 +6004,11 @@ func (s *JudgeJob) SetCommand(val []string) {
 // SetCredential sets the value of Credential.
 func (s *JudgeJob) SetCredential(val OptString) {
 	s.Credential = val
+}
+
+// SetGuidance sets the value of Guidance.
+func (s *JudgeJob) SetGuidance(val []string) {
+	s.Guidance = val
 }
 
 // SetHost sets the value of Host.
@@ -6065,16 +6078,17 @@ func (s *JudgeJobKind) UnmarshalText(data []byte) error {
 	}
 }
 
-// The judge asking to be shown a request's body, in one form, with a budget it may name and Discobox
-// caps.
+// The judge asking to be shown a request's body, with a budget it may name and Discobox caps. It
+// names no form; the body is always shown in one shape (ADR 26-09-26-240).
 // Ref: #/components/schemas/JudgeNeed
 type JudgeNeed struct {
-	Body  JudgeNeedBody `json:"body"`
-	Bytes OptInt64      `json:"bytes"`
+	// Always true in an ask; it is what the ask is for.
+	Body  bool     `json:"body"`
+	Bytes OptInt64 `json:"bytes"`
 }
 
 // GetBody returns the value of Body.
-func (s *JudgeNeed) GetBody() JudgeNeedBody {
+func (s *JudgeNeed) GetBody() bool {
 	return s.Body
 }
 
@@ -6084,7 +6098,7 @@ func (s *JudgeNeed) GetBytes() OptInt64 {
 }
 
 // SetBody sets the value of Body.
-func (s *JudgeNeed) SetBody(val JudgeNeedBody) {
+func (s *JudgeNeed) SetBody(val bool) {
 	s.Body = val
 }
 
@@ -6093,72 +6107,58 @@ func (s *JudgeNeed) SetBytes(val OptInt64) {
 	s.Bytes = val
 }
 
-type JudgeNeedBody string
-
-const (
-	JudgeNeedBodyText JudgeNeedBody = "text"
-	JudgeNeedBodyJSON JudgeNeedBody = "json"
-)
-
-// AllValues returns all JudgeNeedBody values.
-func (JudgeNeedBody) AllValues() []JudgeNeedBody {
-	return []JudgeNeedBody{
-		JudgeNeedBodyText,
-		JudgeNeedBodyJSON,
-	}
+// What trusted code recognized a request, or its body, as, and the version of that code (ADR
+// 26-09-26-240).
+// Ref: #/components/schemas/JudgeRecognition
+type JudgeRecognition struct {
+	Name    string `json:"name"`
+	Version int64  `json:"version"`
 }
 
-// MarshalText implements encoding.TextMarshaler.
-func (s JudgeNeedBody) MarshalText() ([]byte, error) {
-	switch s {
-	case JudgeNeedBodyText:
-		return []byte(s), nil
-	case JudgeNeedBodyJSON:
-		return []byte(s), nil
-	default:
-		return nil, errors.Errorf("invalid value: %q", s)
-	}
+// GetName returns the value of Name.
+func (s *JudgeRecognition) GetName() string {
+	return s.Name
 }
 
-// UnmarshalText implements encoding.TextUnmarshaler.
-func (s *JudgeNeedBody) UnmarshalText(data []byte) error {
-	switch JudgeNeedBody(data) {
-	case JudgeNeedBodyText:
-		*s = JudgeNeedBodyText
-		return nil
-	case JudgeNeedBodyJSON:
-		*s = JudgeNeedBodyJSON
-		return nil
-	default:
-		return errors.Errorf("invalid value: %q", data)
-	}
+// GetVersion returns the value of Version.
+func (s *JudgeRecognition) GetVersion() int64 {
+	return s.Version
 }
 
-// What the judge is told about a request's body. The first ask describes it and does not carry it;
-// the judge asks to be shown it when the operation lives in there.
+// SetName sets the value of Name.
+func (s *JudgeRecognition) SetName(val string) {
+	s.Name = val
+}
+
+// SetVersion sets the value of Version.
+func (s *JudgeRecognition) SetVersion(val int64) {
+	s.Version = val
+}
+
+// What the judge is told about a request's body, always in this one shape (ADR 26-09-26-240). The
+// first ask describes it, with what a parser found in it when one recognized it; the judge asks to
+// be shown the content when the operation lives in there.
 // Ref: #/components/schemas/JudgeRequestBody
 type JudgeRequestBody struct {
-	// The body, in form, redacted. Present only once asked for, and only as much of it as the budget
-	// allowed.
+	// The body, redacted and rendered the way its parser renders it. Absent until the judge asks to be
+	// shown the body; then as much of it as the budget allowed, which may be none of it.
 	Content OptString `json:"content"`
-	// How content is written. Empty until the judge has asked to be shown the body.
-	Form OptJudgeRequestBodyForm `json:"form"`
 	// How many bytes the body has, as far as that is known.
 	Length    OptInt64  `json:"length"`
 	MediaType OptString `json:"mediaType"`
+	// What the parser found worth knowing, redacted, from the first ask on.
+	Metadata OptJudgeRequestBodyMetadata `json:"metadata"`
 	// Why content is not the whole body, in a sentence for the judge. An answer to having been asked,
 	// never part of the first description.
 	Missing OptString `json:"missing"`
+	// Why the parser named could not read a body that claims to be what it reads.
+	ParseError OptString           `json:"parseError"`
+	Parser     OptJudgeRecognition `json:"parser"`
 }
 
 // GetContent returns the value of Content.
 func (s *JudgeRequestBody) GetContent() OptString {
 	return s.Content
-}
-
-// GetForm returns the value of Form.
-func (s *JudgeRequestBody) GetForm() OptJudgeRequestBodyForm {
-	return s.Form
 }
 
 // GetLength returns the value of Length.
@@ -6171,19 +6171,29 @@ func (s *JudgeRequestBody) GetMediaType() OptString {
 	return s.MediaType
 }
 
+// GetMetadata returns the value of Metadata.
+func (s *JudgeRequestBody) GetMetadata() OptJudgeRequestBodyMetadata {
+	return s.Metadata
+}
+
 // GetMissing returns the value of Missing.
 func (s *JudgeRequestBody) GetMissing() OptString {
 	return s.Missing
 }
 
+// GetParseError returns the value of ParseError.
+func (s *JudgeRequestBody) GetParseError() OptString {
+	return s.ParseError
+}
+
+// GetParser returns the value of Parser.
+func (s *JudgeRequestBody) GetParser() OptJudgeRecognition {
+	return s.Parser
+}
+
 // SetContent sets the value of Content.
 func (s *JudgeRequestBody) SetContent(val OptString) {
 	s.Content = val
-}
-
-// SetForm sets the value of Form.
-func (s *JudgeRequestBody) SetForm(val OptJudgeRequestBodyForm) {
-	s.Form = val
 }
 
 // SetLength sets the value of Length.
@@ -6196,61 +6206,48 @@ func (s *JudgeRequestBody) SetMediaType(val OptString) {
 	s.MediaType = val
 }
 
+// SetMetadata sets the value of Metadata.
+func (s *JudgeRequestBody) SetMetadata(val OptJudgeRequestBodyMetadata) {
+	s.Metadata = val
+}
+
 // SetMissing sets the value of Missing.
 func (s *JudgeRequestBody) SetMissing(val OptString) {
 	s.Missing = val
 }
 
-// How content is written. Empty until the judge has asked to be shown the body.
-type JudgeRequestBodyForm string
-
-const (
-	JudgeRequestBodyFormText JudgeRequestBodyForm = "text"
-	JudgeRequestBodyFormJSON JudgeRequestBodyForm = "json"
-)
-
-// AllValues returns all JudgeRequestBodyForm values.
-func (JudgeRequestBodyForm) AllValues() []JudgeRequestBodyForm {
-	return []JudgeRequestBodyForm{
-		JudgeRequestBodyFormText,
-		JudgeRequestBodyFormJSON,
-	}
+// SetParseError sets the value of ParseError.
+func (s *JudgeRequestBody) SetParseError(val OptString) {
+	s.ParseError = val
 }
 
-// MarshalText implements encoding.TextMarshaler.
-func (s JudgeRequestBodyForm) MarshalText() ([]byte, error) {
-	switch s {
-	case JudgeRequestBodyFormText:
-		return []byte(s), nil
-	case JudgeRequestBodyFormJSON:
-		return []byte(s), nil
-	default:
-		return nil, errors.Errorf("invalid value: %q", s)
-	}
+// SetParser sets the value of Parser.
+func (s *JudgeRequestBody) SetParser(val OptJudgeRecognition) {
+	s.Parser = val
 }
 
-// UnmarshalText implements encoding.TextUnmarshaler.
-func (s *JudgeRequestBodyForm) UnmarshalText(data []byte) error {
-	switch JudgeRequestBodyForm(data) {
-	case JudgeRequestBodyFormText:
-		*s = JudgeRequestBodyFormText
-		return nil
-	case JudgeRequestBodyFormJSON:
-		*s = JudgeRequestBodyFormJSON
-		return nil
-	default:
-		return errors.Errorf("invalid value: %q", data)
+// What the parser found worth knowing, redacted, from the first ask on.
+type JudgeRequestBodyMetadata map[string]jx.Raw
+
+func (s *JudgeRequestBodyMetadata) init() JudgeRequestBodyMetadata {
+	m := *s
+	if m == nil {
+		m = map[string]jx.Raw{}
+		*s = m
 	}
+	return m
 }
 
 // A request as the proxy saw it, before any credential was substituted into it and with every
 // credential-bearing value redacted.
 // Ref: #/components/schemas/JudgeRequestEvidence
 type JudgeRequestEvidence struct {
-	Body OptJudgeRequestBody `json:"body"`
+	Body     OptJudgeRequestBody `json:"body"`
+	Endpoint OptJudgeRecognition `json:"endpoint"`
 	// The headers worth weighing, redacted.
-	Headers OptJudgeRequestEvidenceHeaders `json:"headers"`
-	Method  string                         `json:"method"`
+	Headers  OptJudgeRequestEvidenceHeaders `json:"headers"`
+	Method   string                         `json:"method"`
+	Protocol OptJudgeRecognition            `json:"protocol"`
 	// The destination authority and port, path, and query.
 	URL string `json:"url"`
 }
@@ -6258,6 +6255,11 @@ type JudgeRequestEvidence struct {
 // GetBody returns the value of Body.
 func (s *JudgeRequestEvidence) GetBody() OptJudgeRequestBody {
 	return s.Body
+}
+
+// GetEndpoint returns the value of Endpoint.
+func (s *JudgeRequestEvidence) GetEndpoint() OptJudgeRecognition {
+	return s.Endpoint
 }
 
 // GetHeaders returns the value of Headers.
@@ -6270,6 +6272,11 @@ func (s *JudgeRequestEvidence) GetMethod() string {
 	return s.Method
 }
 
+// GetProtocol returns the value of Protocol.
+func (s *JudgeRequestEvidence) GetProtocol() OptJudgeRecognition {
+	return s.Protocol
+}
+
 // GetURL returns the value of URL.
 func (s *JudgeRequestEvidence) GetURL() string {
 	return s.URL
@@ -6280,6 +6287,11 @@ func (s *JudgeRequestEvidence) SetBody(val OptJudgeRequestBody) {
 	s.Body = val
 }
 
+// SetEndpoint sets the value of Endpoint.
+func (s *JudgeRequestEvidence) SetEndpoint(val OptJudgeRecognition) {
+	s.Endpoint = val
+}
+
 // SetHeaders sets the value of Headers.
 func (s *JudgeRequestEvidence) SetHeaders(val OptJudgeRequestEvidenceHeaders) {
 	s.Headers = val
@@ -6288,6 +6300,11 @@ func (s *JudgeRequestEvidence) SetHeaders(val OptJudgeRequestEvidenceHeaders) {
 // SetMethod sets the value of Method.
 func (s *JudgeRequestEvidence) SetMethod(val string) {
 	s.Method = val
+}
+
+// SetProtocol sets the value of Protocol.
+func (s *JudgeRequestEvidence) SetProtocol(val OptJudgeRecognition) {
+	s.Protocol = val
 }
 
 // SetURL sets the value of URL.
@@ -8833,6 +8850,52 @@ func (o OptJudgeNeed) Or(d JudgeNeed) JudgeNeed {
 	return d
 }
 
+// NewOptJudgeRecognition returns new OptJudgeRecognition with value set to v.
+func NewOptJudgeRecognition(v JudgeRecognition) OptJudgeRecognition {
+	return OptJudgeRecognition{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptJudgeRecognition is optional JudgeRecognition.
+type OptJudgeRecognition struct {
+	Value JudgeRecognition
+	Set   bool
+}
+
+// IsSet returns true if OptJudgeRecognition was set.
+func (o OptJudgeRecognition) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptJudgeRecognition) Reset() {
+	var v JudgeRecognition
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptJudgeRecognition) SetTo(v JudgeRecognition) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptJudgeRecognition) Get() (v JudgeRecognition, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptJudgeRecognition) Or(d JudgeRecognition) JudgeRecognition {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptJudgeRequestBody returns new OptJudgeRequestBody with value set to v.
 func NewOptJudgeRequestBody(v JudgeRequestBody) OptJudgeRequestBody {
 	return OptJudgeRequestBody{
@@ -8879,38 +8942,38 @@ func (o OptJudgeRequestBody) Or(d JudgeRequestBody) JudgeRequestBody {
 	return d
 }
 
-// NewOptJudgeRequestBodyForm returns new OptJudgeRequestBodyForm with value set to v.
-func NewOptJudgeRequestBodyForm(v JudgeRequestBodyForm) OptJudgeRequestBodyForm {
-	return OptJudgeRequestBodyForm{
+// NewOptJudgeRequestBodyMetadata returns new OptJudgeRequestBodyMetadata with value set to v.
+func NewOptJudgeRequestBodyMetadata(v JudgeRequestBodyMetadata) OptJudgeRequestBodyMetadata {
+	return OptJudgeRequestBodyMetadata{
 		Value: v,
 		Set:   true,
 	}
 }
 
-// OptJudgeRequestBodyForm is optional JudgeRequestBodyForm.
-type OptJudgeRequestBodyForm struct {
-	Value JudgeRequestBodyForm
+// OptJudgeRequestBodyMetadata is optional JudgeRequestBodyMetadata.
+type OptJudgeRequestBodyMetadata struct {
+	Value JudgeRequestBodyMetadata
 	Set   bool
 }
 
-// IsSet returns true if OptJudgeRequestBodyForm was set.
-func (o OptJudgeRequestBodyForm) IsSet() bool { return o.Set }
+// IsSet returns true if OptJudgeRequestBodyMetadata was set.
+func (o OptJudgeRequestBodyMetadata) IsSet() bool { return o.Set }
 
 // Reset unsets value.
-func (o *OptJudgeRequestBodyForm) Reset() {
-	var v JudgeRequestBodyForm
+func (o *OptJudgeRequestBodyMetadata) Reset() {
+	var v JudgeRequestBodyMetadata
 	o.Value = v
 	o.Set = false
 }
 
 // SetTo sets value to v.
-func (o *OptJudgeRequestBodyForm) SetTo(v JudgeRequestBodyForm) {
+func (o *OptJudgeRequestBodyMetadata) SetTo(v JudgeRequestBodyMetadata) {
 	o.Set = true
 	o.Value = v
 }
 
 // Get returns value and boolean that denotes whether value was set.
-func (o OptJudgeRequestBodyForm) Get() (v JudgeRequestBodyForm, ok bool) {
+func (o OptJudgeRequestBodyMetadata) Get() (v JudgeRequestBodyMetadata, ok bool) {
 	if !o.Set {
 		return v, false
 	}
@@ -8918,7 +8981,7 @@ func (o OptJudgeRequestBodyForm) Get() (v JudgeRequestBodyForm, ok bool) {
 }
 
 // Or returns value if set, or given parameter if does not.
-func (o OptJudgeRequestBodyForm) Or(d JudgeRequestBodyForm) JudgeRequestBodyForm {
+func (o OptJudgeRequestBodyMetadata) Or(d JudgeRequestBodyMetadata) JudgeRequestBodyMetadata {
 	if v, ok := o.Get(); ok {
 		return v
 	}

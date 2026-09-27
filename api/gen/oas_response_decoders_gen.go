@@ -5300,15 +5300,6 @@ func decodeJudgeForPoolResponse(resp *http.Response) (res JudgeForPoolRes, _ err
 				}
 				return res, err
 			}
-			// Validate response.
-			if err := func() error {
-				if err := response.Validate(); err != nil {
-					return err
-				}
-				return nil
-			}(); err != nil {
-				return res, errors.Wrap(err, "validate")
-			}
 			return &response, nil
 		default:
 			return res, validate.InvalidContentType(ct)
@@ -5400,15 +5391,6 @@ func decodeJudgeSandboxResponse(resp *http.Response) (res JudgeSandboxRes, _ err
 					Err:         err,
 				}
 				return res, err
-			}
-			// Validate response.
-			if err := func() error {
-				if err := response.Validate(); err != nil {
-					return err
-				}
-				return nil
-			}(); err != nil {
-				return res, errors.Wrap(err, "validate")
 			}
 			return &response, nil
 		default:

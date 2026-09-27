@@ -11,7 +11,9 @@ import (
 	"maps"
 	"mime"
 	"mime/multipart"
+	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -20,26 +22,193 @@ import (
 	"github.com/discobox-ai/discobox/proxy"
 )
 
-// Showing the judge a body (ADR 26-09-22-838 §6).
+// Showing the judge a body, always in one shape (ADR 26-09-26-240 §2).
 //
-// The first ask describes the body. When the judge answers that it needs to
-// see it, the next ask carries it: in the form asked for, redacted, cut to the
-// budget, and with a sentence saying what is not there and why. Nothing here
-// changes what is sent — the proxy hands back every byte this read, in front
-// of the rest.
+// The first ask describes the body: its media type and length and, when a
+// parser recognizes it, what that parser found worth knowing — the refs a push
+// changes, the fields a form sends — which is small and is what the operation
+// is. When the judge answers that it needs the body itself, the next ask shows
+// it: redacted, rendered the way its parser renders it, cut to the budget, and
+// with a sentence saying what is not there and why. The judge never picks how
+// a body is written; the parser that read it knows. Nothing here changes what
+// is sent — the proxy hands back every byte this read, in front of the rest.
 
 // bodyArrivalWait bounds how long a round waits for a body the sandbox is
 // still sending. The request is being held for a verdict, and a body that has
 // not arrived by now is described as not having arrived rather than waited on.
 const bodyArrivalWait = 10 * time.Second
 
+// bodyParser reads one kind of body (ADR 26-09-26-240 §3). Parsers are chosen
+// by media type and refined by the protocol, and each says what it found in
+// the same terms, so a new kind of body is one more parser.
+type bodyParser struct {
+	judge.Recognition
+	// describe is what the parser found worth knowing, for the first ask:
+	// metadata, or why a body claiming to be what this reads is not. Nil
+	// for a parser with nothing to say ahead of being asked, which spares
+	// the first ask reading a body it would not use.
+	describe func(in parsedBody) (metadata map[string]any, parseError string)
+	// render is the body as the judge is shown it when it asks: redacted,
+	// held to budget, and what of it is missing and why.
+	render func(in parsedBody, budget int) (content, missing string)
+}
+
+// parsedBody is a body as a parser reads it: decoded, and with what it needs
+// to know to redact it.
+type parsedBody struct {
+	decoded []byte
+	// whole says decoded is all of the body.
+	whole bool
+	// length is the body's length as declared or measured, which is more
+	// than decoded holds when the capture stopped short, and -1 when nobody
+	// knows it: a chunked body the capture did not reach the end of.
+	length    int64
+	mediaType string
+	sentinels []string
+	endpoint  *endpoint
+}
+
+// redact takes this request's sentinels out of text a parser shows.
+func (in parsedBody) redact(text string) string { return redactSentinels(text, in.sentinels) }
+
+// The parsers a media type chooses, when no protocol says otherwise.
+var (
+	textParser = &bodyParser{
+		Recognition: judge.Recognition{Name: judge.ParserText, Version: 1},
+		render: func(in parsedBody, budget int) (string, string) {
+			return textForm(in.decoded, in.whole, in.mediaType, budget, in.sentinels)
+		},
+	}
+	jsonParser = &bodyParser{
+		Recognition: judge.Recognition{Name: judge.ParserJSON, Version: 1},
+		describe:    describeJSON,
+		render: func(in parsedBody, budget int) (string, string) {
+			// Written back compact when the whole of it is one JSON value;
+			// otherwise as sent, which still redacts as far as it reads as
+			// JSON and says where it stopped.
+			if in.whole {
+				if content, missing := jsonForm(in.decoded, true, budget, in.sentinels); content != "" || missing == "" {
+					return content, missing
+				}
+			}
+			return textForm(in.decoded, in.whole, in.mediaType, budget, in.sentinels)
+		},
+	}
+	formParser = &bodyParser{
+		Recognition: judge.Recognition{Name: judge.ParserForm, Version: 1},
+		describe:    describeForm,
+		render: func(in parsedBody, budget int) (string, string) {
+			return textForm(in.decoded, in.whole, in.mediaType, budget, in.sentinels)
+		},
+	}
+	multipartParser = &bodyParser{
+		Recognition: judge.Recognition{Name: judge.ParserMultipart, Version: 1},
+		describe:    describeMultipart,
+		render: func(in parsedBody, budget int) (string, string) {
+			return textForm(in.decoded, in.whole, in.mediaType, budget, in.sentinels)
+		},
+	}
+)
+
+// parserForMediaType is the parser a declared content type calls for. What
+// is not one of the types a parser knows is text, which is how it was always
+// shown, so nothing is shown worse for want of a parser.
+func parserForMediaType(contentType string) *bodyParser {
+	media, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		media = strings.ToLower(strings.TrimSpace(contentType))
+	}
+	switch {
+	case strings.HasPrefix(media, "multipart/"):
+		return multipartParser
+	case media == "application/x-www-form-urlencoded":
+		return formParser
+	case media == "application/json" || strings.HasSuffix(media, "+json"):
+		return jsonParser
+	default:
+		return textParser
+	}
+}
+
+// describeBody is the body as the first ask describes it (ADR 26-09-26-240
+// §2): what the request declared and, when a parser recognizes it, what that
+// parser found in it — or why it could not read it, which is said rather than
+// left out (§1): a push the judge is told nothing about reads as a request
+// with no body at all.
+//
+// A body is read here only for a parser with something to say. One the
+// request did not measure is described by what was read of it: its length is
+// then as much as the proxy read, and when that was not all of it the
+// metadata says so ("lengthUnknown") whatever the parser found.
+func describeBody(ctx context.Context, req proxy.SecretAuthorizeRequest, recognized recognition) *judge.Body {
+	mediaType := strings.TrimSpace(req.Header.Get("Content-Type"))
+	var body *judge.Body
+	declared := int64(-1)
+	if length, err := strconv.ParseInt(strings.TrimSpace(req.Header.Get("Content-Length")), 10, 64); err == nil && length > 0 {
+		body, declared = &judge.Body{MediaType: mediaType, Length: length}, length
+	}
+	parser := recognized.parser(req)
+	if parser.describe == nil || req.Body == nil {
+		return body
+	}
+	recognizedBy := parser.Recognition
+	unreadable := func(why string) *judge.Body {
+		if body == nil {
+			body = &judge.Body{MediaType: mediaType}
+		}
+		body.Parser = &recognizedBy
+		body.ParseError = redactSentinels(why, req.Sentinels)
+		return body
+	}
+	wait, cancel := context.WithTimeout(ctx, bodyArrivalWait)
+	defer cancel()
+	raw, complete, err := req.Body.Capture(wait)
+	if err != nil {
+		if ctx.Err() == nil && wait.Err() != nil {
+			return unreadable(fmt.Sprintf("the body had not arrived after %s", bodyArrivalWait))
+		}
+		return unreadable("the body could not be read: " + err.Error())
+	}
+	if body == nil {
+		if complete && len(raw) == 0 {
+			return nil
+		}
+		body = &judge.Body{MediaType: mediaType, Length: int64(len(raw))}
+	}
+	decoded, whole, missing := decodeBody(raw, complete, req.Header.Get("Content-Encoding"))
+	if missing != "" {
+		return unreadable(missing)
+	}
+	if complete {
+		// Read to its end, so its length is known — whether or not all of
+		// it decodes within what a parser is handed.
+		declared = int64(len(raw))
+	}
+	metadata, parseError := parser.describe(parsedBody{
+		decoded: decoded, whole: whole, length: declared,
+		mediaType: mediaType, sentinels: req.Sentinels, endpoint: recognized.endpoint,
+	})
+	if declared < 0 {
+		// Nobody declared it and the read stopped short: the length above is
+		// a floor, and a judge reading it as the size would be misled.
+		if metadata == nil {
+			metadata = map[string]any{}
+		}
+		metadata["lengthUnknown"] = fmt.Sprintf("the body declared no length and is longer than the %d bytes this proxy reads; its length is what was read", len(raw))
+	}
+	body.Parser = &recognizedBy
+	body.Metadata = boundMetadata(metadata)
+	body.ParseError = redactSentinels(parseError, req.Sentinels)
+	return body
+}
+
 // showBody is evidence answering need: the same request, with its body shown
-// in the form the judge asked for or with why it cannot be.
+// the way its parser shows it, or with why it cannot be.
 func showBody(ctx context.Context, evidence *judge.Request, req proxy.SecretAuthorizeRequest, need judge.Need) *judge.Request {
 	shown := *evidence
 	body := judge.Body{MediaType: strings.TrimSpace(req.Header.Get("Content-Type"))}
 	if evidence.Body != nil {
-		body.MediaType, body.Length = evidence.Body.MediaType, evidence.Body.Length
+		body = *evidence.Body
 	}
 	shown.Body = &body
 
@@ -47,7 +216,8 @@ func showBody(ctx context.Context, evidence *judge.Request, req proxy.SecretAuth
 	defer cancel()
 	raw, complete, err := req.Body.Capture(wait)
 	if err != nil {
-		// Nothing can be shown in any form, which is what an empty form says.
+		// Nothing can be shown, which is what a missing sentence with no
+		// content says.
 		if ctx.Err() == nil && wait.Err() != nil {
 			body.Missing = fmt.Sprintf("the body had not arrived after %s", bodyArrivalWait)
 		} else {
@@ -68,19 +238,233 @@ func showBody(ctx context.Context, evidence *judge.Request, req proxy.SecretAuth
 		body.Missing = redactSentinels(missing, req.Sentinels)
 		return &shown
 	}
-	body.Form = need.Body
+	content := ""
 	if decodedWhole && len(decoded) == 0 {
 		// Shown whole, and there is nothing in it.
+		body.Content = &content
 		return &shown
 	}
-	budget := need.Budget()
-	switch need.Body {
-	case judge.FormJSON:
-		body.Content, body.Missing = jsonForm(decoded, decodedWhole, budget, req.Sentinels)
-	default:
-		body.Content, body.Missing = textForm(decoded, decodedWhole, body.MediaType, budget, req.Sentinels)
+	recognized := recognize(req)
+	parser := recognized.parser(req)
+	if body.Parser == nil {
+		recognizedBy := parser.Recognition
+		body.Parser = &recognizedBy
 	}
+	content, body.Missing = parser.render(parsedBody{
+		decoded: decoded, whole: decodedWhole, length: body.Length,
+		mediaType: body.MediaType, sentinels: req.Sentinels, endpoint: recognized.endpoint,
+	}, need.Budget())
+	body.Content = &content
 	return &shown
+}
+
+// describeJSON is a JSON object's top-level keys, and the values an endpoint
+// names as the ones that say what its operation does. A body that is not one
+// whole JSON object has nothing said about it here; it is shown when asked.
+func describeJSON(in parsedBody) (map[string]any, string) {
+	if !in.whole || !utf8.Valid(in.decoded) {
+		return nil, ""
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(in.decoded, &fields); err != nil || fields == nil {
+		return nil, ""
+	}
+	dec := json.NewDecoder(bytes.NewReader(in.decoded))
+	var keys []any
+	if token, err := dec.Token(); err == nil && token == json.Delim('{') {
+		// In the order they were sent, which a map would not keep.
+		for dec.More() {
+			key, err := dec.Token()
+			if err != nil {
+				break
+			}
+			if name, ok := key.(string); ok {
+				keys = append(keys, in.redact(name))
+			}
+			var skip json.RawMessage
+			if err := dec.Decode(&skip); err != nil {
+				break
+			}
+		}
+	}
+	metadata := map[string]any{"keys": keys}
+	if in.endpoint != nil {
+		values := map[string]any{}
+		for _, name := range in.endpoint.values {
+			raw, ok := fields[name]
+			if !ok {
+				continue
+			}
+			var value any
+			if err := json.Unmarshal(raw, &value); err != nil {
+				continue
+			}
+			switch typed := value.(type) {
+			case string:
+				values[name] = in.redact(typed)
+			case bool, float64, nil:
+				values[name] = typed
+			}
+			if credentialName(name) {
+				values[name] = redactedValue
+			}
+		}
+		if len(values) > 0 {
+			metadata["values"] = values
+		}
+	}
+	return metadata, ""
+}
+
+// describeForm is the names of the fields a form-encoded body sends. The
+// values are the next round's to show, redacted.
+func describeForm(in parsedBody) (map[string]any, string) {
+	var names []any
+	for _, segment := range strings.Split(string(in.decoded), "&") {
+		if segment == "" {
+			continue
+		}
+		name, _, _ := strings.Cut(segment, "=")
+		if unescaped, err := url.QueryUnescape(name); err == nil {
+			name = unescaped
+		}
+		names = append(names, in.redact(strings.ToValidUTF8(name, "\uFFFD")))
+	}
+	metadata := map[string]any{"fields": names}
+	if !in.whole {
+		metadata["fieldsCut"] = "the body is longer than this proxy reads, and the fields past it are not listed"
+	}
+	return metadata, ""
+}
+
+// describeMultipart is the parts of a multipart body: what each is named, what
+// it says it is, and how long it is.
+func describeMultipart(in parsedBody) (map[string]any, string) {
+	_, params, _ := mime.ParseMediaType(in.mediaType)
+	boundary := params["boundary"]
+	if boundary == "" {
+		return nil, "the body says it is multipart and names no boundary"
+	}
+	reader := multipart.NewReader(bytes.NewReader(in.decoded), boundary)
+	var parts []any
+	for {
+		part, err := reader.NextRawPart()
+		if err != nil {
+			if !errors.Is(err, io.EOF) && in.whole {
+				return map[string]any{"parts": parts}, fmt.Sprintf("the body stops being multipart after %d parts", len(parts))
+			}
+			break
+		}
+		entry := map[string]any{}
+		_, disposition, _ := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
+		if name := disposition["name"]; name != "" {
+			entry["name"] = in.redact(strings.ToValidUTF8(name, "\uFFFD"))
+		}
+		if filename := disposition["filename"]; filename != "" {
+			entry["filename"] = in.redact(strings.ToValidUTF8(filename, "\uFFFD"))
+		}
+		if contentType := part.Header.Get("Content-Type"); contentType != "" {
+			entry["contentType"] = in.redact(strings.ToValidUTF8(contentType, "\uFFFD"))
+		}
+		n, err := io.Copy(io.Discard, part)
+		entry["bytes"] = n
+		parts = append(parts, entry)
+		if err != nil {
+			break
+		}
+	}
+	metadata := map[string]any{"parts": parts}
+	if !in.whole {
+		metadata["partsCut"] = "the body is longer than this proxy reads, and the parts past it are not listed"
+	}
+	return metadata, ""
+}
+
+// boundMetadata writes a parser's metadata as the one JSON object the judge is
+// shown, within what metadata may be. A list too long to fit is cut from its
+// end, longest first, and says how long it was: a push of a thousand tags is
+// described by its first few and its count rather than not at all.
+//
+// The body is the sandbox's to write, so what it can make this cost is
+// bounded before any of it is written out: every string is clipped and every
+// list capped (clipMetadata), which leaves the trimming a small, fixed amount
+// of work however the body was shaped to make it large.
+func boundMetadata(metadata map[string]any) json.RawMessage {
+	if len(metadata) == 0 {
+		return nil
+	}
+	clipped, ok := clipMetadata(metadata).(map[string]any)
+	if !ok {
+		return nil
+	}
+	metadata = clipped
+	for {
+		data, err := json.Marshal(metadata)
+		if err != nil {
+			return nil
+		}
+		if len(data) <= judge.MaxMetadataBytes {
+			return data
+		}
+		longest, list := "", []any(nil)
+		for key, value := range metadata {
+			if items, ok := value.([]any); ok && len(items) > len(list) {
+				longest, list = key, items
+			}
+		}
+		if longest == "" {
+			// Nothing left to shorten, and still too much to say.
+			return nil
+		}
+		if _, counted := metadata[longest+"Total"]; !counted {
+			metadata[longest+"Total"] = len(list)
+		}
+		metadata[longest] = list[:len(list)-1]
+	}
+}
+
+// Metadata's per-value bounds: no string longer than a ref name has reason to
+// be, and no list longer than metadata could ever show.
+const (
+	maxMetadataString = 256
+	maxMetadataList   = 64
+)
+
+// clipMetadata is a metadata value with every string clipped and every list
+// capped, lists saying how long they were under a "…Total" beside them.
+func clipMetadata(value any) any {
+	switch typed := value.(type) {
+	case string:
+		return clipString(typed)
+	case []any:
+		items := typed
+		if len(items) > maxMetadataList {
+			items = items[:maxMetadataList]
+		}
+		out := make([]any, len(items))
+		for i, item := range items {
+			out[i] = clipMetadata(item)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			if list, ok := item.([]any); ok && len(list) > maxMetadataList {
+				out[key+"Total"] = len(list)
+			}
+			out[clipString(key)] = clipMetadata(item)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func clipString(text string) string {
+	if len(text) > maxMetadataString {
+		return string(trimPartialRune([]byte(text[:maxMetadataString]))) + "…"
+	}
+	return text
 }
 
 // decodeBody undoes the request's content encoding, so the judge reads what

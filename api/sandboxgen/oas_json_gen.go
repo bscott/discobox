@@ -1070,6 +1070,16 @@ func (s *JudgeJob) encodeFields(e *jx.Encoder) {
 		}
 	}
 	{
+		if s.Guidance != nil {
+			e.FieldStart("guidance")
+			e.ArrStart()
+			for _, elem := range s.Guidance {
+				e.Str(elem)
+			}
+			e.ArrEnd()
+		}
+	}
+	{
 		e.FieldStart("host")
 		e.Str(s.Host)
 	}
@@ -1093,14 +1103,15 @@ func (s *JudgeJob) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfJudgeJob = [7]string{
+var jsonFieldsNameOfJudgeJob = [8]string{
 	0: "command",
 	1: "credential",
-	2: "host",
-	3: "kind",
-	4: "purpose",
-	5: "request",
-	6: "round",
+	2: "guidance",
+	3: "host",
+	4: "kind",
+	5: "purpose",
+	6: "request",
+	7: "round",
 }
 
 // Decode decodes JudgeJob from json.
@@ -1141,8 +1152,27 @@ func (s *JudgeJob) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"credential\"")
 			}
+		case "guidance":
+			if err := func() error {
+				s.Guidance = make([]string, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem string
+					v, err := d.Str()
+					elem = string(v)
+					if err != nil {
+						return err
+					}
+					s.Guidance = append(s.Guidance, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"guidance\"")
+			}
 		case "host":
-			requiredBitSet[0] |= 1 << 2
+			requiredBitSet[0] |= 1 << 3
 			if err := func() error {
 				v, err := d.Str()
 				s.Host = string(v)
@@ -1154,7 +1184,7 @@ func (s *JudgeJob) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"host\"")
 			}
 		case "kind":
-			requiredBitSet[0] |= 1 << 3
+			requiredBitSet[0] |= 1 << 4
 			if err := func() error {
 				if err := s.Kind.Decode(d); err != nil {
 					return err
@@ -1164,7 +1194,7 @@ func (s *JudgeJob) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"kind\"")
 			}
 		case "purpose":
-			requiredBitSet[0] |= 1 << 4
+			requiredBitSet[0] |= 1 << 5
 			if err := func() error {
 				v, err := d.Str()
 				s.Purpose = string(v)
@@ -1186,7 +1216,7 @@ func (s *JudgeJob) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"request\"")
 			}
 		case "round":
-			requiredBitSet[0] |= 1 << 6
+			requiredBitSet[0] |= 1 << 7
 			if err := func() error {
 				v, err := d.Int64()
 				s.Round = int64(v)
@@ -1207,7 +1237,7 @@ func (s *JudgeJob) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [1]uint8{
-		0b01011100,
+		0b10111000,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -1304,7 +1334,7 @@ func (s *JudgeNeed) Encode(e *jx.Encoder) {
 func (s *JudgeNeed) encodeFields(e *jx.Encoder) {
 	{
 		e.FieldStart("body")
-		s.Body.Encode(e)
+		e.Bool(s.Body)
 	}
 	{
 		if s.Bytes.Set {
@@ -1331,7 +1361,9 @@ func (s *JudgeNeed) Decode(d *jx.Decoder) error {
 		case "body":
 			requiredBitSet[0] |= 1 << 0
 			if err := func() error {
-				if err := s.Body.Decode(d); err != nil {
+				v, err := d.Bool()
+				s.Body = bool(v)
+				if err != nil {
 					return err
 				}
 				return nil
@@ -1404,42 +1436,115 @@ func (s *JudgeNeed) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
-// Encode encodes JudgeNeedBody as json.
-func (s JudgeNeedBody) Encode(e *jx.Encoder) {
-	e.Str(string(s))
+// Encode implements json.Marshaler.
+func (s *JudgeRecognition) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
 }
 
-// Decode decodes JudgeNeedBody from json.
-func (s *JudgeNeedBody) Decode(d *jx.Decoder) error {
+// encodeFields encodes fields.
+func (s *JudgeRecognition) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("name")
+		e.Str(s.Name)
+	}
+	{
+		e.FieldStart("version")
+		e.Int64(s.Version)
+	}
+}
+
+var jsonFieldsNameOfJudgeRecognition = [2]string{
+	0: "name",
+	1: "version",
+}
+
+// Decode decodes JudgeRecognition from json.
+func (s *JudgeRecognition) Decode(d *jx.Decoder) error {
 	if s == nil {
-		return errors.New("invalid: unable to decode JudgeNeedBody to nil")
+		return errors.New("invalid: unable to decode JudgeRecognition to nil")
 	}
-	v, err := d.StrBytes()
-	if err != nil {
-		return err
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "name":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.Name = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"name\"")
+			}
+		case "version":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Int64()
+				s.Version = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"version\"")
+			}
+		default:
+			return errors.Errorf("unexpected field %q", k)
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode JudgeRecognition")
 	}
-	// Try to use constant string.
-	switch JudgeNeedBody(v) {
-	case JudgeNeedBodyText:
-		*s = JudgeNeedBodyText
-	case JudgeNeedBodyJSON:
-		*s = JudgeNeedBodyJSON
-	default:
-		*s = JudgeNeedBody(v)
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfJudgeRecognition) {
+					name = jsonFieldsNameOfJudgeRecognition[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
 	}
 
 	return nil
 }
 
 // MarshalJSON implements stdjson.Marshaler.
-func (s JudgeNeedBody) MarshalJSON() ([]byte, error) {
+func (s *JudgeRecognition) MarshalJSON() ([]byte, error) {
 	e := jx.Encoder{}
 	s.Encode(&e)
 	return e.Bytes(), nil
 }
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
-func (s *JudgeNeedBody) UnmarshalJSON(data []byte) error {
+func (s *JudgeRecognition) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -1460,12 +1565,6 @@ func (s *JudgeRequestBody) encodeFields(e *jx.Encoder) {
 		}
 	}
 	{
-		if s.Form.Set {
-			e.FieldStart("form")
-			s.Form.Encode(e)
-		}
-	}
-	{
 		if s.Length.Set {
 			e.FieldStart("length")
 			s.Length.Encode(e)
@@ -1478,19 +1577,39 @@ func (s *JudgeRequestBody) encodeFields(e *jx.Encoder) {
 		}
 	}
 	{
+		if s.Metadata.Set {
+			e.FieldStart("metadata")
+			s.Metadata.Encode(e)
+		}
+	}
+	{
 		if s.Missing.Set {
 			e.FieldStart("missing")
 			s.Missing.Encode(e)
 		}
 	}
+	{
+		if s.ParseError.Set {
+			e.FieldStart("parseError")
+			s.ParseError.Encode(e)
+		}
+	}
+	{
+		if s.Parser.Set {
+			e.FieldStart("parser")
+			s.Parser.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfJudgeRequestBody = [5]string{
+var jsonFieldsNameOfJudgeRequestBody = [7]string{
 	0: "content",
-	1: "form",
-	2: "length",
-	3: "mediaType",
+	1: "length",
+	2: "mediaType",
+	3: "metadata",
 	4: "missing",
+	5: "parseError",
+	6: "parser",
 }
 
 // Decode decodes JudgeRequestBody from json.
@@ -1510,16 +1629,6 @@ func (s *JudgeRequestBody) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"content\"")
-			}
-		case "form":
-			if err := func() error {
-				s.Form.Reset()
-				if err := s.Form.Decode(d); err != nil {
-					return err
-				}
-				return nil
-			}(); err != nil {
-				return errors.Wrap(err, "decode field \"form\"")
 			}
 		case "length":
 			if err := func() error {
@@ -1541,6 +1650,16 @@ func (s *JudgeRequestBody) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"mediaType\"")
 			}
+		case "metadata":
+			if err := func() error {
+				s.Metadata.Reset()
+				if err := s.Metadata.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"metadata\"")
+			}
 		case "missing":
 			if err := func() error {
 				s.Missing.Reset()
@@ -1550,6 +1669,26 @@ func (s *JudgeRequestBody) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"missing\"")
+			}
+		case "parseError":
+			if err := func() error {
+				s.ParseError.Reset()
+				if err := s.ParseError.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"parseError\"")
+			}
+		case "parser":
+			if err := func() error {
+				s.Parser.Reset()
+				if err := s.Parser.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"parser\"")
 			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
@@ -1575,42 +1714,60 @@ func (s *JudgeRequestBody) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
-// Encode encodes JudgeRequestBodyForm as json.
-func (s JudgeRequestBodyForm) Encode(e *jx.Encoder) {
-	e.Str(string(s))
+// Encode implements json.Marshaler.
+func (s JudgeRequestBodyMetadata) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
 }
 
-// Decode decodes JudgeRequestBodyForm from json.
-func (s *JudgeRequestBodyForm) Decode(d *jx.Decoder) error {
+// encodeFields implements json.Marshaler.
+func (s JudgeRequestBodyMetadata) encodeFields(e *jx.Encoder) {
+	for k, elem := range s {
+		e.FieldStart(k)
+
+		if len(elem) != 0 {
+			e.Raw(elem)
+		}
+	}
+}
+
+// Decode decodes JudgeRequestBodyMetadata from json.
+func (s *JudgeRequestBodyMetadata) Decode(d *jx.Decoder) error {
 	if s == nil {
-		return errors.New("invalid: unable to decode JudgeRequestBodyForm to nil")
+		return errors.New("invalid: unable to decode JudgeRequestBodyMetadata to nil")
 	}
-	v, err := d.StrBytes()
-	if err != nil {
-		return err
-	}
-	// Try to use constant string.
-	switch JudgeRequestBodyForm(v) {
-	case JudgeRequestBodyFormText:
-		*s = JudgeRequestBodyFormText
-	case JudgeRequestBodyFormJSON:
-		*s = JudgeRequestBodyFormJSON
-	default:
-		*s = JudgeRequestBodyForm(v)
+	m := s.init()
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		var elem jx.Raw
+		if err := func() error {
+			v, err := d.RawAppend(nil)
+			elem = jx.Raw(v)
+			if err != nil {
+				return err
+			}
+			return nil
+		}(); err != nil {
+			return errors.Wrapf(err, "decode field %q", k)
+		}
+		m[string(k)] = elem
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode JudgeRequestBodyMetadata")
 	}
 
 	return nil
 }
 
 // MarshalJSON implements stdjson.Marshaler.
-func (s JudgeRequestBodyForm) MarshalJSON() ([]byte, error) {
+func (s JudgeRequestBodyMetadata) MarshalJSON() ([]byte, error) {
 	e := jx.Encoder{}
 	s.Encode(&e)
 	return e.Bytes(), nil
 }
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
-func (s *JudgeRequestBodyForm) UnmarshalJSON(data []byte) error {
+func (s *JudgeRequestBodyMetadata) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -1631,6 +1788,12 @@ func (s *JudgeRequestEvidence) encodeFields(e *jx.Encoder) {
 		}
 	}
 	{
+		if s.Endpoint.Set {
+			e.FieldStart("endpoint")
+			s.Endpoint.Encode(e)
+		}
+	}
+	{
 		if s.Headers.Set {
 			e.FieldStart("headers")
 			s.Headers.Encode(e)
@@ -1641,16 +1804,24 @@ func (s *JudgeRequestEvidence) encodeFields(e *jx.Encoder) {
 		e.Str(s.Method)
 	}
 	{
+		if s.Protocol.Set {
+			e.FieldStart("protocol")
+			s.Protocol.Encode(e)
+		}
+	}
+	{
 		e.FieldStart("url")
 		e.Str(s.URL)
 	}
 }
 
-var jsonFieldsNameOfJudgeRequestEvidence = [4]string{
+var jsonFieldsNameOfJudgeRequestEvidence = [6]string{
 	0: "body",
-	1: "headers",
-	2: "method",
-	3: "url",
+	1: "endpoint",
+	2: "headers",
+	3: "method",
+	4: "protocol",
+	5: "url",
 }
 
 // Decode decodes JudgeRequestEvidence from json.
@@ -1672,6 +1843,16 @@ func (s *JudgeRequestEvidence) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"body\"")
 			}
+		case "endpoint":
+			if err := func() error {
+				s.Endpoint.Reset()
+				if err := s.Endpoint.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"endpoint\"")
+			}
 		case "headers":
 			if err := func() error {
 				s.Headers.Reset()
@@ -1683,7 +1864,7 @@ func (s *JudgeRequestEvidence) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"headers\"")
 			}
 		case "method":
-			requiredBitSet[0] |= 1 << 2
+			requiredBitSet[0] |= 1 << 3
 			if err := func() error {
 				v, err := d.Str()
 				s.Method = string(v)
@@ -1694,8 +1875,18 @@ func (s *JudgeRequestEvidence) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"method\"")
 			}
+		case "protocol":
+			if err := func() error {
+				s.Protocol.Reset()
+				if err := s.Protocol.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"protocol\"")
+			}
 		case "url":
-			requiredBitSet[0] |= 1 << 3
+			requiredBitSet[0] |= 1 << 5
 			if err := func() error {
 				v, err := d.Str()
 				s.URL = string(v)
@@ -1716,7 +1907,7 @@ func (s *JudgeRequestEvidence) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [1]uint8{
-		0b00001100,
+		0b00101000,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -2252,6 +2443,39 @@ func (s *OptJudgeNeed) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes JudgeRecognition as json.
+func (o OptJudgeRecognition) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes JudgeRecognition from json.
+func (o *OptJudgeRecognition) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptJudgeRecognition to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptJudgeRecognition) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptJudgeRecognition) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes JudgeRequestBody as json.
 func (o OptJudgeRequestBody) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -2285,20 +2509,21 @@ func (s *OptJudgeRequestBody) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
-// Encode encodes JudgeRequestBodyForm as json.
-func (o OptJudgeRequestBodyForm) Encode(e *jx.Encoder) {
+// Encode encodes JudgeRequestBodyMetadata as json.
+func (o OptJudgeRequestBodyMetadata) Encode(e *jx.Encoder) {
 	if !o.Set {
 		return
 	}
-	e.Str(string(o.Value))
+	o.Value.Encode(e)
 }
 
-// Decode decodes JudgeRequestBodyForm from json.
-func (o *OptJudgeRequestBodyForm) Decode(d *jx.Decoder) error {
+// Decode decodes JudgeRequestBodyMetadata from json.
+func (o *OptJudgeRequestBodyMetadata) Decode(d *jx.Decoder) error {
 	if o == nil {
-		return errors.New("invalid: unable to decode OptJudgeRequestBodyForm to nil")
+		return errors.New("invalid: unable to decode OptJudgeRequestBodyMetadata to nil")
 	}
 	o.Set = true
+	o.Value = make(JudgeRequestBodyMetadata)
 	if err := o.Value.Decode(d); err != nil {
 		return err
 	}
@@ -2306,14 +2531,14 @@ func (o *OptJudgeRequestBodyForm) Decode(d *jx.Decoder) error {
 }
 
 // MarshalJSON implements stdjson.Marshaler.
-func (s OptJudgeRequestBodyForm) MarshalJSON() ([]byte, error) {
+func (s OptJudgeRequestBodyMetadata) MarshalJSON() ([]byte, error) {
 	e := jx.Encoder{}
 	s.Encode(&e)
 	return e.Bytes(), nil
 }
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
-func (s *OptJudgeRequestBodyForm) UnmarshalJSON(data []byte) error {
+func (s *OptJudgeRequestBodyMetadata) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

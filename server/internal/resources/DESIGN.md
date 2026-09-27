@@ -57,7 +57,10 @@ What a pool asks with is which discobox is spending which approved use, and
 what its proxy observed. It does not say what that use allows. The sentence
 being judged against, the credential's name and the host it is approved for are
 read here from the live grant the use belongs to (`secrets.ApprovedUse`), so
-nothing a pool or a sandbox sends can widen its own question. The same read
+nothing a pool or a sandbox sends can widen its own question. The same goes
+for guidance: a pool names the protocol and endpoint it recognized the request
+as, and the words about them are added here from the judge package
+(`judge.GuidanceFor`, ADR 26-09-26-240 §4), never taken from the pool. The same read
 happens again after the verdict, because a verdict takes a while and a grant can
 be revoked inside one. The question is composed only once a judge is found: a
 project with no judge refuses whatever the use turns out to say, and that

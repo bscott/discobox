@@ -54,6 +54,7 @@ type Job = apigen.Job
 type JudgeAnswer = apigen.JudgeAnswer
 type JudgeJob = apigen.JudgeJob
 type JudgeNeed = apigen.JudgeNeed
+type JudgeRecognition = apigen.JudgeRecognition
 type JudgeRequestBody = apigen.JudgeRequestBody
 type JudgeRequestEvidence = apigen.JudgeRequestEvidence
 type JudgeStanding = apigen.JudgeStanding

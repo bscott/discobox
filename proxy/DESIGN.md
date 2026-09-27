@@ -193,7 +193,7 @@ flowchart LR
     req["outbound request\nAuthorization: Bearer <sentinel>"] --> scan["match against client's sentinel set"]
     scan -->|no match| fwd["forward unchanged"]
     scan -->|match| judge["Resolver.Authorize(request as sent, sentinels)"]
-    judge -->|deny / error| refuse["403 from the proxy, audited once as blocked"]
+    judge -->|deny / error| refuse["refused by the proxy (403, or the protocol's own no), audited once as blocked"]
     judge -->|allow| resolve["Resolver.Resolve(sentinel, host, clientID)"]
     resolve -->|approved| swap["substitute real value + redact from audit"]
     resolve -->|denied / pending / error| leave["leave sentinel in place → upstream 401"]
@@ -233,7 +233,10 @@ Key properties:
   resolver's to do and nothing the request says about one could be believed. A
   request it does not allow, or cannot answer for, is refused by the proxy with
   a 403, never sent, and audited once as blocked (`judge: <reason>`) against
-  the uses the verdict named. `Match` reports every sentinel the request
+  the uses the verdict named. A verdict may say no in the request's own
+  protocol instead (`Verdict.Refuse`, ADR 26-09-26-240 §5), for a client that
+  never shows a 403's body — a git push answered with the rejection `git push`
+  prints — and the row records the status that was sent. `Match` reports every sentinel the request
   carries, which is a superset of what `Apply` substitutes — an unresolvable
   one is authorized and then left in place — so nothing is substituted without
   having been authorized, which is the direction that matters. The two share

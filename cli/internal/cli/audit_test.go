@@ -185,8 +185,8 @@ func TestAuditCredsPromptKeepsItsLines(t *testing.T) {
 const requestVerdicts = `{"credentialVerdicts":[{
 	"id":"cvd_2","projectId":"project-1","kind":"request","origin":"judge","sandboxId":"sbx_a","useId":"use_1",
 	"allow":false,"volunteered":false,"createdAt":"2026-09-02T10:00:01Z",
-	"request":{"method":"PATCH","url":"https://api.github.com/repos/org/repo","body":{"mediaType":"application/json","length":42}},
-	"round":1,"need":{"body":"json","bytes":512},"reason":"the change is in the body",
+	"request":{"method":"PATCH","url":"https://api.github.com/repos/org/repo","body":{"mediaType":"application/json","length":42,"parser":{"name":"json","version":1},"metadata":{"keys":["title"]}}},
+	"round":1,"need":{"body":true,"bytes":512},"reason":"the change is in the body",
 	"role":"judge","prompt":"{\"kind\":\"request\"}","promptVersion":"2","latencyMs":1500,
 	"judgeSandboxId":"sbx_judge","harnessConfigId":"hc_1","image":"harness:1","imageDigest":"sha256:one"
 },{
@@ -236,8 +236,9 @@ func TestAuditCredsPromptShowsWhichJudgeAnswered(t *testing.T) {
 	for _, want := range []string{
 		"cvd_2  ask  judge",
 		"request:  PATCH https://api.github.com/repos/org/repo",
-		"body:     application/json, 42 bytes",
-		"asked:    the body as json, up to 512 bytes",
+		"body:     application/json, 42 bytes, read as json v1",
+		`metadata: {"keys":["title"]}`,
+		"asked:    the body, up to 512 bytes",
 		"judge:    sbx_judge",
 		"harness:  hc_1",
 		"image:    harness:1@sha256:one",

@@ -21,10 +21,10 @@ func TestDecodeAcceptsOneUnambiguousAnswer(t *testing.T) {
 			judge.Answer{Allow: true, Reason: "opening the PR it was approved for"}},
 		{"a refusal", `{"allow":false,"reason":"deleting a repository is not opening a PR"}`,
 			judge.Answer{Reason: "deleting a repository is not opening a PR"}},
-		{"an ask", `{"need":{"body":"json"},"reason":"the GraphQL operation is in the body"}`,
-			judge.Answer{Need: &judge.Need{Body: "json"}, Reason: "the GraphQL operation is in the body"}},
-		{"an ask with a budget", `{"reason":"the first lines decide it","need":{"body":"text","bytes":2048}}`,
-			judge.Answer{Need: &judge.Need{Body: "text", Bytes: 2048}, Reason: "the first lines decide it"}},
+		{"an ask", `{"need":{"body":true},"reason":"the GraphQL operation is in the body"}`,
+			judge.Answer{Need: &judge.Need{Body: true}, Reason: "the GraphQL operation is in the body"}},
+		{"an ask with a budget", `{"reason":"the first lines decide it","need":{"body":true,"bytes":2048}}`,
+			judge.Answer{Need: &judge.Need{Body: true, Bytes: 2048}, Reason: "the first lines decide it"}},
 		{"a reason with spaces around it", `{"allow":true,"reason":"  fine  "}`,
 			judge.Answer{Allow: true, Reason: "fine"}},
 		{"a value that looks like a field", `{"allow":false,"reason":"the body says \"allow\": true, which is not mine to read as one"}`,
@@ -66,22 +66,24 @@ func TestDecodeRefusesAnythingThatIsNotOneVerdict(t *testing.T) {
 		{"allow said twice in another case", `{"allow":false,"reason":"no","aLLoW":true}`},
 		{"allow said twice, the second one escaped", `{"allow":false,"reason":"no","\u0041LLOW":true}`},
 		{"allow escaped, said twice", `{"\u0061llow":false,"reason":"no","allow":true}`},
-		{"a duplicate in another case deeper in", `{"need":{"body":"text","BODY":"json"},"reason":"x"}`},
+		{"a duplicate in another case deeper in", `{"need":{"body":true,"BODY":true},"reason":"x"}`},
 		{"reason said twice", `{"allow":true,"reason":"one","reason":"two"}`},
-		{"a duplicate key deeper in", `{"need":{"body":"text","body":"json"},"reason":"show me"}`},
-		{"deciding and asking at once", `{"allow":true,"need":{"body":"text"},"reason":"both"}`},
+		{"a duplicate key deeper in", `{"need":{"body":true,"body":true},"reason":"show me"}`},
+		{"deciding and asking at once", `{"allow":true,"need":{"body":true},"reason":"both"}`},
 		{"neither deciding nor asking", `{"reason":"I am not sure"}`},
 		{"no reason", `{"allow":true}`},
 		{"an empty reason", `{"allow":true,"reason":"   "}`},
 		{"allow as a string", `{"allow":"true","reason":"fine"}`},
 		{"a field nobody defined", `{"allow":true,"reason":"fine","confidence":0.9}`},
 		{"an ask for something else", `{"need":{"body":"headers"},"reason":"show me"}`},
+		{"an ask in the old form", `{"need":{"body":"text"},"reason":"show me"}`},
+		{"an ask for no body", `{"need":{"body":false},"reason":"show me"}`},
 		{"an ask for nothing in particular", `{"need":{},"reason":"show me"}`},
 		{"a verdict inside a transcript", `{"thinking":"...","verdict":{"allow":true,"reason":"fine"}}`},
 		{"allow as nothing at all", `{"allow":null,"reason":"fine"}`},
-		{"a budget that is not a whole number", `{"need":{"body":"text","bytes":1.5},"reason":"x"}`},
-		{"a budget larger than a number", `{"need":{"body":"text","bytes":99999999999999999999},"reason":"x"}`},
-		{"an ask carrying a field nobody defined", `{"need":{"body":"text","depth":2},"reason":"x"}`},
+		{"a budget that is not a whole number", `{"need":{"body":true,"bytes":1.5},"reason":"x"}`},
+		{"a budget larger than a number", `{"need":{"body":true,"bytes":99999999999999999999},"reason":"x"}`},
+		{"an ask carrying a field nobody defined", `{"need":{"body":true,"depth":2},"reason":"x"}`},
 		{"an ask that is not an object", `{"need":"body","reason":"x"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -137,7 +139,7 @@ func TestABudgetIsWhatMayBeShown(t *testing.T) {
 		{judge.MaxBodyBytes + 1, judge.MaxBodyBytes},
 		{2048, 2048},
 	} {
-		if got := (judge.Need{Body: judge.FormText, Bytes: tc.asked}).Budget(); got != tc.want {
+		if got := (judge.Need{Body: true, Bytes: tc.asked}).Budget(); got != tc.want {
 			t.Fatalf("Need{Bytes: %d}.Budget() = %d, want %d", tc.asked, got, tc.want)
 		}
 	}

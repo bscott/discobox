@@ -739,16 +739,25 @@ func (h *httpProxy) authorizeSwap(req *http.Request, meta *requestMeta, client c
 		// the wrong one: this request was refused for where it is going.
 		reason = "not an approved use of this host"
 	}
+	said := "blocked by proxy: " + reason
+	answer := secrets.Refusal{Status: http.StatusForbidden, ContentType: goproxy.ContentTypeText, Body: []byte(said)}
+	if verdict.Refuse != nil && !verdict.Allow {
+		// The request's own protocol has a way to say no that its client
+		// shows, where a 403's body it would not (ADR 26-09-26-240 §5).
+		if own, ok := verdict.Refuse(meta.ctx, said); ok {
+			answer = own
+		}
+	}
 	meta.answered = true
-	meta.span.SetAttributes(attribute.Bool("proxy.blocked", true), attribute.Int("http.response.status_code", http.StatusForbidden))
+	meta.span.SetAttributes(attribute.Bool("proxy.blocked", true), attribute.Int("http.response.status_code", answer.Status))
 	h.recordRefusal(req, meta, client, refusalRecord{
 		url:    preURL,
 		header: preSwapHeader,
 		reason: reason,
 		useIDs: verdict.UseIDs,
-		status: http.StatusForbidden,
+		status: answer.Status,
 	})
-	return goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "blocked by proxy: "+reason)
+	return goproxy.NewResponse(req, answer.ContentType, answer.Status, string(answer.Body))
 }
 
 // refusalReason is what a refused request is answered with, whichever way the

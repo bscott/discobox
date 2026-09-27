@@ -1371,6 +1371,68 @@ func TestMigrateRetiresPrepullWithoutLosingPools(t *testing.T) {
 	}
 }
 
+// A verdict recorded when the judge asked for a body "as text" or "as JSON"
+// reads, after the upgrade, as the ask it is now — for the body — rather than
+// as a row every listing it is in fails on. A second run changes nothing.
+func TestMigrateRewritesAVerdictsAskForABodyInAForm(t *testing.T) {
+	ctx := context.Background()
+	db, err := database.New(database.Config{
+		Driver: gormdb.DriverSQLite,
+		DSN:    "sqlite3://" + filepath.Join(t.TempDir(), "discobox.db"),
+	})
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("close database: %v", err)
+		}
+	})
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatalf("initial migrate: %v", err)
+	}
+	if err := db.Write.Create(&model.Project{ID: "project-1", OwnerUserID: "user-1", Name: "Project"}).Error; err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	for _, row := range []struct{ id, need string }{
+		{"cv_text", `{"body":"text"}`},
+		{"cv_json", `{"body":"json","bytes":2048}`},
+	} {
+		if err := db.Write.Model(&model.CredentialVerdict{}).Create(map[string]any{
+			"id": row.id, "project_id": "project-1", "sandbox_id": "sbx_a", "use_id": "use_1",
+			"role": "judge", "prompt": "p", "kind": "request", "origin": "judge", "round": 1, "allow": false,
+			"created_at": time.Now().UTC(),
+		}).Error; err != nil {
+			t.Fatalf("create %s: %v", row.id, err)
+		}
+		// Written as the old version stored it, which today's type cannot.
+		if err := db.Write.Exec("UPDATE credential_verdicts SET need = ? WHERE id = ?", row.need, row.id).Error; err != nil {
+			t.Fatalf("write %s's need: %v", row.id, err)
+		}
+	}
+
+	for run := 1; run <= 2; run++ {
+		if err := db.Migrate(ctx); err != nil {
+			t.Fatalf("upgrade migrate %d: %v", run, err)
+		}
+		var verdicts []model.CredentialVerdict
+		if err := db.Write.Order("id").Find(&verdicts).Error; err != nil {
+			t.Fatalf("run %d: read verdicts: %v", run, err)
+		}
+		if len(verdicts) != 2 {
+			t.Fatalf("run %d: %d verdicts, want 2", run, len(verdicts))
+		}
+		for _, verdict := range verdicts {
+			if verdict.Need == nil || !verdict.Need.Body {
+				t.Fatalf("run %d: %s asks %+v, want an ask for the body", run, verdict.ID, verdict.Need)
+			}
+		}
+		if verdicts[0].Need.Bytes != 2048 {
+			t.Fatalf("run %d: the budget the judge named became %d", run, verdicts[0].Need.Bytes)
+		}
+	}
+}
+
 // A verdict written before CredentialVerdict stamped created_at in UTC carries
 // the server's local offset, and SQLite compares times as text. The upgrade
 // rewrites it into UTC — the same instant — and a second run changes nothing.

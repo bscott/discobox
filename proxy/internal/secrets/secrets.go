@@ -115,6 +115,22 @@ type Verdict struct {
 	// was authorized — or refused — under, so a refusal that resolved nothing
 	// is still recorded against the use it was about.
 	UseIDs []string
+	// Refuse answers a request this verdict refuses the way the request's own
+	// protocol says no, given the sentence the proxy would have sent, so a
+	// client that never shows a 403's body still shows why (ADR 26-09-26-240
+	// §5). It reports false when it cannot, and nil is the proxy's own answer:
+	// a 403 with the sentence as text. It is never called for an allow. ctx
+	// is the request's, so a refusal still being written for a client that
+	// has gone stops.
+	Refuse func(ctx context.Context, reason string) (Refusal, bool)
+}
+
+// Refusal is a refused request's answer in the request's own protocol. It is
+// the same refusal, audited the same way; only how it is said changes.
+type Refusal struct {
+	Status      int
+	ContentType string
+	Body        []byte
 }
 
 // Resolver resolves a sentinel to its real credential value, and hears back

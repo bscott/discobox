@@ -134,6 +134,9 @@ func (db *DB) Migrate(ctx context.Context) error {
 	if err := backfillSecretValueUpdatedAt(write); err != nil {
 		return err
 	}
+	if err := migrateCredentialVerdictNeeds(write); err != nil {
+		return err
+	}
 	return rekeySandboxOrigins(write)
 }
 
@@ -208,6 +211,28 @@ func normalizeCredentialVerdictTimes(db *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+// migrateCredentialVerdictNeeds rewrites the ask a request verdict recorded
+// in the form it now takes (ADR 26-09-26-240 §2). A judge used to ask for a
+// body "as text" or "as JSON", and a verdict stored that ask as
+// {"body":"text"} or {"body":"json"}; it now asks for the body, as
+// {"body":true}, and a stored string would not read as one — failing not the
+// row but every listing it is in. What the old ask said beyond wanting the
+// body was which form, and the body is no longer shown in forms, so nothing
+// the row meant is lost.
+//
+// The column holds JSON as encoding/json writes it, with no spaces, so the
+// rewrite is a string replacement both SQLite and Postgres run the same way.
+// The rows are chosen by what they still say, so after the first run this
+// matches nothing.
+func migrateCredentialVerdictNeeds(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&model.CredentialVerdict{}) {
+		return nil
+	}
+	return db.Exec(`UPDATE credential_verdicts
+		SET need = REPLACE(REPLACE(need, '"body":"text"', '"body":true'), '"body":"json"', '"body":true')
+		WHERE need LIKE '%"body":"text"%' OR need LIKE '%"body":"json"%'`).Error
 }
 
 // prepareSandboxStateSplit makes the sandboxes table safe for AutoMigrate to

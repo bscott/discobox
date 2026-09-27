@@ -14,6 +14,7 @@ it.
 | `system.go` | `System`, the words the judge is given, and `PromptVersion`, which changes with them. |
 | `verdict.go` | `Answer`, `Need`, `Schema`, and `Decode`: what Discobox will accept as a verdict. |
 | `standing.go` | `Standing`, `Route`, and `Job.Admits`: an allow the judge asks to let stand for a route, and whether it may. |
+| `recognized.go` | `Recognition`, the names of the protocols, endpoints and parsers a pool recognizes, and `GuidanceFor`: the trusted words that go with each name. |
 
 ## The rules it exists to keep
 
@@ -33,12 +34,25 @@ twice at any depth (`encoding/json` would take the last), a field nobody
 defined, an answer that both decides and asks, and an answer with no reason.
 A failure to decode is not an allow, and callers treat it as a refusal.
 
-**The body is asked for, not sent.** A request job describes its body — media
-type and length — and carries it only once the judge answers with `Need`. That
-is why `Answer` has three outcomes rather than two. `Budget` caps what may be
-shown at `MaxBodyBytes` whatever the judge names, `Body.Missing` says what is
-not being shown and why, and `Body.Answers` reports an ask that would change
-nothing, which is a judge that has decided nothing.
+**A body is described in one shape; its bytes are asked for, not sent**
+(ADR 26-09-26-240). A request job describes its body — media type, length,
+and, when a parser recognized it, the `Parser`, its `Metadata` (one JSON
+object, at most `MaxMetadataBytes`) or its `ParseError` — and carries its
+`Content` only once the judge answers with `Need`, which names no form: the
+parser decides how a body is written, not the judge. That is why `Answer` has
+three outcomes rather than two. `Budget` caps what may be shown at
+`MaxBodyBytes` whatever the judge names, `Content` is present — even empty —
+exactly when it was shown, `Body.Missing` says what is not being shown and why,
+and `Body.Answers` reports an ask that would change nothing, which is a judge
+that has decided nothing.
+
+**Guidance is the trusted side's.** A request names what a pool recognized it
+as (`Request.Protocol`, `Request.Endpoint`); the words that go with a name are
+here (`GuidanceFor`), and the control plane puts them in `Job.Guidance`. A pool
+sends names, never sentences, so nothing a pool or a request says becomes
+Discobox speaking. A name nobody wrote guidance for brings none, so a pool
+newer than its control plane is judged without guidance, not refused.
+Guidance explains; the system prompt says it never authorizes.
 
 **A wrapper prints the verdict and nothing else.** `Decode` takes one JSON
 object and no prose around it, which is a requirement on every harness image's
@@ -49,7 +63,13 @@ contract.
 **The judge proposes a standing allow; Discobox admits it.** An allow may carry
 a `Standing` route: net/http pattern syntax, one method and an exact path
 (ADR 26-09-25-428). `Decode` refuses a route that does not parse, or one beside
-anything but an allow. `Job.Admits` keeps only a first-round route, standing
+anything but an allow. `Job.Admits` keeps only a first-round route decided
+before the body's content was shown, on a request whose operation is not in its
+body (`Request.OperationInBody`: a recognized protocol, an endpoint that reads
+its body, or a body its parser could not read) — a JSON object's keys are its
+shape, not its operation, and do not stop one; the control plane asks the same
+of every request a standing allow would answer, since a route says nothing
+about a body — standing
 for some time, with a literal segment, that covers its own request; `Duration`
 caps it at `MaxStanding`. A route matches the method and the unescaped path
 segments and nothing else. A path with a dot or empty segment, or a segment

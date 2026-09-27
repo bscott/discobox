@@ -197,10 +197,12 @@ func TestTheGateShowsTheJudgeTheBodyItAsksFor(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&ask)
 			w.Header().Set("Content-Type", "application/json")
 			if ask.Round == 1 {
-				_, _ = io.WriteString(w, `{"reason":"which discobox, granted what, is in the body","need":{"body":"json"}}`)
+				_, _ = io.WriteString(w, `{"reason":"which discobox, granted what, is in the body","need":{"body":true}}`)
 				return
 			}
-			shown.Store(ask.Request.Body.Content)
+			if content := ask.Request.Body.Content; content != nil {
+				shown.Store(*content)
+			}
 			_, _ = io.WriteString(w, `{"allow":true,"reason":"one discobox for issue 43, granted a push to its branch"}`)
 			return
 		}

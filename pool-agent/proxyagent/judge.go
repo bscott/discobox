@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -274,28 +273,20 @@ func judgeRefusal(resp *http.Response) error {
 	}
 }
 
-// evidenceOf is the request as the judge is shown it: what identifies the
-// operation, with everything that could carry a credential taken out.
-//
-// The body is described and not carried (ADR 26-09-22-838 §6). What can be said about
-// it without reading it is what the request declared, and only a request that
-// declared a length is described at all: the contract says a body's length in
-// bytes, with no way to spell "some unknown number of them", so a chunked
-// upload described here would be a body reported as empty. Saying nothing is
-// the honest form of not knowing. Reading the body is the next round, which
-// runs only when the judge asks for it (showBody).
-func evidenceOf(req proxy.SecretAuthorizeRequest) *judge.Request {
+// evidenceOf is the request as the judge is first shown it: what identifies
+// the operation, with everything that could carry a credential taken out, what
+// trusted code recognized it as, and its body described (describeBody). The
+// body's own bytes are the next round's, shown only when the judge asks for
+// them (showBody).
+func evidenceOf(ctx context.Context, req proxy.SecretAuthorizeRequest) *judge.Request {
+	recognized := recognize(req)
 	evidence := &judge.Request{
 		Method:  req.Method,
 		URL:     redactedURL(req.URL, req.Sentinels),
 		Headers: redactHeaders(req.Header, req.Sentinels),
+		Body:    describeBody(ctx, req, recognized),
 	}
-	if length, err := strconv.ParseInt(strings.TrimSpace(req.Header.Get("Content-Length")), 10, 64); err == nil && length > 0 {
-		evidence.Body = &judge.Body{
-			MediaType: strings.TrimSpace(req.Header.Get("Content-Type")),
-			Length:    length,
-		}
-	}
+	evidence.Protocol, evidence.Endpoint = recognized.named()
 	return evidence
 }
 

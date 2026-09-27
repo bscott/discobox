@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -597,8 +598,14 @@ func requestVerdictLines(v apimodel.CredentialVerdict) []string {
 	var lines []string
 	if request, ok := v.Request.Get(); ok {
 		lines = append(lines, "request:  "+verdictJudged(v))
+		if recognized := describeRecognized(request); recognized != "" {
+			lines = append(lines, "known as: "+recognized)
+		}
 		if body, ok := request.Body.Get(); ok {
 			lines = append(lines, "body:     "+describeJudgedBody(body))
+			if metadata, ok := body.Metadata.Get(); ok && len(metadata) > 0 {
+				lines = append(lines, "metadata: "+describeMetadata(metadata))
+			}
 		}
 	}
 	lines = append(lines, fmt.Sprintf("round:    %d", v.Round.Or(0)))
@@ -613,7 +620,7 @@ func requestVerdictLines(v apimodel.CredentialVerdict) []string {
 		lines = append(lines, "standing: "+terminalSafe(granted))
 	}
 	if need, ok := v.Need.Get(); ok {
-		asked := "the body as " + string(need.Body)
+		asked := "the body"
 		if bytes := need.Bytes.Or(0); bytes > 0 {
 			asked += fmt.Sprintf(", up to %d bytes", bytes)
 		}
@@ -636,19 +643,57 @@ func requestVerdictLines(v apimodel.CredentialVerdict) []string {
 }
 
 // describeJudgedBody says what the judge was told of a request's body: what it
-// is and how long, and, once it asked, how it was shown and what was not.
+// is and how long, what read it, and, once it asked, whether it was shown and
+// what was not.
 func describeJudgedBody(body apimodel.JudgeRequestBody) string {
 	parts := []string{fmt.Sprintf("%d bytes", body.Length.Or(0))}
 	if media := body.MediaType.Or(""); media != "" {
 		parts = append([]string{terminalSafe(media)}, parts...)
 	}
-	if form, ok := body.Form.Get(); ok {
-		parts = append(parts, "shown as "+string(form))
+	if parser, ok := body.Parser.Get(); ok {
+		parts = append(parts, "read as "+describeRecognition(parser))
+	}
+	if parseError := body.ParseError.Or(""); parseError != "" {
+		parts = append(parts, "unreadable: "+terminalSafe(parseError))
+	}
+	if body.Content.IsSet() {
+		parts = append(parts, "shown")
 	}
 	if missing := body.Missing.Or(""); missing != "" {
 		parts = append(parts, terminalSafe(missing))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// describeRecognized is what a request was recognized as — its protocol, the
+// endpoint it called — which is what brought the judge its guidance.
+func describeRecognized(request apimodel.JudgeRequestEvidence) string {
+	var parts []string
+	for _, recognized := range []apiclientgen.OptJudgeRecognition{request.Protocol, request.Endpoint} {
+		if named, ok := recognized.Get(); ok {
+			parts = append(parts, describeRecognition(named))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func describeRecognition(named apimodel.JudgeRecognition) string {
+	return fmt.Sprintf("%s v%d", terminalSafe(named.Name), named.Version)
+}
+
+// describeMetadata is what a parser found in the body, as the one JSON object
+// the judge read, with its keys in order.
+func describeMetadata(metadata apiclientgen.JudgeRequestBodyMetadata) string {
+	keys := make([]string, 0, len(metadata))
+	for key := range metadata {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, strconv.Quote(key)+":"+string(metadata[key]))
+	}
+	return terminalSafe("{" + strings.Join(parts, ",") + "}")
 }
 
 // isRequestVerdict reports whether the project's judge decided this about a

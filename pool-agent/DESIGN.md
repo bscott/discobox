@@ -883,18 +883,43 @@ flowchart LR
   explicit allow allows. This also covers a sandbox's own calls to the discobox
   API, which the gate admits through the same contract — and whose operation is
   usually in the body.
-- **A judge that asks to see the body is shown it** (`judgebody.go`; ADR
-  26-09-22-838 §6). The next round carries it in the form asked for — text as
-  sent, or JSON written back compacted from the token stream so a key said
-  twice is shown twice — cut to the judge's budget, with `Missing` saying what
-  was cut or why nothing could be shown: not text, not JSON, an encoding other
-  than gzip, too large to parse, or not arrived within `bodyArrivalWait`. A
-  judge still asking on round `judge.MaxRounds`, or asking again for what
+- **A request is recognized before it is judged** (`recognize.go`; ADR
+  26-09-26-240 §1): its protocol (`protocols`: a git push) from its method,
+  path and media type, and its endpoint (`endpoints`: GitHub's fork) from its
+  host, method and path. Both are built-in, ordered registries — a new protocol
+  or API is one entry and its tests — and the names go to the control plane,
+  which adds the guidance the judge package keeps for them; a pool never sends
+  guidance of its own.
+- **A body is always shown in one shape** (`judgebody.go`; ADR 26-09-26-240
+  §2–3). A `bodyParser` is chosen by the protocol, or else by media type
+  (JSON, form, multipart, text), and says what it found in the same terms. The
+  first ask carries the parser's metadata — a push's ref updates, read the way
+  git's `receive-pack` reads them (`gitpush.go`), a JSON object's keys and the
+  values an endpoint names, a form's field names, a multipart body's parts —
+  redacted and held to `judge.MaxMetadataBytes`: every string clipped and every
+  list capped first, so a body shaped to be expensive costs a fixed amount,
+  then the longest list cut (`boundMetadata`). A body its parser cannot read —
+  not what it claims, not arrived, an encoding the proxy does not decode — has
+  `ParseError` saying so rather than nothing said. An endpoint names the parser
+  its API reads the body with (a fork's JSON), which outranks the media type
+  the sandbox labeled it. A parser with nothing to
+  say ahead of being asked (text) spares the first ask a read. When the judge
+  asks, the next round shows the body the way its parser renders it — JSON
+  written back compacted from the token stream so a key said twice is shown
+  twice, anything else as sent — cut to the judge's budget, with `Missing`
+  saying what was cut or why nothing could be shown: not text, an encoding
+  other than gzip, too large, or not arrived within `bodyArrivalWait`. A judge
+  still asking on round `judge.MaxRounds`, or asking again for what
   `Body.Answers` says it was already shown, has decided nothing, and that
   refuses. The rounds for one use share one deadline, `judgeHTTPTimeout`, and
   each ask carries what is left of it (`timeoutMillis`), which the control
   plane bounds that ask by — so a slow later round is refused with a sentence,
   not cut off here as a silence.
+- **A refused request is told no in its own protocol when it has a way**
+  (`Verdict.Refuse`; ADR 26-09-26-240 §5). A git push is answered as a git
+  server rejects one — report-status `ng` for every ref, the sentence on the
+  progress band — so `git push` prints the reason where a 403 it prints as
+  `HTTP 403` and nothing else.
 - **What the judge is shown is not what was sent.** Every sentinel is taken out
   through the proxy's own scan (`proxy.RedactSentinels`), so the base64 form
   goes too. Headers are an allowlist: the ones that say what an operation is

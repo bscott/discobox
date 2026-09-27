@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-faster/jx"
+
 	sandboxapi "github.com/discobox-ai/discobox/api/sandboxgen"
 	"github.com/discobox-ai/discobox/hostscope"
 	"github.com/discobox-ai/discobox/judge"
@@ -318,6 +320,13 @@ func (s *Service) standing(ctx context.Context, projectID string, ask services.J
 		// allow that stands never needed one.
 		return judge.Answer{}, false, nil
 	}
+	if job.Request.OperationInBody() != "" {
+		// A route matches a method and a path, and says nothing about a
+		// body. A request whose operation is in its body — a push, whatever
+		// route an earlier allow named — is read every time, or nothing read
+		// it (ADR 26-09-26-240 §2).
+		return judge.Answer{}, false, nil
+	}
 	start := time.Now()
 	rows, err := s.store.StandingVerdicts(ctx, projectID, ask.SandboxID, ask.UseID, start)
 	if err != nil {
@@ -403,6 +412,10 @@ func (s *Service) job(ctx context.Context, poolID string, ask services.JudgeAsk)
 		Round:      ask.Round,
 		Command:    ask.Command,
 		Request:    ask.Request,
+		// Read here, from what the pool says it recognized, and never taken
+		// from the pool: the words about a protocol or an API are the trusted
+		// side's (ADR 26-09-26-240 §4).
+		Guidance: judge.GuidanceFor(ask.Request),
 	}
 	if err := job.Validate(); err != nil {
 		return judge.Job{}, services.ApprovedUse{}, apperrors.NewStatusError(http.StatusBadRequest, err.Error())
@@ -456,11 +469,12 @@ const judgeReplyMargin = 5 * time.Second
 // judgeJobBody is the job on the wire to the judge's agent.
 func judgeJobBody(job judge.Job) sandboxapi.JudgeJob {
 	body := sandboxapi.JudgeJob{
-		Kind:    sandboxapi.JudgeJobKind(job.Kind),
-		Purpose: job.Purpose,
-		Host:    job.Host,
-		Round:   int64(job.Round),
-		Command: job.Command,
+		Kind:     sandboxapi.JudgeJobKind(job.Kind),
+		Purpose:  job.Purpose,
+		Host:     job.Host,
+		Round:    int64(job.Round),
+		Command:  job.Command,
+		Guidance: job.Guidance,
 	}
 	if job.Credential != "" {
 		body.Credential = sandboxapi.NewOptString(job.Credential)
@@ -472,19 +486,35 @@ func judgeJobBody(job judge.Job) sandboxapi.JudgeJob {
 	if len(job.Request.Headers) > 0 {
 		evidence.Headers = sandboxapi.NewOptJudgeRequestEvidenceHeaders(job.Request.Headers)
 	}
-	if job.Request.Body != nil {
-		requestBody := sandboxapi.JudgeRequestBody{Length: sandboxapi.NewOptInt64(job.Request.Body.Length)}
-		if job.Request.Body.MediaType != "" {
-			requestBody.MediaType = sandboxapi.NewOptString(job.Request.Body.MediaType)
+	evidence.Protocol = recognitionBody(job.Request.Protocol)
+	evidence.Endpoint = recognitionBody(job.Request.Endpoint)
+	if body := job.Request.Body; body != nil {
+		requestBody := sandboxapi.JudgeRequestBody{Length: sandboxapi.NewOptInt64(body.Length)}
+		if body.MediaType != "" {
+			requestBody.MediaType = sandboxapi.NewOptString(body.MediaType)
 		}
-		if job.Request.Body.Form != "" {
-			requestBody.Form = sandboxapi.NewOptJudgeRequestBodyForm(sandboxapi.JudgeRequestBodyForm(job.Request.Body.Form))
+		requestBody.Parser = recognitionBody(body.Parser)
+		if len(body.Metadata) > 0 {
+			var fields map[string]json.RawMessage
+			// Validate has already held it to one JSON object.
+			if err := json.Unmarshal(body.Metadata, &fields); err == nil {
+				metadata := make(sandboxapi.JudgeRequestBodyMetadata, len(fields))
+				for key, value := range fields {
+					metadata[key] = jx.Raw(value)
+				}
+				requestBody.Metadata = sandboxapi.NewOptJudgeRequestBodyMetadata(metadata)
+			}
 		}
-		if job.Request.Body.Content != "" {
-			requestBody.Content = sandboxapi.NewOptString(job.Request.Body.Content)
+		if body.ParseError != "" {
+			requestBody.ParseError = sandboxapi.NewOptString(body.ParseError)
 		}
-		if job.Request.Body.Missing != "" {
-			requestBody.Missing = sandboxapi.NewOptString(job.Request.Body.Missing)
+		// Present, even empty, once the judge asked: an empty body shown is
+		// not the same as a body not yet shown.
+		if body.Content != nil {
+			requestBody.Content = sandboxapi.NewOptString(*body.Content)
+		}
+		if body.Missing != "" {
+			requestBody.Missing = sandboxapi.NewOptString(body.Missing)
 		}
 		evidence.Body = sandboxapi.NewOptJudgeRequestBody(requestBody)
 	}
@@ -492,12 +522,22 @@ func judgeJobBody(job judge.Job) sandboxapi.JudgeJob {
 	return body
 }
 
+// recognitionBody is a recognition on the wire to the judge's agent.
+func recognitionBody(recognized *judge.Recognition) sandboxapi.OptJudgeRecognition {
+	if recognized == nil {
+		return sandboxapi.OptJudgeRecognition{}
+	}
+	return sandboxapi.NewOptJudgeRecognition(sandboxapi.JudgeRecognition{
+		Name: recognized.Name, Version: int64(recognized.Version),
+	})
+}
+
 // answer is what the judge said, in the words this server passes on.
 func answer(answered sandboxapi.JudgeAnswer) judge.Answer {
 	out := judge.Answer{Reason: answered.Reason, Allow: answered.Allow.Or(false)}
 	if need, ok := answered.Need.Get(); ok {
 		out.Allow = false
-		out.Need = &judge.Need{Body: string(need.Body), Bytes: int(need.Bytes.Or(0))}
+		out.Need = &judge.Need{Body: need.Body, Bytes: int(need.Bytes.Or(0))}
 		return out
 	}
 	if standing, ok := answered.Standing.Get(); ok && out.Allow {

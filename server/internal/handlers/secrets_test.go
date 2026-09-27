@@ -343,7 +343,7 @@ func TestListCredentialVerdictsReturnsARequestVerdictsFields(t *testing.T) {
 		SandboxID: "sbx_a", UseID: "use_1",
 		Request: &judge.Request{Method: "POST", URL: "https://api.github.com/repos/org/repo/pulls",
 			Body: &judge.Body{MediaType: "application/json", Length: 42}},
-		Round: 1, Need: &judge.Need{Body: judge.FormJSON, Bytes: 512}, Reason: "the operation is in the body",
+		Round: 1, Need: &judge.Need{Body: true, Bytes: 512}, Reason: "the operation is in the body",
 		Role: judge.Role, Prompt: "{}", PromptVersion: judge.PromptVersion, LatencyMS: 1500,
 		JudgeSandboxID: "sbx_judge", HarnessConfigID: "hc_1", Image: "harness:1", ImageDigest: "sha256:one",
 	}}}})
@@ -362,7 +362,7 @@ func TestListCredentialVerdictsReturnsARequestVerdictsFields(t *testing.T) {
 	if v.Kind.Or("") != serverapi.CredentialVerdictKindRequest || v.Origin.Or("") != serverapi.CredentialVerdictOriginJudge ||
 		!hasRequest || request.Method != "POST" || request.URL != "https://api.github.com/repos/org/repo/pulls" ||
 		!hasBody || requestBody.Length.Or(0) != 42 || v.Round.Or(0) != 1 ||
-		!hasNeed || need.Body != serverapi.JudgeNeedBodyJSON || need.Bytes.Or(0) != 512 ||
+		!hasNeed || !need.Body || need.Bytes.Or(0) != 512 ||
 		v.PromptVersion.Or("") != judge.PromptVersion || v.LatencyMs.Or(0) != 1500 ||
 		v.JudgeSandboxId.Or("") != "sbx_judge" || v.HarnessConfigId.Or("") != "hc_1" ||
 		v.Image.Or("") != "harness:1" || v.ImageDigest.Or("") != "sha256:one" {

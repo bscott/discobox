@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -28,7 +29,7 @@ func (h *Handler) JudgeForPool(ctx context.Context, req *serverapi.PoolJudgeAsk,
 	}
 	out := &serverapi.JudgeAnswer{Reason: answer.Reason}
 	if answer.Need != nil {
-		need := serverapi.JudgeNeed{Body: serverapi.JudgeNeedBody(answer.Need.Body)}
+		need := serverapi.JudgeNeed{Body: answer.Need.Body}
 		if answer.Need.Bytes > 0 {
 			need.Bytes = serverapi.NewOptInt64(int64(answer.Need.Bytes))
 		}
@@ -62,14 +63,52 @@ func judgeAskFrom(in *serverapi.PoolJudgeAsk) services.JudgeAsk {
 	if headers, ok := evidence.Headers.Get(); ok && len(headers) > 0 {
 		ask.Request.Headers = map[string][]string(headers)
 	}
+	ask.Request.Protocol = recognitionFrom(evidence.Protocol)
+	ask.Request.Endpoint = recognitionFrom(evidence.Endpoint)
 	if body, ok := evidence.Body.Get(); ok {
 		ask.Request.Body = &judge.Body{
-			MediaType: body.MediaType.Or(""),
-			Length:    body.Length.Or(0),
-			Form:      string(body.Form.Or("")),
-			Content:   body.Content.Or(""),
-			Missing:   body.Missing.Or(""),
+			MediaType:  body.MediaType.Or(""),
+			Length:     body.Length.Or(0),
+			Parser:     recognitionFrom(body.Parser),
+			Metadata:   metadataFrom(body.Metadata),
+			ParseError: body.ParseError.Or(""),
+			Missing:    body.Missing.Or(""),
+		}
+		if content, ok := body.Content.Get(); ok {
+			ask.Request.Body.Content = &content
 		}
 	}
 	return ask
+}
+
+// recognitionFrom is what a pool says it recognized, when it says so. Whether
+// the name is one worth anything is judge.Job.Validate's to say.
+func recognitionFrom(in serverapi.OptJudgeRecognition) *judge.Recognition {
+	recognized, ok := in.Get()
+	if !ok {
+		return nil
+	}
+	return &judge.Recognition{Name: recognized.Name, Version: int(recognized.Version)}
+}
+
+// metadataFrom is a parser's metadata as the contract holds it: one JSON
+// object. The wire type is a map of raw values, which says the same thing
+// with the keys in no particular order.
+func metadataFrom(in serverapi.OptJudgeRequestBodyMetadata) json.RawMessage {
+	fields, ok := in.Get()
+	if !ok || len(fields) == 0 {
+		return nil
+	}
+	object := make(map[string]json.RawMessage, len(fields))
+	for key, value := range fields {
+		object[key] = json.RawMessage(value)
+	}
+	data, err := json.Marshal(object)
+	if err != nil {
+		// A value that is not JSON. Left out rather than passed on half
+		// written: Validate would refuse it anyway, and a pool's metadata is
+		// evidence, which is judged without it rather than not at all.
+		return nil
+	}
+	return data
 }
