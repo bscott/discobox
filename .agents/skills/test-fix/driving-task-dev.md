@@ -91,7 +91,7 @@ an `UPGRADE` column when a box is behind.
 The `shell` harness needs no credentials and starts in seconds:
 
 ```bash
-id=$(d -H shell -d --no-source -o json | jq -r .id)   # returns while still starting
+id=$(d new -H shell -d --no-source -o json | jq -r .id)   # returns while still starting
 d admin box get "$id" -o json | jq -r .runtime.state   # pending → ready
 d shell "$id" -- sh -c 'id; pwd; systemctl is-system-running'
 ```
