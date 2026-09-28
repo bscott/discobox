@@ -14,6 +14,7 @@ import (
 	apiclientgen "github.com/discobox-ai/discobox/api/gen"
 	apimodel "github.com/discobox-ai/discobox/api/model"
 	"github.com/discobox-ai/discobox/sandboxconfig"
+	idpkg "github.com/discobox-ai/x/id"
 )
 
 func (a *App) newSSHConfigCommand() *cobra.Command {
@@ -412,7 +413,9 @@ func sshHostKeyAlias(projectID string) string {
 const hostAliasSuffix = ".discobox.internal"
 
 // sshConfigHostPatterns returns each sandbox's Host patterns, aligned with
-// sandboxes: its name and ID, each bare and suffixed.
+// sandboxes: its name and ID, each bare and suffixed. The ID comes in both
+// spellings — "sbx_…" as the CLI prints it and "sbx-…" as the discobox's own
+// hostname does (id.Hostname) — so either one pasted after `ssh` connects.
 //
 // The name is only an alias — `User` carries the sandbox ID, which is what
 // actually routes (server/internal/sshd's ResolveUsername), and `HostName` is
@@ -435,6 +438,9 @@ func sshConfigHostPatterns(sandboxes []apimodel.Sandbox) [][]string {
 			patterns = append(patterns, name, name+hostAliasSuffix)
 		}
 		patterns = append(patterns, sandbox.ID, sandbox.ID+hostAliasSuffix)
+		if hostname := idpkg.Hostname(sandbox.ID); hostname != sandbox.ID {
+			patterns = append(patterns, hostname, hostname+hostAliasSuffix)
+		}
 		candidates[i] = patterns
 		for _, pattern := range patterns {
 			claims[pattern]++

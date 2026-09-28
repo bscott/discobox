@@ -24,12 +24,14 @@ var errUsernameNotResolved = errors.New("sandbox not found")
 // A username beginning with the sandbox ID prefix is always parsed as a bare
 // sandbox ID/prefix, unconditionally — even if it happens to contain a `.` —
 // since that prefix is reserved for this form. Anything else is split on the
-// last `.` as `<sandbox>.<project>`.
+// last `.` as `<sandbox>.<project>`. Either sandbox form may spell the ID with
+// a hyphen, as the discobox's hostname does ("sbx-…", id.Canonical).
 func ResolveUsername(ctx context.Context, db *store.Store, username string) (projectID, sandboxID string, err error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
 		return "", "", errUsernameNotResolved
 	}
+	username = idpkg.Canonical(idpkg.PrefixSandbox, username)
 	if strings.HasPrefix(username, idpkg.PrefixSandbox+"_") {
 		sandbox, err := db.FindSandboxByIDPrefix(ctx, username)
 		if err != nil {
@@ -111,7 +113,7 @@ func resolveSandboxInProject(ctx context.Context, db *store.Store, projectID, va
 	for _, sb := range sandboxes {
 		ids = append(ids, sb.ID)
 	}
-	matches := idpkg.ResolveShort(value, ids)
+	matches := idpkg.ResolveShort(idpkg.Canonical(idpkg.PrefixSandbox, value), ids)
 	if len(matches) != 1 {
 		return nil, errUsernameNotResolved
 	}

@@ -2609,12 +2609,14 @@ func sandboxContainerName(poolID, sandboxID string) string {
 }
 
 // sandboxHostname is what `hostname` reports inside the sandbox: the sandbox
-// ID without its "sbx_" prefix, so a shell prompt names the sandbox a user can
-// address instead of a random container ID. The result is reduced to a legal
-// RFC 1123 label; an ID that survives nothing usable returns "", which leaves
+// ID spelled with a hyphen (id.Hostname, "sbx-<random>"), so a shell prompt
+// names the sandbox a user can address instead of a random container ID — the
+// CLI and the SSH ingress read that spelling back as the ID (id.Canonical). The
+// underscore is not legal in a hostname. The result is reduced to a legal RFC
+// 1123 label; an ID that survives nothing usable returns "", which leaves
 // Docker's container-ID default in place.
 func sandboxHostname(sandboxID string) string {
-	host := strings.ToLower(strings.TrimSpace(id.RandomPart(sandboxID)))
+	host := strings.ToLower(strings.TrimSpace(id.Hostname(sandboxID)))
 	host = strings.Map(func(r rune) rune {
 		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' {
 			return r

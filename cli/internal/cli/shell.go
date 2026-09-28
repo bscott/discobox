@@ -176,8 +176,10 @@ func (a *App) resolveShellTarget(cmd *cobra.Command, args []string) (app *App, p
 	// unambiguous, and the server is the one that validates it exists — the same
 	// no-round-trip-it-doesn't-need path a fully-specified --discobox-id takes
 	// elsewhere.
-	if namesSandbox && len(args) > 0 && idpkg.IsGenerated(args[0]) {
-		return a, projectID, args[0], client, args[1:], nil
+	if namesSandbox && len(args) > 0 {
+		if id := idpkg.Canonical(idpkg.PrefixSandbox, args[0]); idpkg.IsGenerated(id) {
+			return a, projectID, id, client, args[1:], nil
+		}
 	}
 	sandboxes, err := a.listProjectSandboxCandidates(cmd.Context(), client, projectID, false)
 	if err != nil {
@@ -212,12 +214,14 @@ func (a *App) resolveShellTarget(cmd *cobra.Command, args []string) (app *App, p
 // none of them is still the command, as it is with one server.
 func (a *App) resolveShellTargetOnEveryServer(cmd *cobra.Command, set []*server, namesSandbox bool, args []string) (*App, string, string, *apiclientgen.Client, []string, error) {
 	ctx := cmd.Context()
-	if namesSandbox && len(args) > 0 && idpkg.IsGenerated(args[0]) {
-		target, projectID, sandboxID, client, err := a.findOnEveryServer(ctx, set, args[0])
-		if err != nil {
-			return nil, "", "", nil, nil, err
+	if namesSandbox && len(args) > 0 {
+		if id := idpkg.Canonical(idpkg.PrefixSandbox, args[0]); idpkg.IsGenerated(id) {
+			target, projectID, sandboxID, client, err := a.findOnEveryServer(ctx, set, id)
+			if err != nil {
+				return nil, "", "", nil, nil, err
+			}
+			return target.app, projectID, sandboxID, client, args[1:], nil
 		}
-		return target.app, projectID, sandboxID, client, args[1:], nil
 	}
 	candidates, unreachable, err := a.sandboxCandidates(ctx, false)
 	if err != nil {
@@ -281,10 +285,13 @@ const (
 // matching none of them is not an error; it just means arg is not a sandbox
 // reference, so the caller treats it as the start of a command instead.
 // Matching several is reported as ambiguous, the same as any other short-ID
-// collision in the CLI, since arg's shape said it was meant as an ID.
+// collision in the CLI, since arg's shape said it was meant as an ID. An ID
+// full or short may be spelled with a hyphen, as the discobox's hostname
+// spells it ("sbx-…"). A full one is trusted outright like any full ID; a
+// short one is read that way only after no name matched as typed.
 func matchSandboxArg(arg string, sandboxes []apimodel.Sandbox, match nameMatch) (id string, ok bool, err error) {
-	if idpkg.IsGenerated(arg) {
-		return arg, true, nil
+	if full := idpkg.Canonical(idpkg.PrefixSandbox, arg); idpkg.IsGenerated(full) {
+		return full, true, nil
 	}
 	// An exact name, before any ID matching: a name is what the listing shows
 	// and what people type, and matching it in full leaves no room for the
@@ -301,6 +308,7 @@ func matchSandboxArg(arg string, sandboxes []apimodel.Sandbox, match nameMatch) 
 	default:
 		return "", false, fmt.Errorf("%q names more than one discobox from this directory (%s); use the discobox ID", arg, strings.Join(named, ", "))
 	}
+	arg = idpkg.Canonical(idpkg.PrefixSandbox, arg)
 	if !isResolvableShortID(arg) {
 		return "", false, nil
 	}

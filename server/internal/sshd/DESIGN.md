@@ -63,6 +63,9 @@ precedence:
    `github.com/discobox-ai/x/id`'s prefix-match rules, the same ones the CLI
    uses for short-ID arguments.
 
+Either form may spell the sandbox ID with a hyphen (`sbx-…`, the discobox's
+hostname); `id.Canonical` reads it back as `sbx_…` before matching.
+
 Ambiguous or zero matches in either form is a hard resolution failure that
 never distinguishes "no such sandbox" from "no such project" on the wire —
 an unauthenticated connection attempt must not learn what exists.

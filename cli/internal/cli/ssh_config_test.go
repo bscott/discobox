@@ -190,7 +190,7 @@ func TestSSHConfigEmitsAFriendlyNameAndTheID(t *testing.T) {
 	for _, want := range []string{
 		// Bare first: it is what anyone actually types. The qualified alias
 		// stays as the unambiguous spelling.
-		"Host cheerful_poincare cheerful_poincare.discobox.internal sbx_devbox00000001 sbx_devbox00000001.discobox.internal\n",
+		"Host cheerful_poincare cheerful_poincare.discobox.internal sbx_devbox00000001 sbx_devbox00000001.discobox.internal sbx-devbox00000001 sbx-devbox00000001.discobox.internal\n",
 		// The name is cosmetic; the ID is what routes.
 		"    User sbx_devbox00000001\n",
 		"    IdentitiesOnly yes\n",
@@ -302,11 +302,12 @@ func TestSSHConfigDropsAmbiguousAndUnsafeNames(t *testing.T) {
 	if strings.Contains(out, "two words") || strings.Contains(out, "Host words") {
 		t.Fatalf("a name with whitespace must not become a Host pattern:\n%s", out)
 	}
-	if !strings.Contains(out, "Host unique_name unique_name.discobox.internal sbx_fine000000001 sbx_fine000000001.discobox.internal\n") {
+	if !strings.Contains(out, "Host unique_name unique_name.discobox.internal sbx_fine000000001 sbx_fine000000001.discobox.internal sbx-fine000000001 sbx-fine000000001.discobox.internal\n") {
 		t.Fatalf("the unique, safe name should still be an alias:\n%s", out)
 	}
 	for _, id := range []string{"sbx_dup0000000001", "sbx_dup0000000002", "sbx_glob000000001", "sbx_space00000001"} {
-		if !strings.Contains(out, "Host "+id+" "+id+".discobox.internal\n") {
+		hostname := "sbx-" + strings.TrimPrefix(id, "sbx_")
+		if !strings.Contains(out, "Host "+id+" "+id+".discobox.internal "+hostname+" "+hostname+".discobox.internal\n") {
 			t.Fatalf("%s lost its ID patterns and is now unreachable:\n%s", id, out)
 		}
 	}
@@ -394,7 +395,7 @@ func TestSSHConfigBareNameIsUsable(t *testing.T) {
 		t.Fatalf("execute ssh-config: %v", err)
 	}
 	patterns := strings.Fields(strings.SplitN(strings.TrimPrefix(out, "Host "), "\n", 2)[0])
-	want := []string{"devbox", "devbox.discobox.internal", "sbx_devbox00000001", "sbx_devbox00000001.discobox.internal"}
+	want := []string{"devbox", "devbox.discobox.internal", "sbx_devbox00000001", "sbx_devbox00000001.discobox.internal", "sbx-devbox00000001", "sbx-devbox00000001.discobox.internal"}
 	if len(patterns) != len(want) {
 		t.Fatalf("Host patterns = %v, want %v", patterns, want)
 	}
@@ -432,10 +433,10 @@ func TestSSHConfigDropsANameThatSpellsAnotherSandboxesPattern(t *testing.T) {
 	}
 	// Each sandbox keeps the patterns nobody else claimed, so both stay
 	// reachable: the target by its name, the impostor by its own ID.
-	if !strings.Contains(out, "Host target target.discobox.internal\n") {
+	if !strings.Contains(out, "Host target target.discobox.internal sbx-target00000001 sbx-target00000001.discobox.internal\n") {
 		t.Fatalf("the target lost the patterns it still owns:\n%s", out)
 	}
-	if !strings.Contains(out, "Host sbx_impostor000001 sbx_impostor000001.discobox.internal\n") {
+	if !strings.Contains(out, "Host sbx_impostor000001 sbx_impostor000001.discobox.internal sbx-impostor000001 sbx-impostor000001.discobox.internal\n") {
 		t.Fatalf("the impostor lost its own ID patterns:\n%s", out)
 	}
 }
@@ -443,9 +444,10 @@ func TestSSHConfigDropsANameThatSpellsAnotherSandboxesPattern(t *testing.T) {
 // TestSSHConfigSkipsASandboxWithNoUnambiguousPattern: `Host` with no patterns
 // is an ssh_config syntax error that would break the user's whole file, so a
 // sandbox whose every spelling is contested is commented out instead. It takes
-// a chain to get here — one sandbox named after the middle one's ID, and the
-// middle one named after a third's ID — which is exactly why it is worth
-// handling rather than assuming it cannot happen.
+// a chain to get here — the middle one named after a third's ID, one sandbox
+// named after the middle one's ID, and another after its hyphenated ID
+// (id.Hostname), since both ID spellings are patterns — which is exactly why
+// it is worth handling rather than assuming it cannot happen.
 func TestSSHConfigSkipsASandboxWithNoUnambiguousPattern(t *testing.T) {
 	fake := &sshConfigFakeServer{
 		ingress: sshConfigEnabledIngress,
@@ -455,6 +457,8 @@ func TestSSHConfigSkipsASandboxWithNoUnambiguousPattern(t *testing.T) {
 			// claimed by the sandbox below.
 			{id: "sbx_middle00000001", name: "sbx_third000000001"},
 			{id: "sbx_first000000001", name: "sbx_middle00000001"},
+			// And its hyphenated ID patterns by this one.
+			{id: "sbx_fourth00000001", name: "sbx-middle00000001"},
 		},
 	}
 	out, _, err := runSSHConfig(t, fake)

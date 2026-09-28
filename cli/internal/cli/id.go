@@ -87,6 +87,9 @@ func (a *App) resolveProjectID(ctx context.Context, client *apiclientgen.Client,
 
 func (a *App) resolveSandboxID(ctx context.Context, client *apiclientgen.Client, projectID, value string) (string, error) {
 	id, err := parseIDArg(value, "discobox ID")
+	// The hyphenated spelling a discobox's hostname uses ("sbx-…") is the same
+	// ID, copied from a shell prompt.
+	id = idpkg.Canonical(idpkg.PrefixSandbox, id)
 	if err != nil || !isResolvableShortID(id) {
 		return id, err
 	}
@@ -140,7 +143,7 @@ func (a *App) resolveSandboxReference(ctx context.Context, client *apiclientgen.
 	if ok {
 		return sandboxID, nil
 	}
-	if !isResolvableShortID(reference) {
+	if !isResolvableShortID(idpkg.Canonical(idpkg.PrefixSandbox, reference)) {
 		return "", unmatchedSandboxName(reference)
 	}
 	sandboxID, err = a.resolveSandboxID(ctx, client, projectID, reference)

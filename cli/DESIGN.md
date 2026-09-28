@@ -849,6 +849,11 @@ sees one flat `[]string` and cannot tell DISCOBOX_ID from CMD apart, so
   `args[0]` was never a sandbox reference — but more than one is reported as
   ambiguous, since its shape said it was meant as an ID.
 
+A full or short ID may also be spelled `sbx-…`, the way the discobox's
+hostname spells it; `id.Canonical` reads it back as `sbx_…` (a short one only
+after the name match), here and wherever else a discobox ID is resolved
+(`resolveSandboxID`).
+
 A match consumes `args[0]` as DISCOBOX_ID and leaves the rest as CMD. No
 match — including no arguments at all — means every argument is CMD, and the
 sandbox falls back to the same picker `discobox apply` uses when DISCOBOX_ID is
@@ -1762,8 +1767,9 @@ level or layering on the attach transports above.
   not pile up duplicates. The private key is written in OpenSSH's own format,
   not the PKCS#8 PEM the server uses for its host key, because this file is
   read by the `ssh` binary rather than by `x/crypto/ssh`.
-- Each stanza carries four `Host` patterns: the sandbox name and the sandbox
-  ID, each bare and suffixed with `.discobox.internal`. The bare name is what
+- Each stanza carries six `Host` patterns: the sandbox name, the sandbox ID,
+  and the ID's hyphenated spelling (`sbx-…`, the discobox's own hostname, via
+  `id.Hostname`), each bare and suffixed with `.discobox.internal`. The bare name is what
   anyone actually types; the suffixed form is the unambiguous spelling to fall
   back on, and is the reason dropping the suffix from the primary alias is
   affordable — a bare pattern lives in the same namespace as the user's real

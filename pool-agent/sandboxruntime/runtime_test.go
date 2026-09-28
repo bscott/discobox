@@ -1934,17 +1934,17 @@ func TestValidateCreateRequestRefusesAnUnresolvedRequest(t *testing.T) {
 	}
 }
 
-func TestSandboxHostnameDropsThePrefixAndStaysALegalLabel(t *testing.T) {
+func TestSandboxHostnameIsTheHyphenatedIDAsALegalLabel(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		sandboxID string
 		want      string
 	}{
-		{name: "generated id", sandboxID: "sbx_dfzx0123456789ab", want: "dfzx0123456789ab"},
+		{name: "generated id", sandboxID: "sbx_dfzx0123456789ab", want: "sbx-dfzx0123456789ab"},
 		{name: "no prefix", sandboxID: "bare0123456789ab", want: "bare0123456789ab"},
-		{name: "illegal characters", sandboxID: "sbx_A b/c", want: "a-b-c"},
-		{name: "trims edge hyphens", sandboxID: "sbx_-abc-", want: "abc"},
-		{name: "nothing usable", sandboxID: "sbx_", want: ""},
+		{name: "illegal characters", sandboxID: "sbx_A b/c", want: "sbx-a-b-c"},
+		{name: "trims edge hyphens", sandboxID: "-abc_", want: "abc"},
+		{name: "nothing usable", sandboxID: "_", want: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := sandboxHostname(tc.sandboxID); got != tc.want {

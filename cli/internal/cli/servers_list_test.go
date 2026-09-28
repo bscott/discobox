@@ -1231,7 +1231,8 @@ func TestShellTargetFindsADiscoboxOnARegisteredServer(t *testing.T) {
 	registerForTest(t, registeredServer{Name: "beta", Address: other.URL})
 
 	app := &App{serverURL: primary.URL, projectID: "project-1"}
-	for _, reference := range []string{sandboxB, "box-b"} {
+	// "sbx-…" is the discobox's hostname spelling of its ID (id.Hostname).
+	for _, reference := range []string{sandboxB, "box-b", "sbx-9qk5n25t2hh2rv0b"} {
 		cmd, _ := commandForTest()
 		target, projectID, sandboxID, _, args, err := app.resolveShellTarget(cmd, []string{reference, "ls"})
 		if err != nil {
@@ -1266,7 +1267,7 @@ func TestCPFindsADiscoboxOnARegisteredServer(t *testing.T) {
 	registerForTest(t, registeredServer{Name: "beta", Address: other.URL})
 
 	app := &App{serverURL: primary.URL, projectID: "project-1"}
-	for _, reference := range []string{sandboxB, "box-b"} {
+	for _, reference := range []string{sandboxB, "box-b", "sbx-9qk5n25t2hh2rv0b"} {
 		cmd, _ := commandForTest()
 		operands := parseCPOperands([]string{reference + ":/tmp/x", "."})
 		target, err := app.resolveCPTarget(cmd, operands)
@@ -1288,6 +1289,48 @@ func TestCPFindsADiscoboxOnARegisteredServer(t *testing.T) {
 	cmd, _ := commandForTest()
 	if _, err := app.resolveCPTarget(cmd, parseCPOperands([]string{"no-box:/tmp/x", "."})); err == nil || !strings.Contains(err.Error(), `no discobox named "no-box"`) {
 		t.Fatalf("resolveCPTarget(no-box) error = %v, want an unknown name refused", err)
+	}
+}
+
+// A full ID in the discobox's hostname spelling ("sbx-…", id.Hostname) is
+// asked of every server even when this directory's listing does not show it:
+// a discobox started elsewhere is found on the registered server it is on, by
+// shell and by cp, rather than taken for the command or an unknown name.
+func TestHostnameSpelledIDFindsAnUnlistedDiscoboxOnARegisteredServer(t *testing.T) {
+	useTempServersFile(t)
+	primary := fakeServer(t, "alpha", sandboxA)
+	beta := fakeServerHandler("beta", sandboxB)
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Started from another directory: absent from the listing by origin,
+		// found by its ID.
+		if strings.HasSuffix(r.URL.Path, "/sandboxes") && r.URL.Query().Has("originKey") {
+			_, _ = w.Write([]byte(`{"sandboxes":[]}`))
+			return
+		}
+		beta.ServeHTTP(w, r)
+	}))
+	t.Cleanup(other.Close)
+	registerForTest(t, registeredServer{Name: "beta", Address: other.URL})
+
+	app := &App{serverURL: primary.URL, projectID: "project-1"}
+	const reference = "sbx-9qk5n25t2hh2rv0b"
+
+	cmd, _ := commandForTest()
+	target, _, sandboxID, _, args, err := app.resolveShellTarget(cmd, []string{reference, "ls"})
+	if err != nil {
+		t.Fatalf("resolveShellTarget(%s) error = %v", reference, err)
+	}
+	if target.serverURL != other.URL || sandboxID != sandboxB || !reflect.DeepEqual(args, []string{"ls"}) {
+		t.Fatalf("resolveShellTarget(%s) = %s %s %v, want beta's discobox and the reference consumed", reference, target.serverURL, sandboxID, args)
+	}
+
+	cmd, _ = commandForTest()
+	cp, err := app.resolveCPTarget(cmd, parseCPOperands([]string{reference + ":/tmp/x", "."}))
+	if err != nil {
+		t.Fatalf("resolveCPTarget(%s) error = %v", reference, err)
+	}
+	if cp.app.serverURL != other.URL || cp.resolved[reference] != sandboxB {
+		t.Fatalf("resolveCPTarget(%s) runs against %s with %v, want beta's discobox", reference, cp.app.serverURL, cp.resolved)
 	}
 }
 

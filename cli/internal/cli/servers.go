@@ -637,7 +637,10 @@ func (e *ambiguousShortID) Error() string {
 // matchSandboxIDs is what value names among ids: itself when it is a whole ID
 // or not shaped like a prefix, and every ID it is a unique prefix of
 // otherwise — resolveShortID's reading, answering "none" rather than failing.
+// The hostname spelling ("sbx-…") reads as the ID it is, as it does wherever
+// else a discobox ID is resolved.
 func matchSandboxIDs(value string, ids []string) []string {
+	value = idpkg.Canonical(idpkg.PrefixSandbox, value)
 	if isResolvableShortID(value) {
 		return idpkg.ResolveShort(value, ids)
 	}

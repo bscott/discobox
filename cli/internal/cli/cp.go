@@ -238,7 +238,7 @@ func (a *App) resolveCPTargetOnEveryServer(cmd *cobra.Command, set []*server, op
 		}
 		// Listed once, and only for a reference that needs it: a copy naming
 		// its discoboxes by full ID asks for them and nothing else.
-		if !listed && !idpkg.IsGenerated(operand.reference) {
+		if !listed && !idpkg.IsGenerated(idpkg.Canonical(idpkg.PrefixSandbox, operand.reference)) {
 			var err error
 			if candidates, unreachable, err = a.sandboxCandidates(cmd.Context(), false); err != nil {
 				return cpTarget{}, err
@@ -432,15 +432,15 @@ func (a *App) resolveCPSandboxOnEveryServer(cmd *cobra.Command, set []*server, c
 	if reference == "" {
 		return a.pickServerSandbox(cmd, set, candidates, unreachable, cpPickEmpty, cpPickAmbiguous)
 	}
-	if idpkg.IsGenerated(reference) {
-		s, _, sandboxID, _, err := a.findOnEveryServer(cmd.Context(), set, reference)
+	if id := idpkg.Canonical(idpkg.PrefixSandbox, reference); idpkg.IsGenerated(id) {
+		s, _, sandboxID, _, err := a.findOnEveryServer(cmd.Context(), set, id)
 		return s, sandboxID, err
 	}
 	// configuredName, as in resolveCPSandbox.
 	if s, sandboxID, ok, err := matchServerSandboxArg(reference, candidates, configuredName); err != nil || ok {
 		return s, sandboxID, err
 	}
-	if !isResolvableShortID(reference) {
+	if !isResolvableShortID(idpkg.Canonical(idpkg.PrefixSandbox, reference)) {
 		return nil, "", unmatchedSandboxName(reference)
 	}
 	s, _, sandboxID, _, err := a.findOnEveryServer(cmd.Context(), set, reference)

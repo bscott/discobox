@@ -24,8 +24,8 @@ github.com/discobox-ai/charm-x/vt v0.0.0-20260926040046-9d904b1c7255 h1:RAnleGvx
 github.com/discobox-ai/charm-x/vt v0.0.0-20260926040046-9d904b1c7255/go.mod h1:u1LOIABor9JqY54oZdktK3TCRrgzP6tzHrDYx1nd3wY=
 github.com/discobox-ai/ultraviolet v0.0.0-20260926043624-eff2d8acf8a4 h1:YtkB9JJlFU0mtgxCkK98Ck98u9BkD/cX9rcCzber6gk=
 github.com/discobox-ai/ultraviolet v0.0.0-20260926043624-eff2d8acf8a4/go.mod h1:f/jRa757WUmaOZrbPspXymbg/GnbF+rwe4OLsG7aXYo=
-github.com/discobox-ai/x v0.0.0-20260917050848-32cef8aa6b78 h1:TTmY77R6ujhCecDQY+DjdJ3PqZxZwB8bOOTs9iUVuMg=
-github.com/discobox-ai/x v0.0.0-20260917050848-32cef8aa6b78/go.mod h1:ozoGHzU8woLHyDsmXikg5H1raf07miXC7vg51QtkQew=
+github.com/discobox-ai/x v0.0.0-20260928053835-39c36487e906 h1:EwLFWyk7Xr5nauNLUpQr6dmIjlBa2SVTM1WiQqwIe/A=
+github.com/discobox-ai/x v0.0.0-20260928053835-39c36487e906/go.mod h1:ozoGHzU8woLHyDsmXikg5H1raf07miXC7vg51QtkQew=
 github.com/lucasb-eyer/go-colorful v1.4.1 h1:1EO+WB73+EH8EVbzlrG3KLAfEypQWVHIBqlTf+2hNss=
 github.com/lucasb-eyer/go-colorful v1.4.1/go.mod h1:R4dSotOR9KMtayYi1e77YzuveK+i7ruzyGqttikkLy0=
 github.com/mattn/go-runewidth v0.0.27 h1:Feg/Oou5zI/wnpgDF6omIU0OokC9GxLC/WRknhVlIR0=
