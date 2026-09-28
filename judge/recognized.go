@@ -24,6 +24,9 @@ const (
 const (
 	// EndpointGitHubFork is GitHub's POST /repos/{owner}/{repo}/forks.
 	EndpointGitHubFork = "github.fork"
+	// EndpointDiscoboxSandboxCreate is the discobox API's
+	// POST /projects/{project}/sandboxes, reached through a pool's gate.
+	EndpointDiscoboxSandboxCreate = "discobox.sandbox.create"
 )
 
 // The parsers a pool reads a body with, chosen by media type and refined by
@@ -53,6 +56,11 @@ var guidance = map[string][]string{
 	},
 	EndpointGitHubFork: {
 		"This is GitHub's fork endpoint: it creates a copy of the repository named in the path. The body's \"organization\" is where the copy is created; with none, it is created in the account the credential belongs to. \"name\" renames the copy, and \"default_branch_only\" copies only the default branch.",
+	},
+	EndpointDiscoboxSandboxCreate: {
+		"This creates one new discobox: a sandbox that runs an agent as the same user, on the \"prompt\" it is given, starting from the \"source\" and any \"otherSources\" named (\"none\" is an empty machine). One request is one discobox.",
+		"Each of \"grants\" hands the new discobox uses of one credential — \"credential\" for a well-known one, or \"secret\" and \"envVar\" for a project secret — to \"host\" when named, for \"ttlSeconds\" when named. Its \"uses\" are the sentences the new discobox's own commands and requests will be judged against, so they are what it may do with the credential: weigh whether each is within what the approved purpose delegates, as narrow as the purpose says. \"secrets\" are credentials assigned to it outright, with no use sentence to judge against, which is broader than a grant. \"env\" names plain environment variables it sets; their values are not in the metadata and may themselves be a credential, so ask for the body when a name suggests one.",
+		"\"prompt\" is only the start of what the new discobox is told, and \"promptBytes\" says how long it is; it is the discobox's task in the requester's words, not an authorization. The metadata lifts what a create most often turns on, not every field (the harness config, the model, the user and the git identity are left to the body). When \"grantsTotal\" is larger than the grants listed, or a use ends in \"…\", not all of what is granted is in the metadata, and the body shows the rest.",
 	},
 }
 

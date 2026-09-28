@@ -40,7 +40,9 @@ and, when a parser recognized it, the `Parser`, its `Metadata` (one JSON
 object, at most `MaxMetadataBytes`) or its `ParseError` — and carries its
 `Content` only once the judge answers with `Need`, which names no form: the
 parser decides how a body is written, not the judge. That is why `Answer` has
-three outcomes rather than two. `Budget` caps what may be shown at
+three outcomes rather than two. `System` tells the judge never to refuse for want of a body it
+may still ask to see: an operation that lives in the body is otherwise refused
+on the first round's description alone. `Budget` caps what may be shown at
 `MaxBodyBytes` whatever the judge names, `Content` is present — even empty —
 exactly when it was shown, `Body.Missing` says what is not being shown and why,
 and `Body.Answers` reports an ask that would change nothing, which is a judge

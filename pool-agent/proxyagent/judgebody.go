@@ -258,9 +258,10 @@ func showBody(ctx context.Context, evidence *judge.Request, req proxy.SecretAuth
 	return &shown
 }
 
-// describeJSON is a JSON object's top-level keys, and the values an endpoint
-// names as the ones that say what its operation does. A body that is not one
-// whole JSON object has nothing said about it here; it is shown when asked.
+// describeJSON is a JSON object's top-level keys, and what a recognized
+// endpoint lifts out of it as saying what its operation does. A body that is
+// not one whole JSON object has nothing said about it here; it is shown when
+// asked.
 func describeJSON(in parsedBody) (map[string]any, string) {
 	if !in.whole || !utf8.Valid(in.decoded) {
 		return nil, ""
@@ -288,29 +289,9 @@ func describeJSON(in parsedBody) (map[string]any, string) {
 		}
 	}
 	metadata := map[string]any{"keys": keys}
-	if in.endpoint != nil {
-		values := map[string]any{}
-		for _, name := range in.endpoint.values {
-			raw, ok := fields[name]
-			if !ok {
-				continue
-			}
-			var value any
-			if err := json.Unmarshal(raw, &value); err != nil {
-				continue
-			}
-			switch typed := value.(type) {
-			case string:
-				values[name] = in.redact(typed)
-			case bool, float64, nil:
-				values[name] = typed
-			}
-			if credentialName(name) {
-				values[name] = redactedValue
-			}
-		}
-		if len(values) > 0 {
-			metadata["values"] = values
+	if in.endpoint != nil && in.endpoint.describe != nil {
+		for name, value := range in.endpoint.describe(fields, in) {
+			metadata[name] = value
 		}
 	}
 	return metadata, ""

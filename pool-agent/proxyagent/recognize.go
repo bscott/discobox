@@ -1,6 +1,7 @@
 package proxyagent
 
 import (
+	"encoding/json"
 	"mime"
 	"net/http"
 	"net/url"
@@ -55,26 +56,32 @@ type endpoint struct {
 	// body labeled otherwise must still be read as the JSON it is to the
 	// API, or the one field that says where the fork lands goes unseen.
 	parser *bodyParser
-	// values names the top-level fields of a JSON body that say what the
-	// operation does, lifted into the metadata from the first ask: the one
-	// field that says where a fork lands is worth a round on its own.
-	values []string
+	// describe lifts what says what the operation does out of a JSON body
+	// that is one whole object, into the metadata from the first ask beside
+	// the parser's own: where a fork lands, what a new discobox is granted.
+	// Each field is worth a round on its own, and only the endpoint knows
+	// which ones they are. Nil lifts nothing.
+	describe func(fields map[string]json.RawMessage, in parsedBody) map[string]any
 }
 
 // endpoints is every endpoint a pool recognizes, in the order they are tried.
 var endpoints = []*endpoint{
 	mustEndpoint(judge.EndpointGitHubFork, 1, "api.github.com", "POST /repos/{owner}/{repo}/forks", jsonParser,
-		"organization", "name", "default_branch_only"),
+		liftValues("organization", "name", "default_branch_only")),
+	mustEndpoint(judge.EndpointDiscoboxSandboxCreate, 1, GateHost(), "POST /projects/{project}/sandboxes", jsonParser,
+		describeSandboxCreate),
 }
 
-func mustEndpoint(name string, version int, host, pattern string, parser *bodyParser, values ...string) *endpoint {
+func mustEndpoint(name string, version int, host, pattern string, parser *bodyParser,
+	describe func(map[string]json.RawMessage, parsedBody) map[string]any,
+) *endpoint {
 	route, err := judge.ParseRoute(pattern)
 	if err != nil {
 		panic("proxyagent: endpoint " + name + ": " + err.Error())
 	}
 	return &endpoint{
 		Recognition: judge.Recognition{Name: name, Version: version},
-		host:        host, route: route, parser: parser, values: values,
+		host:        host, route: route, parser: parser, describe: describe,
 	}
 }
 

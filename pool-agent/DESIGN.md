@@ -885,8 +885,8 @@ flowchart LR
   usually in the body.
 - **A request is recognized before it is judged** (`recognize.go`; ADR
   26-09-26-240 §1): its protocol (`protocols`: a git push) from its method,
-  path and media type, and its endpoint (`endpoints`: GitHub's fork) from its
-  host, method and path. Both are built-in, ordered registries — a new protocol
+  path and media type, and its endpoint (`endpoints`: GitHub's fork, the
+  discobox API's create through the gate) from its host, method and path. Both are built-in, ordered registries — a new protocol
   or API is one entry and its tests — and the names go to the control plane,
   which adds the guidance the judge package keeps for them; a pool never sends
   guidance of its own.
@@ -894,8 +894,11 @@ flowchart LR
   §2–3). A `bodyParser` is chosen by the protocol, or else by media type
   (JSON, form, multipart, text), and says what it found in the same terms. The
   first ask carries the parser's metadata — a push's ref updates, read the way
-  git's `receive-pack` reads them (`gitpush.go`), a JSON object's keys and the
-  values an endpoint names, a form's field names, a multipart body's parts —
+  git's `receive-pack` reads them (`gitpush.go`), a JSON object's keys and
+  what its endpoint lifts out of it (`endpoints.go`: where a fork lands; the
+  grants, assigned secrets, set variable names, prompt start and sources of a
+  discobox create, whose grants sit last behind a prompt of kilobytes), a
+  form's field names, a multipart body's parts —
   redacted and held to `judge.MaxMetadataBytes`: every string clipped and every
   list capped first, so a body shaped to be expensive costs a fixed amount,
   then the longest list cut (`boundMetadata`). A body its parser cannot read —
