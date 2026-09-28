@@ -27,6 +27,12 @@ are what tells them apart (`SecretRequest.FromProtocol`).
 | Carries | type, host, sandbox | plus name, env var, justification, declared uses, and optionally the lifetime asked for |
 | Approval mints | a grant at the chosen scope | a sandbox-scoped, host-scoped grant with minted use IDs, and a stable binding |
 
+A protocol-originated ask that repeats an open one — same sandbox, variable,
+host, well-known ID and purpose, and the same uses and lifetime — is answered
+with the open request rather than a second inbox item (`asksTheSame`). An ask
+for other uses of the same credential is a request of its own: folding it into
+the open one would drop the uses it named while telling the agent it had asked.
+
 A third species shares the table and is not an ask for a grant at all: a
 **refresh request** (`Reason: refresh`, `SecretRequest.IsRefresh`) asks for a new
 value of a token the project holds. It is never approved; see
@@ -192,7 +198,7 @@ and a discobox that needs both holds two grants.
   `Purpose` (`SecretRequest.Purpose`, `use` unless the agent asked to
   delegate), and approving it mints a grant with that purpose. An ask to
   delegate binds nothing on approval, and is its own question rather than a
-  retry of an open ask to use (`FindPendingAgentCredentialRequest` keys on it).
+  retry of an open ask to use (`FindPendingAgentCredentialRequests` keys on it).
 
 ## The agent credentials broker
 

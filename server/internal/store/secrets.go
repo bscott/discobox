@@ -488,34 +488,35 @@ func (s *Store) FindPendingSecretRequest(ctx context.Context, projectID, secretI
 	return &req, nil
 }
 
-// FindPendingAgentCredentialRequest returns the open protocol-originated
-// request for a sandbox's environment variable, destination host, well-known
-// ID (empty for an ask that names none), and purpose, or ErrNotFound. The ID
-// and the purpose are part of the key because each changes what approving the
+// FindPendingAgentCredentialRequests returns the open protocol-originated
+// requests for a sandbox's environment variable, destination host, well-known
+// ID (empty for an ask that names none), and purpose, newest first. The ID and
+// the purpose are part of the key because each changes what approving the
 // request mints: an ask to delegate is not a retry of an ask to use.
 //
 // It keys on (sandbox, env, host) rather than on the secret the way the
 // reactive path does, because a protocol request names no secret: choosing one
-// is part of the approval. An agent that retries its ask therefore reuses its
-// open request instead of adding another line to the approval inbox.
-func (s *Store) FindPendingAgentCredentialRequest(ctx context.Context, projectID, sandboxID, envName, host, wellKnownID, purpose string) (*model.SecretRequest, error) {
+// is part of the approval. Which of them, if any, a new ask repeats is the
+// caller's to decide from what each asks for.
+func (s *Store) FindPendingAgentCredentialRequests(ctx context.Context, projectID, sandboxID, envName, host, wellKnownID, purpose string) ([]model.SecretRequest, error) {
 	read, err := s.getRead(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var out []model.SecretRequest
+	var found []model.SecretRequest
 	err = read.Where("project_id = ? AND sandbox_id = ? AND env_name = ? AND host = ? AND well_known_id = ? AND purpose = ? AND status = ?",
 		projectID, sandboxID, envName, host, wellKnownID, purpose, model.SecretRequestStatusPending).
-		Order("created_at DESC").Find(&out).Error
+		Order("created_at DESC").Find(&found).Error
 	if err != nil {
 		return nil, err
 	}
-	for i := range out {
-		if out[i].FromProtocol() {
-			return &out[i], nil
+	out := found[:0]
+	for _, req := range found {
+		if req.FromProtocol() {
+			out = append(out, req)
 		}
 	}
-	return nil, ErrNotFound
+	return out, nil
 }
 
 func (s *Store) GetSecretRequest(ctx context.Context, projectID, requestID string) (*model.SecretRequest, error) {

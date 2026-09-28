@@ -61,7 +61,10 @@ func agentGrantScopes(sandbox *model.Sandbox) []store.GrantScope {
 //
 // An identical pending ask is reused rather than duplicated, so an agent that
 // retries — or a wrapper that asks again on each attempt — produces one inbox
-// item instead of a pile.
+// item instead of a pile. Identical means approving either would grant the
+// same thing (asksTheSame): an ask for other uses of the same credential is a
+// new request, never folded into the open one, where its uses would be
+// dropped while the agent was told it had asked for them.
 func (s *Service) CreateSandboxCredentialRequest(ctx context.Context, poolID string, input services.CreateSandboxCredentialRequestBody) (*model.SecretRequest, error) {
 	sandbox, err := s.sandboxOwnedByPool(ctx, poolID, strings.TrimSpace(input.SandboxId))
 	if err != nil {
@@ -122,12 +125,14 @@ func (s *Service) CreateSandboxCredentialRequest(ctx context.Context, poolID str
 	}
 
 	requestedBy := agentRequesterID(sandbox.ID)
-	existing, err := s.store.FindPendingAgentCredentialRequest(ctx, sandbox.ProjectID, sandbox.ID, envName, host, wellKnownID, purpose)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
+	pending, err := s.store.FindPendingAgentCredentialRequests(ctx, sandbox.ProjectID, sandbox.ID, envName, host, wellKnownID, purpose)
+	if err != nil {
 		return nil, err
 	}
-	if existing != nil {
-		return existing, nil
+	for i := range pending {
+		if asksTheSame(pending[i], uses, grantTTL) {
+			return &pending[i], nil
+		}
 	}
 
 	req := &model.SecretRequest{
@@ -152,6 +157,22 @@ func (s *Service) CreateSandboxCredentialRequest(ctx context.Context, poolID str
 		return nil, err
 	}
 	return req, nil
+}
+
+// asksTheSame reports whether an open request asks for what a new ask does:
+// the same uses, in the same order, for the same lifetime. The justification
+// is left out; it argues for a grant and does not change which one approval
+// mints, so a retry reworded is still a retry.
+func asksTheSame(open model.SecretRequest, uses []model.SecretUse, grantTTL int64) bool {
+	if open.GrantTTL != grantTTL || len(open.Uses) != len(uses) {
+		return false
+	}
+	for i := range uses {
+		if open.Uses[i].Description != uses[i].Description {
+			return false
+		}
+	}
+	return true
 }
 
 // GetSandboxCredentialRequest reads one of a sandbox's own credential requests

@@ -55,6 +55,47 @@ func TestAgentCredentialRequestReusesAnOpenAsk(t *testing.T) {
 	}
 }
 
+// An ask for other uses of the same credential is its own request. Folding it
+// into the open one would answer it with that request's ID while dropping the
+// uses it asked for: the agent believes it asked, and the person approving
+// never sees it.
+func TestAgentCredentialRequestForOtherUsesIsItsOwn(t *testing.T) {
+	ctx := testPrincipalContext()
+	svc, _ := newAgentCredentialService(t)
+	ask := func(ttl int64, uses ...string) *model.SecretRequest {
+		t.Helper()
+		body := services.CreateSandboxCredentialRequestBody{
+			SandboxId: testSandboxID, Name: "github", EnvVar: "GITHUB_TOKEN", Host: "api.github.com",
+		}
+		for _, use := range uses {
+			body.Uses = append(body.Uses, apimodel.SecretUse{Description: use})
+		}
+		if ttl > 0 {
+			body.GrantTTLSeconds = serverapi.NewOptInt64(ttl)
+		}
+		created, err := svc.CreateSandboxCredentialRequest(ctx, testPoolID, body)
+		if err != nil {
+			t.Fatalf("create credential request: %v", err)
+		}
+		return created
+	}
+
+	first := ask(0, "push the branch issue-43")
+	other := ask(0, "fetch main", "mark the pull request ready")
+	if other.ID == first.ID {
+		t.Fatalf("an ask for other uses was answered with the open request %s", first.ID)
+	}
+	if len(other.Uses) != 2 || other.Uses[1].Description != "mark the pull request ready" {
+		t.Fatalf("uses = %#v, want the ones this ask named", other.Uses)
+	}
+	if longer := ask(3600, "push the branch issue-43"); longer.ID == first.ID {
+		t.Fatal("an ask for a different lifetime was answered with the open request")
+	}
+	if again := ask(0, "fetch main", "mark the pull request ready"); again.ID != other.ID {
+		t.Fatalf("a retry created %s, want the open request %s it repeats", again.ID, other.ID)
+	}
+}
+
 // How long the agent asks to keep the credential is kept with the ask, for the
 // approval to open on. It is not held against any secret's limit here — which
 // secret answers is the approval's choice — but a negative one is refused.

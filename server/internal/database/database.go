@@ -452,7 +452,7 @@ func migrateSecretTypes(db *gorm.DB) error {
 // Grant matching itself normalizes both sides (hostscope.Covers, in Go), but
 // stored hosts are still compared as written elsewhere: an open request is
 // found again by SQL equality on its host (FindPendingSecretRequest,
-// FindPendingAgentCredentialRequest), and the host is part of the secret
+// FindPendingAgentCredentialRequests), and the host is part of the secret
 // uniqueness index. A row written with any other casing therefore misses those
 // lookups and escapes that index. New writes are normalized by the secrets
 // service; this repairs the rows written before it was.
