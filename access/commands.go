@@ -264,7 +264,12 @@ func runWrapped(ctx context.Context, args []string) int {
 	// Judged before the value is taken (ADR 0079 §1), so a refusal mints no
 	// ephemeral sentinel and leaves no activation behind for a command that
 	// never ran.
-	verdict, judgeErr := judgeCommand(ctx, credential, use, command)
+	//
+	// What the command will read on stdin is read first, bounded, because for
+	// a command that takes its request there it is what the command does
+	// (ADR 26-09-27-905).
+	stdin := readStdin(ctx, os.Stdin)
+	verdict, judgeErr := judgeCommand(ctx, credential, use, command, stdin)
 	if judgeErr != nil {
 		// A denial never reaches Get, and so would leave no record on trusted
 		// ground at all if this stopped here. Reporting it is best-effort — its
@@ -284,10 +289,27 @@ func runWrapped(ctx context.Context, args []string) int {
 	//nolint:gosec // Running the caller's own command is this subcommand's entire purpose.
 	child := exec.CommandContext(ctx, command[0], command[1:]...)
 	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
+	var pipe *os.File
+	if stdin != nil {
+		// Exactly what was sent: the bytes read for the judge, then the rest.
+		if pipe, err = stdin.Pipe(); err != nil {
+			return out.report(err)
+		}
+		child.Stdin = pipe
+	}
 	// The value replaces any same-named variable already in the environment
 	// rather than joining it, so a stale export cannot shadow the fresh value.
 	child.Env = append(withoutEnv(childEnviron(), result.EnvVar), result.EnvVar+"="+result.Value)
-	if err := child.Run(); err != nil {
+	err = child.Start()
+	if pipe != nil {
+		// The child holds its own copy now. Closing ours leaves it the only
+		// reader, so the feed stops at its first write after the child exits.
+		_ = pipe.Close()
+	}
+	if err == nil {
+		err = child.Wait()
+	}
+	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			// The child's status is the wrapper's status, as with env(1): the

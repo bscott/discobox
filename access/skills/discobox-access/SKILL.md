@@ -187,6 +187,11 @@ discobox-access run --use use_7f3a2b -- gh pr create --fill
   approved use is refused with `denied` and never starts. If you need something
   else, ask for it in step 2 rather than stretching an existing use.
 - Everything after `--` is your command, run exactly as written.
+- What your command reads on stdin — a here-document, a file, a pipe — is shown
+  to the checker with it, up to 8 KiB, and your command still reads every
+  byte. A command that takes its request on stdin (`discobox new --json`,
+  `gh api --input -`) is judged by that request, so keep it to what the use
+  approves; past 8 KiB the checker is told it was not shown the rest.
 
 There is no command that prints the value on its own. `run` is the only way to
 use one — if what you need to run cannot be `exec`'d directly, wrap it in a

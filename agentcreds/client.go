@@ -185,7 +185,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	if out == nil {
 		return nil
 	}
-	return json.NewDecoder(io.LimitReader(resp.Body, maxBodyBytes)).Decode(out)
+	return json.NewDecoder(io.LimitReader(resp.Body, MaxBodyBytes)).Decode(out)
 }
 
 // statusError maps a response back onto the package's sentinel errors, so a
@@ -196,7 +196,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 // implementation that classified its own failure knows more than the status
 // line does, and the code is the part a caller branches on.
 func statusError(resp *http.Response) error {
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, MaxBodyBytes))
 	message := strings.TrimSpace(string(data))
 	var parsed ErrorResponse
 	if json.Unmarshal(data, &parsed) == nil && strings.TrimSpace(parsed.Error) != "" {

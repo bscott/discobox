@@ -121,7 +121,9 @@ func usage(w io.Writer) {
 
       COMMAND is judged against the use it was approved for before it runs, by
       a model reached through %[5]s. A command broader than the
-      approved use is refused with code "denied" and never started.
+      approved use is refused with code "denied" and never started. What
+      COMMAND reads on stdin, from a file or a pipe, is shown to it too, up to
+      8 KiB; COMMAND still reads every byte.
 
   %[1]s request [ID] [--json] [flags]
       Ask a human for a credential. Returns a request id immediately unless

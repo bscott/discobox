@@ -149,12 +149,14 @@ func NewHandler(svc Service) http.Handler {
 	return mux
 }
 
-// maxBodyBytes bounds a request body. Every body in this protocol is a handful
-// of short strings, so anything larger is a mistake or an attack.
-const maxBodyBytes = 64 << 10
+// MaxBodyBytes bounds a request body. Every body in this protocol is a
+// handful of short strings and one verdict, whose prompt a caller keeps small
+// enough to fit here even escaped, so anything larger is a mistake or an
+// attack.
+const MaxBodyBytes = 64 << 10
 
 func decode(w http.ResponseWriter, r *http.Request, target any) bool {
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes)).Decode(target); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxBodyBytes)).Decode(target); err != nil {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{
 			Error: fmt.Sprintf("parse request body: %v", err),
 			Code:  CodeInvalid,

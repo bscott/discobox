@@ -48,7 +48,7 @@ shape, so they deliberately do not get the same interface.
 
 | Operation | Input | Why |
 | --- | --- | --- |
-| `run` | argv after `--` | The declared command **is** the argv executed. Encoding it as JSON inserts a translation step between what the model wrote and what runs, and costs the child's exit status. |
+| `run` | argv after `--`, and whatever the command reads on stdin | The declared command **is** the argv executed. Encoding it as JSON inserts a translation step between what the model wrote and what runs, and costs the child's exit status. A command that takes its request on stdin (`discobox new --json`, `gh api --input -`) is judged with it: see the judge, below. |
 | `request` | JSON on stdin (`--json`), or flags, after an optional well-known ID | Nested, and carries free text — a justification and use descriptions — through a shell that reads quotes and apostrophes as syntax. A well-known ID (`com.github.api`) stands in for the name, variable, and host, which the implementation fills from the root `wellknown` registry. |
 | `list` | nothing | — |
 | `trust` | a host argument and flags, or JSON on stdin (`--json`) | The protocol's trust verb (ADR 0149): ask for a host whose certificate the egress refuses to be trusted for this sandbox. It carries free text for the reason `request` does. Nothing is run under it, so there is nothing to judge here; the proxy judges every request to the trusted host against its uses. |
@@ -151,6 +151,22 @@ which pins `core.pager` and `diff.external` on the command line so the
 repository's own configuration cannot redirect a lookup into running something
 else; nothing here diffs or shows a patch today, so the guard is currently
 unreachable, but it costs nothing and stays true if that changes.
+
+After the argv comes what the command will read on stdin (`stdin.go`,
+[ADR 26-09-27-905](../docs/adr/26-09-27-905-the-command-judge-is-shown-a-bounded-stdin.md)),
+because for a command that takes its request there, the argv says nothing about
+what it does. When fd 0 is a file or a pipe, `run` reads up to
+`maxJudgedStdin` (8 KiB, so the verdict that records it fits one
+protocol body however JSON escapes it), waiting at most `stdinArrivalWait` (5 s) for it to
+end, and shows it between fence lines drawn fresh for each run, labeled as the
+agent's own words. What it did not show — past the bound, still arriving, not
+text, a failed read — is said. The child reads exactly what was sent: the bytes
+read for the judge as they arrive, then the rest of fd 0. It gets them through an
+OS pipe `run` feeds rather than a reader exec copies, because exec waits for
+that copy: a writer holding stdin open would hold `run` open after its command
+exited. A terminal, a socket
+and a character device are passed through unread: an agent's shell tool hands
+its commands an open socket that never ends, and a terminal is a person.
 
 Three properties do the work:
 
