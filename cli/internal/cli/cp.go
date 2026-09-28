@@ -11,6 +11,7 @@ import (
 
 	apiclientgen "github.com/discobox-ai/discobox/api/gen"
 	"github.com/discobox-ai/discobox/endpoint"
+	idpkg "github.com/discobox-ai/x/id"
 )
 
 // newCPCommand implements `discobox cp`: scp(1), pointed at the same SSH
@@ -46,7 +47,8 @@ local path.
 Both ends may name a discobox, and they need not be the same discobox — but
 they must be on the same server, since one copy runs over one connection. An
 address says which server that is, and a name or a bare :PATH beside one is
-looked up there rather than on the primary.
+looked up there rather than on the primary. Without an address, each one is
+looked for on every server "discobox ls" lists.
 
 Relative remote paths are resolved from the discobox user's home directory, not
 from a source working tree.
@@ -138,7 +140,9 @@ type cpTarget struct {
 // address. One scp runs over one bridge, so a second address naming a
 // different server is refused rather than half-copied; a name or an ID in the
 // same command then resolves on the server the address chose, which is the
-// only one this copy can reach.
+// only one this copy can reach. With no address, every reference is looked for
+// on every server (ADR 0116 §4) once there is more than one, and the server
+// they are on is the one the copy runs against.
 func (a *App) resolveCPTarget(cmd *cobra.Command, operands []cpOperand) (cpTarget, error) {
 	target := cpTarget{app: a, resolved: map[string]string{}}
 	// Everything decidable from the operands is decided first, so a copy this
@@ -192,6 +196,13 @@ func (a *App) resolveCPTarget(cmd *cobra.Command, operands []cpOperand) (cpTarge
 	if target.client != nil {
 		return target, nil
 	}
+	set, err := a.servers()
+	if err != nil {
+		return cpTarget{}, err
+	}
+	if len(set) > 1 {
+		return a.resolveCPTargetOnEveryServer(cmd, set, operands)
+	}
 	projectID, err := a.projectIDValue()
 	if err != nil {
 		return cpTarget{}, err
@@ -202,6 +213,56 @@ func (a *App) resolveCPTarget(cmd *cobra.Command, operands []cpOperand) (cpTarge
 	}
 	target.projectID, target.client = projectID, client
 	return target, nil
+}
+
+// resolveCPTargetOnEveryServer is resolveCPTarget for a copy that names no
+// address once more than one server is known (ADR 0116 §4). Each distinct
+// reference is resolved by resolveCPSandbox's rule across every server, and
+// the copy runs against the server they are on — which has to be one server,
+// for the reason an address has to be.
+func (a *App) resolveCPTargetOnEveryServer(cmd *cobra.Command, set []*server, operands []cpOperand) (cpTarget, error) {
+	var (
+		on          *server
+		firstID     string
+		candidates  []serverSandbox
+		unreachable []unansweredServer
+		listed      bool
+	)
+	resolved := map[string]string{}
+	for _, operand := range operands {
+		if !operand.remote {
+			continue
+		}
+		if _, seen := resolved[operand.reference]; seen {
+			continue
+		}
+		// Listed once, and only for a reference that needs it: a copy naming
+		// its discoboxes by full ID asks for them and nothing else.
+		if !listed && !idpkg.IsGenerated(operand.reference) {
+			var err error
+			if candidates, unreachable, err = a.sandboxCandidates(cmd.Context(), false); err != nil {
+				return cpTarget{}, err
+			}
+			listed = true
+		}
+		s, sandboxID, err := a.resolveCPSandboxOnEveryServer(cmd, set, candidates, unreachable, operand.reference)
+		if err != nil {
+			return cpTarget{}, err
+		}
+		if on != nil && s != on {
+			return cpTarget{}, fmt.Errorf("one copy reaches one server, and these discoboxes are on two (%s on %s, %s on %s): copy through this machine in two commands",
+				firstID, on.name, sandboxID, s.name)
+		}
+		if on == nil {
+			on, firstID = s, sandboxID
+		}
+		resolved[operand.reference] = sandboxID
+	}
+	projectID, client, err := on.projectClient(cmd.Context())
+	if err != nil {
+		return cpTarget{}, err
+	}
+	return cpTarget{app: on.app, client: client, projectID: projectID, resolved: resolved}, nil
 }
 
 // cpOperand is one path to copy, as written: local, or inside the discobox a
@@ -341,8 +402,8 @@ func (a *App) resolveCPSandbox(cmd *cobra.Command, client *apiclientgen.Client, 
 	}
 	if reference == "" {
 		return pickOne(cmd, "Select a discobox", sandboxPickerItems(sandboxes, ""), pickerOptions{
-			empty:     "no discoboxes were started from this directory; start one with `discobox new`, or name one before the colon",
-			ambiguous: "more than one discobox was started from this directory; name one before the colon",
+			empty:     cpPickEmpty,
+			ambiguous: cpPickAmbiguous,
 			recentKey: "sandbox:" + projectID,
 			expand:    a.sandboxPickerExpansion(cmd.Context(), client, projectID),
 		})
@@ -350,6 +411,43 @@ func (a *App) resolveCPSandbox(cmd *cobra.Command, client *apiclientgen.Client, 
 	// configuredName: what cp accepts before a colon is `shell`'s rule, and
 	// widening it to the window title is a change to cp, not to this command.
 	return a.resolveSandboxReference(cmd.Context(), client, projectID, reference, sandboxes, configuredName)
+}
+
+// What cp's picker says when a bare :PATH has no discobox, or more than one,
+// to mean: the way out is a reference before the colon.
+const (
+	cpPickEmpty     = "no discoboxes were started from this directory; start one with `discobox new`, or name one before the colon"
+	cpPickAmbiguous = "more than one discobox was started from this directory; name one before the colon"
+)
+
+// resolveCPSandboxOnEveryServer is resolveCPSandbox across every server, and
+// the server the discobox is on. candidates is what `discobox ls` lists across
+// them, which a full generated ID does not need: that is asked of every server
+// directly, the primary first.
+//
+// The rest keeps resolveSandboxReference's asymmetry. A name or short ID is
+// matched among the candidates; a short ID that matches none is still looked
+// for project-wide, on every server; a name that matches none is an error.
+func (a *App) resolveCPSandboxOnEveryServer(cmd *cobra.Command, set []*server, candidates []serverSandbox, unreachable []unansweredServer, reference string) (*server, string, error) {
+	if reference == "" {
+		return a.pickServerSandbox(cmd, set, candidates, unreachable, cpPickEmpty, cpPickAmbiguous)
+	}
+	if idpkg.IsGenerated(reference) {
+		s, _, sandboxID, _, err := a.findOnEveryServer(cmd.Context(), set, reference)
+		return s, sandboxID, err
+	}
+	// configuredName, as in resolveCPSandbox.
+	if s, sandboxID, ok, err := matchServerSandboxArg(reference, candidates, configuredName); err != nil || ok {
+		return s, sandboxID, err
+	}
+	if !isResolvableShortID(reference) {
+		return nil, "", unmatchedSandboxName(reference)
+	}
+	s, _, sandboxID, _, err := a.findOnEveryServer(cmd.Context(), set, reference)
+	if err != nil {
+		return nil, "", unmatchedSandboxReference(reference, err)
+	}
+	return s, sandboxID, nil
 }
 
 // splitCPPath decides whether an operand names a discobox, and splits it if it

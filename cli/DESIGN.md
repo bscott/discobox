@@ -484,6 +484,17 @@ is an error rather than a lost convenience.
   server at once, so an ID copied from `ls` works whichever server listed it.
   The picker lists every server; a registered server's rows say `on <name>`
   and are keyed `<name>/<id>`, which is how the pick says where to go.
+- **A reference typed beside a command follows the same rule.** `shell` (and
+  `tools ssh`, `tools run`, which share `resolveShellTarget`) and `cp` match a
+  name or short ID by `matchSandboxArg`'s rules, and with one server that is
+  unchanged. With more than one, a full generated ID goes to
+  `findOnEveryServer` rather than being trusted onto the primary, a name or
+  short ID is matched against the cross-server `ls` candidates and routed to
+  the row's server (`matchServerSandboxArg`), and the picker is
+  `pickServerSandbox` — `selectSandbox`'s own, over candidates the caller has
+  already listed, in the caller's words. `findOnEveryServer` and the picker
+  answer with the `*server`, so a caller comparing where two discoboxes are
+  can name both.
 - **The console routes two ways.** A call about one discobox finds its server
   from the ID the listing located it under (`apiDataSource.at`). A call about
   a server's configuration — harnesses, secrets, grants, answering a
@@ -519,10 +530,13 @@ is an error rather than a lost convenience.
   contacted, and so before an address registers its server — that they name one
   server, refuses two, and then resolves each address there. **A name or a bare
   `:PATH` in the same command resolves on that server too**, not on the
-  primary: it is the only server the copy can reach. What stays the primary's
-  is a *name* when no address is present, unique only within the directory that
-  issued it on one server (`matchSandboxArg`), and completion, since a
-  registered server that is down would hang a shell's tab.
+  primary: it is the only server the copy can reach. With no address present,
+  each distinct reference is resolved across every server
+  (`resolveCPTargetOnEveryServer`) — a short ID matching no candidate is still
+  looked for project-wide on each, a name matching none is an error — and
+  references that land on two servers are refused like two addresses are.
+  What stays the primary's is completion, since a registered server that is
+  down would hang a shell's tab.
 
 ## The Server Is a Separate Program
 

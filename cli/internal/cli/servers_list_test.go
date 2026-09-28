@@ -1221,6 +1221,92 @@ func TestShellTargetRoutesAnAddress(t *testing.T) {
 	}
 }
 
+// A discobox on a registered server is reached by its ID or its name as well
+// as by its address (ADR 0116 §4): shell, tools ssh and tools run resolve the
+// first argument across every server rather than trusting it to the primary.
+func TestShellTargetFindsADiscoboxOnARegisteredServer(t *testing.T) {
+	useTempServersFile(t)
+	primary := fakeServer(t, "alpha", sandboxA)
+	other := fakeServer(t, "beta", sandboxB)
+	registerForTest(t, registeredServer{Name: "beta", Address: other.URL})
+
+	app := &App{serverURL: primary.URL, projectID: "project-1"}
+	for _, reference := range []string{sandboxB, "box-b"} {
+		cmd, _ := commandForTest()
+		target, projectID, sandboxID, _, args, err := app.resolveShellTarget(cmd, []string{reference, "ls"})
+		if err != nil {
+			t.Fatalf("resolveShellTarget(%s) error = %v", reference, err)
+		}
+		if target.serverURL != other.URL || projectID != defaultProjectAlias || sandboxID != sandboxB {
+			t.Fatalf("resolveShellTarget(%s) = %s %s %s, want beta's discobox", reference, target.serverURL, projectID, sandboxID)
+		}
+		if !reflect.DeepEqual(args, []string{"ls"}) {
+			t.Fatalf("resolveShellTarget(%s) command = %v, want the reference consumed", reference, args)
+		}
+	}
+
+	// The primary's discobox is still the primary's, and a word that names no
+	// discobox is still the command.
+	cmd, _ := commandForTest()
+	target, _, sandboxID, _, _, err := app.resolveShellTarget(cmd, []string{"box-a"})
+	if err != nil || target != app || sandboxID != sandboxA {
+		t.Fatalf("resolveShellTarget(box-a) = %v %s %v, want the primary's", target, sandboxID, err)
+	}
+	if _, _, _, _, _, err := app.resolveShellTarget(cmd, []string{"vim"}); err == nil || !strings.Contains(err.Error(), "name the discobox as the first argument") {
+		t.Fatalf("resolveShellTarget(vim) error = %v, want vim left as the command and the picker asked", err)
+	}
+}
+
+// cp resolves what stands before the colon across every server too, and the
+// copy runs against the server the discobox is on.
+func TestCPFindsADiscoboxOnARegisteredServer(t *testing.T) {
+	useTempServersFile(t)
+	primary := fakeServer(t, "alpha", sandboxA)
+	other := fakeServer(t, "beta", sandboxB)
+	registerForTest(t, registeredServer{Name: "beta", Address: other.URL})
+
+	app := &App{serverURL: primary.URL, projectID: "project-1"}
+	for _, reference := range []string{sandboxB, "box-b"} {
+		cmd, _ := commandForTest()
+		operands := parseCPOperands([]string{reference + ":/tmp/x", "."})
+		target, err := app.resolveCPTarget(cmd, operands)
+		if err != nil {
+			t.Fatalf("resolveCPTarget(%s) error = %v", reference, err)
+		}
+		if target.app.serverURL != other.URL || target.projectID != defaultProjectAlias {
+			t.Fatalf("resolveCPTarget(%s) runs against %s in %s, want beta", reference, target.app.serverURL, target.projectID)
+		}
+		rewritten, err := target.app.resolveCPOperands(cmd, target.client, target.projectID, operands, target.resolved)
+		if err != nil {
+			t.Fatalf("resolveCPOperands(%s) error = %v", reference, err)
+		}
+		if !strings.HasPrefix(rewritten[0], sandboxB+"@") || !strings.HasSuffix(rewritten[0], ":/tmp/x") {
+			t.Fatalf("operand = %q, want it rewritten for beta's discobox", rewritten[0])
+		}
+	}
+
+	cmd, _ := commandForTest()
+	if _, err := app.resolveCPTarget(cmd, parseCPOperands([]string{"no-box:/tmp/x", "."})); err == nil || !strings.Contains(err.Error(), `no discobox named "no-box"`) {
+		t.Fatalf("resolveCPTarget(no-box) error = %v, want an unknown name refused", err)
+	}
+}
+
+// Operands naming discoboxes on two servers are refused, as two addresses are:
+// one copy reaches one server.
+func TestCPRefusesDiscoboxesOnTwoServers(t *testing.T) {
+	useTempServersFile(t)
+	primary := fakeServer(t, "alpha", sandboxA)
+	other := fakeServer(t, "beta", sandboxB)
+	registerForTest(t, registeredServer{Name: "beta", Address: other.URL})
+
+	app := &App{serverURL: primary.URL, projectID: "project-1"}
+	cmd, _ := commandForTest()
+	_, err := app.resolveCPTarget(cmd, parseCPOperands([]string{sandboxA + ":/tmp/x", "box-b:/tmp/y"}))
+	if err == nil || !strings.Contains(err.Error(), "one copy reaches one server") || !strings.Contains(err.Error(), "on beta") {
+		t.Fatalf("resolveCPTarget() error = %v, want two servers refused by name", err)
+	}
+}
+
 // cp takes a discobox's address like every other command that takes a
 // discobox (ADR 0116 §6): the operand splits at the colon that ends the
 // discobox, not at the one in the scheme, and the copy runs against the server

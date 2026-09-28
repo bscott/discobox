@@ -129,6 +129,8 @@ func trimCommandSeparator(args []string) []string {
 // DISCOBOX_ID and leaves the rest as the command. No match — including no
 // args at all — means every argument is the command, and the sandbox falls
 // back to the same picker `discobox apply` uses when DISCOBOX_ID is omitted.
+// With more than one server known, the candidates and the picker are every
+// server's (resolveShellTargetOnEveryServer).
 //
 // A leading -- turns that guess off. It is the one case where the caller has
 // said outright that no argument names a sandbox, so `discobox shell -- ls` runs
@@ -154,6 +156,13 @@ func (a *App) resolveShellTarget(cmd *cobra.Command, args []string) (app *App, p
 			app, projectID, sandboxID, client, err = a.selectSandbox(cmd, args[0])
 			return app, projectID, sandboxID, client, args[1:], err
 		}
+	}
+	set, err := a.servers()
+	if err != nil {
+		return nil, "", "", nil, nil, err
+	}
+	if len(set) > 1 {
+		return a.resolveShellTargetOnEveryServer(cmd, set, namesSandbox, args)
 	}
 	projectID, err = a.projectIDValue()
 	if err != nil {
@@ -192,6 +201,52 @@ func (a *App) resolveShellTarget(cmd *cobra.Command, args []string) (app *App, p
 		expand:    a.sandboxPickerExpansion(cmd.Context(), client, projectID),
 	})
 	return a, projectID, sandboxID, client, args, err
+}
+
+// resolveShellTargetOnEveryServer is resolveShellTarget once more than one
+// server is known (ADR 0116 §4): the same rules, over what `discobox ls` lists
+// across every server, and the answer aimed at the server the discobox is on.
+// A full generated ID is asked of every server, the primary first; a name or a
+// short ID is matched among the listed candidates and routed to the server its
+// row came from; and the picker spans every server. An argument that names
+// none of them is still the command, as it is with one server.
+func (a *App) resolveShellTargetOnEveryServer(cmd *cobra.Command, set []*server, namesSandbox bool, args []string) (*App, string, string, *apiclientgen.Client, []string, error) {
+	ctx := cmd.Context()
+	if namesSandbox && len(args) > 0 && idpkg.IsGenerated(args[0]) {
+		target, projectID, sandboxID, client, err := a.findOnEveryServer(ctx, set, args[0])
+		if err != nil {
+			return nil, "", "", nil, nil, err
+		}
+		return target.app, projectID, sandboxID, client, args[1:], nil
+	}
+	candidates, unreachable, err := a.sandboxCandidates(ctx, false)
+	if err != nil {
+		return nil, "", "", nil, nil, err
+	}
+	target, sandboxID, rest := (*server)(nil), "", args
+	if namesSandbox && len(args) > 0 {
+		// configuredName, for the reason resolveShellTarget gives.
+		matched, id, ok, err := matchServerSandboxArg(args[0], candidates, configuredName)
+		if err != nil {
+			return nil, "", "", nil, nil, err
+		}
+		if ok {
+			target, sandboxID, rest = matched, id, args[1:]
+		}
+	}
+	if target == nil {
+		target, sandboxID, err = a.pickServerSandbox(cmd, set, candidates, unreachable,
+			"no discoboxes were started from this directory; start one with `discobox new`, or name the discobox as the first argument",
+			"more than one discobox was started from this directory; name the discobox as the first argument")
+		if err != nil {
+			return nil, "", "", nil, nil, err
+		}
+	}
+	projectID, client, err := target.projectClient(ctx)
+	if err != nil {
+		return nil, "", "", nil, nil, err
+	}
+	return target.app, projectID, sandboxID, client, rest, nil
 }
 
 // nameMatch says which of a discobox's names an argument is allowed to be.

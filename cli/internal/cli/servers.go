@@ -551,14 +551,7 @@ func (a *App) listEveryServer(ctx context.Context, all bool, tags []string) ([]s
 func (s *server) listSandboxes(ctx context.Context, all bool, tags []string, named bool) ([]apimodel.Sandbox, error) {
 	ctx, cancel := s.bounded(ctx)
 	defer cancel()
-	if _, err := s.app.resolveServerAddress(ctx); err != nil {
-		return nil, err
-	}
-	projectID, err := s.app.projectIDValue()
-	if err != nil {
-		return nil, err
-	}
-	client, err := s.app.apiClient()
+	projectID, client, err := s.projectClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -574,6 +567,24 @@ func (s *server) listSandboxes(ctx context.Context, all bool, tags []string, nam
 	return sandboxes, nil
 }
 
+// projectClient is what a request to this server needs: the project it works
+// in and a client for its endpoint, which is resolved first so a server that
+// cannot be reached says so here rather than on the request.
+func (s *server) projectClient(ctx context.Context) (string, *apiclientgen.Client, error) {
+	if _, err := s.app.resolveServerAddress(ctx); err != nil {
+		return "", nil, err
+	}
+	projectID, err := s.app.projectIDValue()
+	if err != nil {
+		return "", nil, err
+	}
+	client, err := s.app.apiClient()
+	if err != nil {
+		return "", nil, err
+	}
+	return projectID, client, nil
+}
+
 // findSandbox looks for a discobox by ID, or by a prefix unique among this
 // server's, the way `discobox attach` takes one. found is false when the
 // server has no such discobox, which is a different answer from not being
@@ -581,14 +592,7 @@ func (s *server) listSandboxes(ctx context.Context, all bool, tags []string, nam
 func (s *server) findSandbox(ctx context.Context, value string) (projectID, sandboxID string, client *apiclientgen.Client, found bool, err error) {
 	ctx, cancel := s.bounded(ctx)
 	defer cancel()
-	if _, err := s.app.resolveServerAddress(ctx); err != nil {
-		return "", "", nil, false, err
-	}
-	projectID, err = s.app.projectIDValue()
-	if err != nil {
-		return "", "", nil, false, err
-	}
-	client, err = s.app.apiClient()
+	projectID, client, err = s.projectClient(ctx)
 	if err != nil {
 		return "", "", nil, false, err
 	}
@@ -648,8 +652,9 @@ func matchSandboxIDs(value string, ids []string) []string {
 // findOnEveryServer resolves a discobox ID across servers (ADR 0116 §4): the
 // primary first, as with one server, and the registered servers only when the
 // primary has no such discobox, so an ID copied from `discobox ls` works
-// whichever server listed it.
-func (a *App) findOnEveryServer(ctx context.Context, set []*server, value string) (*App, string, string, *apiclientgen.Client, error) {
+// whichever server listed it. It answers with the server rather than its App,
+// so a caller comparing where two discoboxes are can name both.
+func (a *App) findOnEveryServer(ctx context.Context, set []*server, value string) (*server, string, string, *apiclientgen.Client, error) {
 	value, err := parseIDArg(value, "discobox ID")
 	if err != nil {
 		return nil, "", "", nil, err
@@ -659,7 +664,7 @@ func (a *App) findOnEveryServer(ctx context.Context, set []*server, value string
 		return nil, "", "", nil, err
 	}
 	if found {
-		return a, projectID, sandboxID, client, nil
+		return set[0], projectID, sandboxID, client, nil
 	}
 
 	type hit struct {
@@ -704,7 +709,7 @@ func (a *App) findOnEveryServer(ctx context.Context, set []*server, value string
 	}
 	switch len(hits) {
 	case 1:
-		return hits[0].server.app, hits[0].projectID, hits[0].sandbox, hits[0].client, nil
+		return hits[0].server, hits[0].projectID, hits[0].sandbox, hits[0].client, nil
 	case 0:
 		if len(silent) > 0 {
 			return nil, "", "", nil, fmt.Errorf("no discobox matches %q on any server that answered; %s did not", value, strings.Join(silent, ", "))
