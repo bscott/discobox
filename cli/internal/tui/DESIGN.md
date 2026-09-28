@@ -164,6 +164,16 @@ credential means its access token too`. The renewal fields are prefilled from
 the stored credential, because those *are* readable, so rotating tokens does not
 mean retyping the endpoint.
 
+**The sentinel format is the card's last row** (`formFormat`), under its own
+heading, because it is an override almost nobody makes: the shape is read from
+the value, and the row sits off the path a person tabs down to store a
+credential. Only a *chosen* format opens filled in; one read from the value is
+the row's placeholder, so saving an untouched card sends no format and cannot
+turn a derived shape into a choice nobody made. Emptying a chosen one clears it.
+A template is parsed on the card with the server's parser (`secretformat`), so a
+mistyped one is refused with the card still up. Reading the credential says the
+format and whether it was set or read.
+
 **One form, one call** (`DataSource.UpdateSecret`, `SecretUpdate`). The host,
 the limit, the name and the value are one endpoint, and a card whose rows were
 saved by a call each would half-apply when the second failed and report two

@@ -356,6 +356,8 @@ func (d *apiDataSource) Secrets(ctx context.Context, server string) ([]tui.Secre
 				row.OAuth.AccessTokenExpiresAt = time.UnixMilli(expires).UTC()
 			}
 		}
+		row.Format = s.Format.Or("")
+		row.FormatSet = s.FormatSet.Or(false)
 		row.RefreshCommand = s.RefreshCommand.Or(nil)
 		row.ValueTTL = time.Duration(s.TtlSeconds.Or(0)) * time.Second
 		if staleAt, ok := s.StaleAt.Get(); ok {
@@ -393,6 +395,9 @@ func (d *apiDataSource) CreateSecret(ctx context.Context, server string, secret 
 	}
 	if id := strings.TrimSpace(secret.WellKnownID); id != "" {
 		body.SetWellKnownId(apiclientgen.NewOptString(id))
+	}
+	if format := strings.TrimSpace(secret.Format); format != "" {
+		body.SetFormat(apiclientgen.NewOptString(format))
 	}
 	// A token got from a command starts with a value, which the command is run
 	// here for, as `discobox secret create --refresh-command` does
@@ -472,6 +477,9 @@ func (d *apiDataSource) UpdateSecret(ctx context.Context, server, secretID strin
 	}
 	if update.ValueTTLSeconds != nil {
 		body.SetTtlSeconds(apiclientgen.NewOptInt64(*update.ValueTTLSeconds))
+	}
+	if update.Format != nil {
+		body.SetFormat(apiclientgen.NewOptString(strings.TrimSpace(*update.Format)))
 	}
 	res, err := d.client.UpdateSecret(ctx, body, apiclientgen.UpdateSecretParams{
 		ProjectId: d.projectID,

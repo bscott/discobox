@@ -8,6 +8,7 @@ import (
 
 	"github.com/discobox-ai/discobox/cli/internal/lifetime"
 	"github.com/discobox-ai/discobox/cli/internal/refreshcmd"
+	"github.com/discobox-ai/discobox/secretformat"
 	"github.com/discobox-ai/discobox/wellknown"
 
 	"charm.land/bubbles/v2/textinput"
@@ -700,6 +701,15 @@ func describeSecret(secret Secret, now time.Time) []section {
 	if secret.ValueTTL > 0 {
 		credential.fields = append(credential.fields, field{label: "a value lasts", value: lifetime.Label(secret.ValueTTL)})
 	}
+	// What stands in for it inside a discobox. A chosen shape is said as one,
+	// since it is the one that outlives a new value.
+	if secret.Format != "" {
+		f := field{label: "sentinels look like", value: secret.Format + " · read from the value", tone: toneDim}
+		if secret.FormatSet {
+			f = field{label: "sentinels look like", value: secret.Format + " · set", tone: toneAccent}
+		}
+		credential.fields = append(credential.fields, f)
+	}
 	if !secret.StaleAt.IsZero() {
 		stale := "stale " + ago(secret.StaleAt, now) + "; renewed when next needed"
 		if secret.StaleAt.After(now) {
@@ -1081,6 +1091,14 @@ func secretForm(existing *Secret) *form {
 	host.section = what
 	host.hint = "it covers that host and everything beneath it: github.com answers for api.github.com too · empty leaves the grants to decide alone"
 
+	// The shape of the sentinels that stand in for it, for a client that
+	// checks a key's prefix. Empty is the ordinary answer: the shape is read
+	// from the value, and re-read whenever the value changes.
+	format := textRow("format", "sentinels look like", "read from the value", "")
+	format.section = "inside a discobox"
+	const formatSlots = "{charset:length} slots, charset one of digits hex HEX lower upper alnum base62 base32 base64 base64url"
+	format.hint = formatSlots + " · e.g. sk-ant-oat01-{base64url:95}"
+
 	seconds := int64(0)
 	if editing {
 		seconds = int64(existing.MaxTTL / time.Second)
@@ -1187,6 +1205,15 @@ func secretForm(existing *Secret) *form {
 			}
 		}
 		host.input = valued(host.input, existing.Host)
+		// Only a chosen shape opens filled in: one read from the value is
+		// shown as what empty gives, so saving the card untouched does not
+		// turn it into a choice nobody made.
+		if existing.FormatSet {
+			format.input = valued(format.input, existing.Format)
+			format.hint = "empty reads it from the value · " + formatSlots
+		} else if existing.Format != "" {
+			format.input.Placeholder = "read from the value: " + existing.Format
+		}
 		if existing.OAuth != nil {
 			tokenURL.input = valued(tokenURL.input, existing.OAuth.TokenURL)
 			client.input = valued(client.input, existing.OAuth.ClientID)
@@ -1227,11 +1254,11 @@ func secretForm(existing *Secret) *form {
 	if editing {
 		rows = append(rows, plain, command)
 		rows = append(rows, lasts...)
-		return newForm(append(rows, access, refresh, tokenURL, client, scopes)...)
+		return newForm(append(rows, access, refresh, tokenURL, client, scopes, format)...)
 	}
 	rows = append(rows, source, command)
 	rows = append(rows, lasts...)
-	return newForm(append(rows, plain, access, refresh, tokenURL, client, scopes)...)
+	return newForm(append(rows, plain, access, refresh, tokenURL, client, scopes, format)...)
 }
 
 // wellKnownKind prefixes the kind a well-known credential is chosen by.
@@ -1305,11 +1332,17 @@ func (m *Model) newSecretForm() tea.Cmd {
 			f.err = "a limit is 1h, 90m, 3d, 2w, 1mo, or no limit"
 			return nil
 		}
+		format, why := formFormat(f)
+		if why != "" {
+			f.err = why
+			return nil
+		}
 		secret := NewSecret{
 			Name:          f.value("name"),
 			Type:          f.chosen("kind"),
 			Host:          f.value("host"),
 			MaxTTLSeconds: seconds,
+			Format:        format,
 			Value:         formSecretValue(f),
 		}
 		if known, ok := chosenWellKnown(f); ok {
@@ -1350,6 +1383,21 @@ func formSecretValue(f *form) SecretValue {
 		ClientID:     f.value("client"),
 		Scopes:       strings.Fields(f.value("scopes")),
 	}
+}
+
+// formFormat is the sentinel format the card asks for, empty for "read it from
+// the value", and why it cannot be sent. It is checked here with the parser
+// the server uses, so a mistyped template is refused on the card that holds
+// it rather than after the card has closed.
+func formFormat(f *form) (string, string) {
+	format := strings.TrimSpace(f.value("format"))
+	if format == "" {
+		return "", ""
+	}
+	if _, err := secretformat.ParseChosen(format); err != nil {
+		return "", "the sentinel format does not read (" + err.Error() + ") · it is text with {charset:length} slots"
+	}
+	return format, ""
 }
 
 func (m *Model) storeSecret(secret NewSecret) tea.Cmd {
@@ -1395,6 +1443,18 @@ func (m *Model) editSecretForm(server string, secret Secret) tea.Cmd {
 		}
 		if time.Duration(seconds)*time.Second != was.MaxTTL {
 			update.MaxTTLSeconds = &seconds
+		}
+		format, why := formFormat(f)
+		if why != "" {
+			f.err = why
+			return nil
+		}
+		wasFormat := ""
+		if was.FormatSet {
+			wasFormat = was.Format
+		}
+		if format != wasFormat {
+			update.Format = &format
 		}
 		value, why := replacementValue(f, was)
 		if why != "" {
@@ -1495,6 +1555,14 @@ func (m *Model) saveSecret(server, id string, was Secret, update SecretUpdate) t
 	}
 	if update.Value != nil {
 		did = append(did, "replaced "+was.Name+"'s value")
+	}
+	if update.Format != nil {
+		switch *update.Format {
+		case "":
+			did = append(did, was.Name+"'s sentinels are read from its value again")
+		default:
+			did = append(did, was.Name+"'s sentinels now look like "+*update.Format)
+		}
 	}
 	if update.ValueTTLSeconds != nil {
 		switch *update.ValueTTLSeconds {

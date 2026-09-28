@@ -1342,6 +1342,12 @@ type Secret struct {
 	RefreshCommand []string
 	ValueTTL       time.Duration
 	StaleAt        time.Time
+
+	// Format is the template the sentinels standing in for it are minted
+	// from, and FormatSet whether a person chose it rather than it being read
+	// from the value. A chosen one outlives the value it was set against.
+	Format    string
+	FormatSet bool
 }
 
 // SecretOAuth is the half of an OAuth credential that can be shown: where it
@@ -1437,6 +1443,10 @@ type NewSecret struct {
 	// start, so the first request for the ID binds it without asking.
 	WellKnownID string
 
+	// Format is the template its sentinels are minted from; empty reads it
+	// from the value.
+	Format string
+
 	Value SecretValue
 }
 
@@ -1476,6 +1486,9 @@ type SecretUpdate struct {
 	RefreshCommand *[]string
 	// ValueTTLSeconds replaces how long a value lasts; zero never goes stale.
 	ValueTTLSeconds *int64
+	// Format sets the template its sentinels are minted from; empty goes back
+	// to reading it from the value.
+	Format *string
 }
 
 // Approval is what a person decided about a request: which secret answers it,
