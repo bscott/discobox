@@ -327,11 +327,7 @@ type Model struct {
 	pulse    int
 	pulseGen int
 
-	focus focusArea
-	// leftPrompt is whether focus has been anywhere but the composer yet this
-	// session, by key or by click; Update sets it. The first Up out of the
-	// prompt lands at the top of the list; see leavePrompt.
-	leftPrompt  bool
+	focus       focusArea
 	optionsOpen bool
 	// secretsOpen is whether the secrets screen has the window, on the same
 	// terms the harnesses screen has it.
@@ -771,11 +767,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// pane on screen is one being read. Doing it here rather than at each of
 	// the several places focus can move means no new way to move it can forget.
 	m.markSeen()
-	// And for leaving the prompt: keys go through leavePrompt, but a click on
-	// the header moves focus without it.
-	if m.focus != focusPrompt {
-		m.leftPrompt = true
-	}
 	// Same reasoning for the band's clock: it runs while the credential band is
 	// up and stops with it, and here is the one place that sees every way it
 	// can come and go. See armBannerPulse.
@@ -1818,10 +1809,7 @@ func (m *Model) leavePrompt(landing listLanding) {
 	if m.list.visited {
 		return
 	}
-	// The window opens on the prompt, and the first Up out of it is reading
-	// the list, not stepping into the row above: it starts at the top. Only
-	// that first time — once focus has been out, Up lands nearest the prompt.
-	if landing == landLast && m.leftPrompt {
+	if landing == landLast {
 		m.list.moveTo(len(m.list.rows()) - 1)
 		return
 	}
