@@ -15,14 +15,14 @@ import (
 )
 
 // newCPCommand implements `discobox cp`: scp(1), pointed at the same SSH
-// ingress `discobox tools ssh` uses.
+// ingress `discobox tools ssh` uses, through the same ProxyCommand.
 //
 // Nothing here copies bytes. The server's sshd already answers the `sftp`
 // subsystem by running the sandbox's `sftp-server` as an exec
 // (`server/internal/sshd/session.go`), which is exactly what a modern scp
 // speaks, so the whole transfer — recursion, permissions, resumed directories —
 // is scp's and the sandbox's business. What this command owns is the one thing
-// scp cannot work out for itself: which loopback port, key and host key reach a
+// scp cannot work out for itself: which proxy, key and host key reach a
 // discobox, and which discobox a `NAME:PATH` argument means.
 func (a *App) newCPCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -53,10 +53,10 @@ looked for on every server "discobox ls" lists.
 Relative remote paths are resolved from the discobox user's home directory, not
 from a source working tree.
 
-The server needs no SSH port for this: the transfer is carried over the same
-endpoint the API uses, through a loopback port that exists only while the
-command runs. Key and host verification are supplied here, so nothing is written
-to your ssh_config; the key is enrolled in the project and reused on later runs.
+The server needs no SSH port for this: scp reaches it over the same endpoint
+the API uses, by running this CLI as its ProxyCommand. Key and host
+verification are supplied here, so nothing is written to your ssh_config; the
+key is enrolled in the project and reused on later runs.
 
 Every other argument is passed to scp untouched, so its own flags — -r, -p, -C,
 -o — mean what they always mean. That includes the ones this CLI otherwise
@@ -89,7 +89,7 @@ func (a *App) runCP(cmd *cobra.Command, args []string) error {
 	}
 	// The operands are read before anything is contacted, so a command that
 	// asks for a copy this cannot make — one with no discobox in it — says so
-	// without first starting a server or opening a bridge.
+	// without first starting a server or enrolling a key.
 	operands := parseCPOperands(paths)
 	if !slices.ContainsFunc(operands, func(operand cpOperand) bool { return operand.remote }) {
 		return fmt.Errorf("no discobox was named: write a path as DISCOBOX:PATH, or :PATH for this directory's discobox")
@@ -103,18 +103,18 @@ func (a *App) runCP(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	bridge, err := target.app.startSSHBridgeSession(cmd, target.client, target.projectID)
+	session, err := target.app.startSSHClientSession(cmd, target.client, target.projectID)
 	if err != nil {
 		return err
 	}
-	defer bridge.close()
+	defer session.close()
 
-	return runOverSSHBridge(cmd, "scp", scpArgs(scpInvocation{
-		bridge:   scpBridgeArgs(bridge.port(), bridge.identity, bridge.knownHosts),
+	return runSSHClient(cmd, "scp", scpArgs(scpInvocation{
+		session:  session.options,
 		options:  options,
 		operands: rewritten,
 		remote:   cpOperandsAreRemote(operands),
-	}))
+	}), session.env)
 }
 
 // cpTarget is the server a copy runs against and what it took to decide: the
@@ -122,8 +122,8 @@ func (a *App) runCP(cmd *cobra.Command, args []string) error {
 // on the way, since an address resolves as it is read.
 //
 // Every reference in one command resolves there, a name and a bare `:PATH`
-// included: one scp runs over one bridge, so the server an address names is
-// the only one this copy can reach.
+// included: one scp runs one ProxyCommand, aimed at one server, so the server
+// an address names is the only one this copy can reach.
 type cpTarget struct {
 	app       *App
 	client    *apiclientgen.Client
@@ -137,7 +137,7 @@ type cpTarget struct {
 //
 // An address names its server (ADR 0116 §6), so the first one decides it —
 // and registers it, since it resolves through selectSandbox like every other
-// address. One scp runs over one bridge, so a second address naming a
+// address. One scp is pointed at one server, so a second address naming a
 // different server is refused rather than half-copied; a name or an ID in the
 // same command then resolves on the server the address chose, which is the
 // only one this copy can reach. With no address, every reference is looked for
@@ -315,10 +315,10 @@ func cpOperandsAreRemote(operands []cpOperand) []bool {
 }
 
 // scpInvocation is everything the argument list is assembled from: what points
-// scp at the bridge, the user's own options, the rewritten operands, and which
-// of those operands are inside a discobox.
+// scp at the server (sshClientSession.options), the user's own options, the
+// rewritten operands, and which of those operands are inside a discobox.
 type scpInvocation struct {
-	bridge   []string
+	session  []string
 	options  []string
 	operands []string
 	remote   []bool
@@ -327,26 +327,26 @@ type scpInvocation struct {
 // scpArgs assembles the argument list in the order `scp [options] source ...
 // target` requires.
 func scpArgs(invocation scpInvocation) []string {
-	// Cloned, not appended to in place: scpBridgeArgs leaves spare capacity
-	// behind, and appending into a caller's slice would write past what it
-	// thinks it owns.
-	args := slices.Clone(invocation.bridge)
+	// Cloned, not appended to in place: appending into a caller's slice
+	// would write past what it thinks it owns.
+	args := slices.Clone(invocation.session)
 	last := len(invocation.remote) - 1
 	if last >= 0 && invocation.remote[last] && slices.Contains(invocation.remote[:last], true) {
 		// Discobox to discobox, routed through this process — the only place
-		// both ends are reachable from, since each is a loopback port on this
-		// machine that means nothing inside a sandbox. Current OpenSSH already
-		// routes an sftp-mode copy this way and -3 changes nothing there; it is
-		// pinned because the direct path is one `-R`, one older client, or one
-		// ssh_config default away, and it cannot work here — the source dials
-		// 127.0.0.1:22 inside its own sandbox and is refused.
+		// both ends are reachable from, since each is a host alias whose
+		// ProxyCommand runs on this machine and means nothing inside a
+		// sandbox; each end runs its own. Current OpenSSH already routes an
+		// sftp-mode copy this way and -3 changes nothing there; it is pinned
+		// because the direct path is one `-R`, one older client, or one
+		// ssh_config default away, and it cannot work here — the source would
+		// look up the destination's alias inside its own sandbox and fail.
 		args = append(args, "-3")
 	}
 	args = append(args, invocation.options...)
 	// `--` ends scp's options for good: a rewritten remote operand is
-	// `sbx_…@127.0.0.1:…` and can never look like a flag, but a local one the
-	// user wrote as `-x` still would, and scp reads options after operands the
-	// way glibc's getopt permutes them.
+	// `sbx_…@sbx_….discobox.internal:…` and can never look like a flag, but a
+	// local one the user wrote as `-x` still would, and scp reads options after
+	// operands the way glibc's getopt permutes them.
 	args = append(args, "--")
 	return append(args, invocation.operands...)
 }
@@ -376,7 +376,7 @@ func (a *App) resolveCPOperands(cmd *cobra.Command, client *apiclientgen.Client,
 			}
 			resolved[operand.reference] = sandboxID
 		}
-		rewritten = append(rewritten, sandboxID+"@"+sshBridgeHost+":"+operand.path)
+		rewritten = append(rewritten, sandboxID+"@"+sshClientHost(sandboxID)+":"+operand.path)
 	}
 	return rewritten, nil
 }

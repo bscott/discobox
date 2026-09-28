@@ -181,10 +181,11 @@ router as the API.
 There is no TCP listener (ADR 0057): a port to configure, publish, and
 firewall would buy nothing the route does not already provide. SSH is
 reachable wherever the API is, which is the property every client needs:
-`discobox tools ssh` splices a loopback port onto this route, and a persisted
-`ssh_config` reaches it through a `ProxyCommand` that runs `discobox admin
-ssh-proxy` — which is how every tool built on the `ssh` binary rather than on
-our client gets in: VS Code Remote-SSH, `scp`, `git`. See `cli/DESIGN.md`.
+every client reaches it through a `ProxyCommand` that runs `discobox admin
+ssh-proxy` — written into a persisted `ssh_config`, or passed on the command
+line by `discobox tools ssh` and `discobox cp` — which is how every tool built
+on the `ssh` binary rather than on our client gets in: VS Code Remote-SSH,
+`scp`, `git`. See `cli/DESIGN.md`.
 
 The route is exempt from HTTP auth (`auth.IsPublicPath`): SSH authenticates by
 public key inside its own protocol, before any channel exists, and an HTTP

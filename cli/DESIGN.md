@@ -384,7 +384,7 @@ is an error rather than a lost convenience.
   auto-started; the server's default project, since a project ID names a
   project on one server; and no `--token`, which was given for the primary.
   Every path to "the server" — the API client, the git transport, the
-  terminals, the ssh bridge, the child commands the console runs — reads the
+  terminals, the ssh ProxyCommand, the child commands the console runs — reads the
   App it is on, so aiming one is the whole of routing.
 - **`App.servers`** is the set, the primary first, read once per invocation. A
   primary that is also registered is listed once, under its registered name:
@@ -525,8 +525,8 @@ is an error rather than a lost convenience.
   is the home directory exactly as `mybox:` is; a `?` is a query this cannot
   split past, since `?addr=` holds `host:port` and the colon after it is as
   likely the port's as the path's, so such an operand is refused by name with
-  `discobox admin remote add` as the way round it. One scp runs over one
-  bridge, so `resolveCPTarget` decides from the operands alone — before anything is
+  `discobox admin remote add` as the way round it. One scp is pointed at
+  one server, so `resolveCPTarget` decides from the operands alone — before anything is
   contacted, and so before an address registers its server — that they name one
   server, refuses two, and then resolves each address there. **A name or a bare
   `:PATH` in the same command resolves on that server too**, not on the
@@ -883,25 +883,33 @@ directory. With a full `--discobox-id` the whole command is create + attach +
 start + status, so a one-shot `discobox t git status` costs no round trip it does
 not need.
 
-`discobox tools ssh` needs no SSH port on the server. The session is carried over
-the endpoint the CLI already uses: a loopback TCP port opened for the life of
-the command splices each connection to a `GET /ssh/connect` websocket, whose
-byte stream the server hands to its in-process sshd — which binds no listener
-of its own; `/ssh/connect` is the only way in (ADR 0057).
-`endpoint.StartLoopbackProxy` cannot serve this — it is an HTTP reverse proxy,
-and these are not HTTP bytes.
+`discobox tools ssh` needs no SSH port on the server. ssh reaches the server's
+in-process sshd the one way anything does — a `GET /ssh/connect` websocket,
+whose byte stream the server hands to the sshd, which binds no listener of its
+own (ADR 0057) — through the same `ProxyCommand` the emitted ssh_config names:
+this executable, `--server` the server the discobox is on (the App resolution
+returned), `admin ssh-proxy`. There is one path to the sshd, not a second one
+for commands this CLI runs itself; ssh starts the proxy per connection, so
+nothing listens and the connection does not depend on this process staying up.
 
 Everything the session needs is passed on the command line, so nothing is
-written down: address and port from the bridge, `-l` from the sandbox ID, `-i`
-from the managed key, and `UserKnownHostsFile` from a temp file holding the
-host key this run fetched. `sshBridgeSession` opens those three together —
-key, host key, bridge — because a bridge with no pinned host key is a
-connection nothing can verify; `discobox cp` uses the same one, differing only
-in how the client spells the port and names the sandbox. `-F none` keeps the
-user's own `ssh_config` out of it, since a `Host *` block there could otherwise
-override the identity or user just resolved. The enrolled key is the single
-persisted thing, and `resolveSSHIdentity` reuses an already-enrolled one rather
-than adding another.
+written down: `-o ProxyCommand=` quoted by `sshTarget.proxyCommandLine` and
+percent-escaped exactly as the written config spells it, `-l` from the sandbox
+ID, `-i` from the managed key, and `HostKeyAlias` — the project's
+`<project>.discobox.internal`, the alias `admin ssh-config` pins under — with
+`UserKnownHostsFile` naming a temp file holding the host key this run fetched.
+The host argument is `<sandbox id>.discobox.internal`, which resolves to
+nothing and only names the discobox in ssh's messages. `startSSHClientSession`
+assembles those for `tools ssh` and `discobox cp` alike, which differ only in
+how the client names the user. The proxy's command line carries only
+`--server`; the token and iroh settings the App dials with reach it through
+the environment (`sshProxyEnv`), set outright so an App aimed at a registered
+server — which carries no `--token` — does not hand it one inherited for the
+primary. `-F none` keeps the user's own `ssh_config` out of it, since a
+`Host *` block there could otherwise override the identity, user or proxy just
+resolved. The enrolled key is the single persisted thing, and
+`resolveSSHIdentity` reuses an already-enrolled one rather than adding
+another.
 
 Flag parsing is **off** for `tools ssh` (`DisableFlagParsing`), not merely
 non-interspersed: `discobox tools ssh -L 8080:localhost:3000` puts ssh's own flags
@@ -915,12 +923,13 @@ the user's options from their remote command and places them either side of it.
 Appending everything after the host only works on glibc, whose getopt permutes
 argv; anywhere else every option would be sent to the remote as a command.
 
-`ssh -f` is refused rather than passed through. It forks and returns, and the
-bridge lives in this process, so honouring it would silently tear the
-connection down under the backgrounded ssh. Backgrounding the whole command keeps both lifetimes
-together and leaves one process to kill.
+`ssh -f` is passed through like any other option. The proxy is ssh's own child,
+so a backgrounded ssh keeps its connection after this command returns. ssh
+goes to the background only after the host key is verified and the user
+authenticated, which is all the temporary known_hosts removed on the way out
+was for.
 
-`discobox cp` is `scp`, pointed at the same bridge (`internal/cli/cp.go`). It is
+`discobox cp` is `scp`, pointed at the same ProxyCommand (`internal/cli/cp.go`). It is
 a root command rather than a `tools` subcommand because it is an everyday verb
 with no `--discobox-id` to inherit: which sandbox is named inside each path.
 
@@ -932,8 +941,8 @@ business. A `cp` built on the exec primitive instead — a `tar` pipe, the way
 `docker cp` and `kubectl cp` work — would have reimplemented all of that against
 a sandbox image that may or may not have `tar`, to reach the same place.
 
-What the command owns is the two things scp cannot work out: the bridge's port,
-key and pinned host key, and what a `DISCOBOX:PATH` operand means. The reference
+What the command owns is the two things scp cannot work out: the proxy, key
+and pinned host key, and what a `DISCOBOX:PATH` operand means. The reference
 before the colon is resolved by `shell`'s rule (`matchSandboxArg`), not
 `--discobox-id`'s: it is typed alongside a path, so a name has to work there.
 `selectSandbox` is deliberately not used for it — given a non-empty argument it
@@ -942,12 +951,13 @@ username no sandbox answers to.
 
 `splitSCPArgs` finds the operands — scp's option table is needed for that, so
 `-o ProxyJump=x` is not read as a path — and `resolveCPOperands` rewrites each
-one to `<sandbox id>@127.0.0.1:<path>`. The sandbox travels in the operand
+one to `<sandbox id>@<sandbox id>.discobox.internal:<path>`. The sandbox travels in the operand
 rather than in a `-l`, so one command can name two different discoboxes; when it
 does, `-3` is added. Current OpenSSH already routes an sftp-mode copy through
 the local host and `-3` changes nothing there — it is pinned because the direct
 path is one `-R`, one older client, or one `ssh_config` default away, and it
-cannot work here: the source would dial `127.0.0.1:22` inside its own sandbox.
+cannot work here: the source would look up the destination's alias inside its
+own sandbox, where no ProxyCommand reaches it. With `-3` each end runs its own.
 
 `splitCPPath` is scp's own `colon()` rule with one deliberate difference: a
 leading colon is a discobox reference, not part of a filename. scp has no use
@@ -1709,8 +1719,8 @@ level or layering on the attach transports above.
   the current project plus a `known_hosts` line. The stanzas name **no address**
   (ADR 0057): they carry a `ProxyCommand` that runs this executable as `discobox
   --server <endpoint> admin ssh-proxy`, which splices its own stdio onto `GET
-  /ssh/connect` — the same door `discobox tools ssh`'s bridge dials, with `ssh`
-  owning the process instead of a loopback port. There is no other way in: the
+  /ssh/connect` — the same ProxyCommand `discobox tools ssh` and `cp` pass on
+  the command line. There is no other way in: the
   server binds no SSH port. Everything built on `ssh` rather than on our client
   — Remote-SSH, `scp`, `git` — reaches a sandbox wherever this CLI reaches the
   API, and nothing has to be configured, published, or firewalled for it.
@@ -1896,7 +1906,7 @@ level or layering on the attach transports above.
   quotes what contains a space and escapes what contains a percent sign, and
   `sshConfigFields` reads them back so a re-run recognizes its own line. It
   covers `IdentityFile`, `UserKnownHostsFile` and the `Include` line, and the
-  bridge's `-o UserKnownHostsFile=` too — ssh reads a `-o` argument as a config
+  `-o UserKnownHostsFile=` `tools ssh` and `cp` pass too — ssh reads a `-o` argument as a config
   line, so a value there is split on whitespace and expanded exactly as one in
   a file is. A Windows profile under a name with a space in it is ordinary, and
   unquoted ssh takes the first word as the whole filename. The `-i` beside it

@@ -12,10 +12,9 @@ import (
 // permutes argv, and sends every option to the remote as a command elsewhere.
 func TestSplitSSHArgs(t *testing.T) {
 	for name, tc := range map[string]struct {
-		args       []string
-		options    []string
-		command    []string
-		background bool
+		args    []string
+		options []string
+		command []string
 	}{
 		"nothing": {},
 		"a bare remote command": {
@@ -31,9 +30,8 @@ func TestSplitSSHArgs(t *testing.T) {
 			options: []string{"-L8080:localhost:3000", "-N"},
 		},
 		"bundled booleans": {
-			args:       []string{"-Nf"},
-			options:    []string{"-Nf"},
-			background: true,
+			args:    []string{"-Nf"},
+			options: []string{"-Nf"},
 		},
 		"options then a command": {
 			args:    []string{"-o", "ServerAliveInterval=30", "uname", "-a"},
@@ -45,31 +43,27 @@ func TestSplitSSHArgs(t *testing.T) {
 			options: []string{"-N"},
 			command: []string{"uname", "-a"},
 		},
-		// The f here is part of the forward spec, not a flag.
-		"an f inside a value is not -f": {
+		// A value is the option's, whatever it looks like.
+		"a value is not an option": {
 			args:    []string{"-L", "f:1:2"},
 			options: []string{"-L", "f:1:2"},
 		},
-		"an f attached inside a value is not -f": {
+		"an attached value is not an option": {
 			args:    []string{"-oProxyCommand=f"},
 			options: []string{"-oProxyCommand=f"},
 		},
 		"-f among several": {
-			args:       []string{"-N", "-f", "-L", "8080:localhost:3000"},
-			options:    []string{"-N", "-f", "-L", "8080:localhost:3000"},
-			background: true,
+			args:    []string{"-N", "-f", "-L", "8080:localhost:3000"},
+			options: []string{"-N", "-f", "-L", "8080:localhost:3000"},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			options, command, background := splitSSHArgs(tc.args)
+			options, command := splitSSHArgs(tc.args)
 			if !reflect.DeepEqual(options, tc.options) {
 				t.Fatalf("options = %q, want %q", options, tc.options)
 			}
 			if !reflect.DeepEqual(command, tc.command) {
 				t.Fatalf("command = %q, want %q", command, tc.command)
-			}
-			if background != tc.background {
-				t.Fatalf("background = %v, want %v", background, tc.background)
 			}
 		})
 	}

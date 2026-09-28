@@ -380,24 +380,6 @@ func TestSSHConfigDoesNotReEnrollAKnownKey(t *testing.T) {
 	}
 }
 
-func TestKnownHostsHost(t *testing.T) {
-	for _, tc := range []struct {
-		host string
-		port int
-		want string
-	}{
-		{host: "ssh.example.com", port: 3222, want: "[ssh.example.com]:3222"},
-		{host: "::1", port: 3222, want: "[::1]:3222"},
-		// ssh looks a port-22 host up under its bare name, so bracketing it
-		// would write an entry that never matches.
-		{host: "ssh.example.com", port: 22, want: "ssh.example.com"},
-	} {
-		if got := knownHostsHost(tc.host, tc.port); got != tc.want {
-			t.Errorf("knownHostsHost(%q, %d) = %q, want %q", tc.host, tc.port, got, tc.want)
-		}
-	}
-}
-
 // TestSSHConfigBareNameIsUsable is the shape a user actually types: `ssh
 // <name>`, with no domain. Dropping the suffix costs the guarantee that a
 // generated pattern cannot collide with a real host, which is why the

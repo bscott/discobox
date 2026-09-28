@@ -7,46 +7,53 @@ import (
 	"testing"
 )
 
-// TestSSHBridgeArgsCarryEverythingTheSessionNeeds: nothing is written to the
-// user's ssh_config, so every decision has to be on the command line.
-func TestSSHBridgeArgsCarryEverythingTheSessionNeeds(t *testing.T) {
-	args := sshBridgeArgs(45678, "sbx_devbox00000001", "/state/id_ed25519", "/tmp/known_hosts")
+// TestSSHClientOptionsCarryEverythingTheSessionNeeds: nothing is written to
+// the user's ssh_config, so every decision has to be on the command line.
+func TestSSHClientOptionsCarryEverythingTheSessionNeeds(t *testing.T) {
+	proxy := `'/usr/local/bin/discobox' --server 'iroh://abc?addr=192.0.2.7%3A11204' admin ssh-proxy`
+	args := sshClientOptions("/state/id_ed25519", "/tmp/known_hosts", "prj_1.discobox.internal", proxy)
 	joined := strings.Join(args, " ")
 
 	for _, want := range []string{
-		"-p 45678",
-		"-l sbx_devbox00000001",
 		"-i /state/id_ed25519",
 		"-o IdentitiesOnly=yes",
+		// ssh percent-expands a ProxyCommand whichever way it is given, so the
+		// endpoint's escaped colon is escaped again, as the written config
+		// spells it.
+		`-o ProxyCommand='/usr/local/bin/discobox' --server 'iroh://abc?addr=192.0.2.7%%3A11204' admin ssh-proxy`,
+		// The host is an alias with no address; the key is pinned under the
+		// project's alias, as `admin ssh-config` pins it.
+		"-o HostKeyAlias=prj_1.discobox.internal",
 		"-o UserKnownHostsFile=/tmp/known_hosts",
 		"-o StrictHostKeyChecking=yes",
-		// The bridge is this process; a `Host *` block in the user's config
-		// could otherwise override the identity or user just resolved.
+		// A `Host *` block in the user's config could otherwise override the
+		// identity, user or proxy just resolved.
 		"-F none",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("args %v missing %q", args, want)
 		}
 	}
-	// The host is deliberately not here: it has to sit after the user's own
-	// options and before their remote command, so the caller places it.
+	// No port and no host: there is no address to name, and the host has to
+	// sit after the user's own options and before their remote command, so
+	// the caller places it.
 	for _, arg := range args {
-		if arg == sshBridgeHost {
-			t.Fatalf("the host must not be part of the option list, got %v", args)
+		if arg == "-p" || arg == "-P" || (strings.HasSuffix(arg, hostAliasSuffix) && !strings.HasPrefix(arg, "HostKeyAlias=")) {
+			t.Fatalf("the options must name no port or host, got %v", args)
 		}
 	}
 }
 
-// TestSSHBridgeSpellsTheKnownHostsFileForTheConfigParser: ssh reads a -o
+// TestSSHClientOptionsSpellTheKnownHostsFileForTheConfigParser: ssh reads a -o
 // argument as a config line, so the value is percent-expanded and split on
 // whitespace. The temp file lives under the profile, which on a Windows account
 // named "Ada Lovelace" is a path with a space in it: unquoted it arrives as two
-// filenames, neither of which exists, and StrictHostKeyChecking=yes below fails
-// the session. The -i beside it is neither expanded nor split, and is passed
-// as it is.
-func TestSSHBridgeSpellsTheKnownHostsFileForTheConfigParser(t *testing.T) {
-	args := sshBridgeArgs(45678, "sbx_devbox00000001", `C:\Users\Ada Lovelace\100%\id`,
-		`C:\Users\Ada Lovelace\AppData\Local\Temp\100%\known_hosts`)
+// filenames, neither of which exists, and StrictHostKeyChecking=yes fails the
+// session. The -i beside it is neither expanded nor split, and is passed as it
+// is.
+func TestSSHClientOptionsSpellTheKnownHostsFileForTheConfigParser(t *testing.T) {
+	args := sshClientOptions(`C:\Users\Ada Lovelace\100%\id`,
+		`C:\Users\Ada Lovelace\AppData\Local\Temp\100%\known_hosts`, "prj_1.discobox.internal", "discobox")
 	if !slices.Contains(args, `UserKnownHostsFile="C:\Users\Ada Lovelace\AppData\Local\Temp\100%%\known_hosts"`) {
 		t.Fatalf("the known_hosts option is not spelled for ssh's config parser: %v", args)
 	}
@@ -55,11 +62,61 @@ func TestSSHBridgeSpellsTheKnownHostsFileForTheConfigParser(t *testing.T) {
 	}
 }
 
-// TestWriteTemporaryKnownHostsPinsThePortInUse: the bridge's port differs every
-// run, so the entry is written for the port in use and thrown away with it. A
-// stale entry for a reused loopback port would be worse than none.
-func TestWriteTemporaryKnownHostsPinsThePortInUse(t *testing.T) {
-	path, cleanup, err := writeTemporaryKnownHosts(45678, "ssh-ed25519 AAAAfakehostkey==")
+// TestSSHClientProxyCommandIsQuotedForWindows: Windows OpenSSH does not hand a
+// ProxyCommand to a POSIX shell, so the words are double-quoted there — the
+// executable under "C:\Program Files" is the ordinary case — exactly as the
+// written config quotes them, with the percent signs escaped on top.
+func TestSSHClientProxyCommandIsQuotedForWindows(t *testing.T) {
+	line, err := sshTarget{windows: true}.proxyCommandLine("iroh://abc?addr=192.0.2.7%3A11204")
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := sshClientOptions("id", "known_hosts", "prj_1.discobox.internal", line)
+	want := "ProxyCommand=" + escapeSSHPercent(line)
+	if !slices.Contains(args, want) {
+		t.Fatalf("args %v missing %q", args, want)
+	}
+	if !strings.Contains(want, `--server "iroh://abc?addr=192.0.2.7%%3A11204" admin ssh-proxy`) {
+		t.Fatalf("ProxyCommand = %q, want the endpoint double-quoted and percent-escaped", want)
+	}
+}
+
+// TestSSHProxyEnvCarriesWhatTheAppDialsWith: the ProxyCommand's command line
+// names only the server, so the token and iroh settings reach it through the
+// environment — and an App aimed at a registered server, which carries no
+// token, must not hand the proxy one this process inherited for the primary.
+func TestSSHProxyEnvCarriesWhatTheAppDialsWith(t *testing.T) {
+	t.Setenv("DISCOBOX_TOKEN", "primary-token")
+	primary := &App{serverURL: "http://primary", token: "primary-token", irohRelayURLs: "https://relay.example"}
+	if env := primary.sshProxyEnv(); !slices.Contains(env, "DISCOBOX_TOKEN=primary-token") ||
+		!slices.Contains(env, "DISCOBOX_IROH_RELAY_URLS=https://relay.example") {
+		t.Fatalf("env = %v, want the primary's token and relays", env)
+	}
+	env := primary.forServer("http://registered").sshProxyEnv()
+	if last := lastEnv(env, "DISCOBOX_TOKEN"); last != "" {
+		t.Fatalf("DISCOBOX_TOKEN = %q for a registered server, want it cleared", last)
+	}
+	if last := lastEnv(env, "DISCOBOX_IROH_RELAY_URLS"); last != "https://relay.example" {
+		t.Fatalf("DISCOBOX_IROH_RELAY_URLS = %q, want the relays forServer carries", last)
+	}
+}
+
+// lastEnv is the value a child process sees for key in env: the last one wins.
+func lastEnv(env []string, key string) string {
+	value := ""
+	for _, entry := range env {
+		if k, v, ok := strings.Cut(entry, "="); ok && k == key {
+			value = v
+		}
+	}
+	return value
+}
+
+// TestWriteTemporaryKnownHostsPinsTheAlias: the entry is written under the
+// host key alias the options name, not under a host or port, and is thrown
+// away with the command.
+func TestWriteTemporaryKnownHostsPinsTheAlias(t *testing.T) {
+	path, cleanup, err := writeTemporaryKnownHosts("prj_1.discobox.internal", "ssh-ed25519 AAAAfakehostkey==")
 	if err != nil {
 		t.Fatalf("write known_hosts: %v", err)
 	}
@@ -67,7 +124,7 @@ func TestWriteTemporaryKnownHostsPinsThePortInUse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read known_hosts: %v", err)
 	}
-	if got, want := strings.TrimSpace(string(data)), "[127.0.0.1]:45678 ssh-ed25519 AAAAfakehostkey=="; got != want {
+	if got, want := strings.TrimSpace(string(data)), "prj_1.discobox.internal ssh-ed25519 AAAAfakehostkey=="; got != want {
 		t.Fatalf("known_hosts = %q, want %q", got, want)
 	}
 	cleanup()
@@ -80,7 +137,7 @@ func TestWriteTemporaryKnownHostsPinsThePortInUse(t *testing.T) {
 // there is nothing to verify against, and connecting anyway would mean turning
 // host verification off.
 func TestWriteTemporaryKnownHostsRefusesAnUnverifiableServer(t *testing.T) {
-	if _, _, err := writeTemporaryKnownHosts(45678, "  "); err == nil {
+	if _, _, err := writeTemporaryKnownHosts("prj_1.discobox.internal", "  "); err == nil {
 		t.Fatal("expected a missing host key to be refused")
 	}
 }

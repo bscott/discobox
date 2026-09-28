@@ -18,7 +18,7 @@ var sshOptionsWithValue = map[rune]bool{
 }
 
 // splitSSHArgs divides the user's arguments into ssh options and the remote
-// command, and reports whether they asked ssh to background itself.
+// command.
 //
 // Placing them all after the host happens to work on glibc, whose getopt
 // permutes argv, and silently sends every option to the remote as a command
@@ -27,28 +27,25 @@ var sshOptionsWithValue = map[rune]bool{
 //
 // `--` ends the options explicitly and is not forwarded: ssh has no use for it
 // once the host is supplied separately.
-func splitSSHArgs(args []string) (options, command []string, background bool) {
+func splitSSHArgs(args []string) (options, command []string) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
-			return options, args[i+1:], background
+			return options, args[i+1:]
 		}
 		if !strings.HasPrefix(arg, "-") || arg == "-" {
 			// The first non-option argument is where the remote command
 			// starts, exactly as ssh itself would read it.
-			return options, args[i:], background
+			return options, args[i:]
 		}
 		options = append(options, arg)
 
 		// Walk the bundle: -Nf is two booleans, -NL 8080:… ends in an option
 		// whose value is the next argument, and -NL8080:… carries it inline.
 		// Anything after a value-taking letter belongs to that value, which is
-		// why the scan stops there — the `f` in `-L f:1:2` is not a flag.
+		// why the scan stops there.
 		runes := []rune(arg[1:])
 		for index, letter := range runes {
-			if letter == 'f' {
-				background = true
-			}
 			if sshOptionsWithValue[letter] {
 				if index == len(runes)-1 && i+1 < len(args) {
 					i++
@@ -58,5 +55,5 @@ func splitSSHArgs(args []string) (options, command []string, background bool) {
 			}
 		}
 	}
-	return options, nil, background
+	return options, nil
 }

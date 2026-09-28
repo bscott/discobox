@@ -1349,8 +1349,8 @@ func TestCPRoutesAnAddress(t *testing.T) {
 	}
 }
 
-// One scp runs over one bridge, so a copy naming two servers is refused rather
-// than half made.
+// One scp is pointed at one server, so a copy naming two servers is refused
+// rather than half made.
 func TestCPRefusesTwoServersInOneCopy(t *testing.T) {
 	useTempServersFile(t)
 	primary := fakeServer(t, "alpha", sandboxA)
@@ -1397,7 +1397,7 @@ func TestCPAddressTrailingColonIsTheHomeDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveCPOperands() error = %v", err)
 	}
-	if want := sandboxB + "@" + sshBridgeHost + ":"; rewritten[1] != want {
+	if want := sandboxB + "@" + sshClientHost(sandboxB) + ":"; rewritten[1] != want {
 		t.Fatalf("operand = %q, want %q", rewritten[1], want)
 	}
 }

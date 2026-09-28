@@ -1,17 +1,11 @@
 package cli
 
 import (
-	"errors"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	apiclientgen "github.com/discobox-ai/discobox/api/gen"
-	execclient "github.com/discobox-ai/discobox/execstream/client"
 )
 
 func (a *App) newToolsSSHCommand(sandboxID *string) *cobra.Command {
@@ -20,10 +14,10 @@ func (a *App) newToolsSSHCommand(sandboxID *string) *cobra.Command {
 		Short: "Open an SSH session to a discobox",
 		Long: `Open an SSH session to a discobox, over the connection this CLI already has.
 
-The server needs no SSH port for this: the session is carried over the same
-endpoint the API uses, through a loopback port that exists only while the
-command runs. Address, user, key, and host verification are all supplied here,
-so nothing is written to your ssh_config. The key is the one exception — it is
+The server needs no SSH port for this: ssh reaches it over the same endpoint
+the API uses, by running this CLI as its ProxyCommand. Proxy, user, key, and
+host verification are all supplied here, so nothing is written to your
+ssh_config. The key is the one exception — it is
 enrolled in the project, and reused rather than replaced on later runs.
 
 Every argument is passed to ssh untouched, including flags. A leading argument
@@ -47,56 +41,26 @@ everything after it, belongs to ssh.`,
 	return cmd
 }
 
-// runToolsSSH resolves the sandbox, ensures a key, opens the bridge, and runs
-// ssh against it.
+// runToolsSSH resolves the sandbox, ensures a key, and runs ssh against it
+// through the server the discobox is on.
 func (a *App) runToolsSSH(cmd *cobra.Command, sandboxArg string, args []string) error {
 	app, projectID, sandboxID, client, sshArgs, err := a.resolveSSHTarget(cmd, sandboxArg, args)
 	if err != nil {
 		return err
 	}
-	userOptions, remoteCommand, background := splitSSHArgs(sshArgs)
-	if background {
-		// ssh -f forks and returns, and this process owns the bridge its
-		// session runs over: returning here tears the bridge down under the
-		// backgrounded ssh, which is why it currently "succeeds" and leaves
-		// nothing behind. Backgrounding the whole command keeps the two
-		// lifetimes together and leaves one process to kill.
-		return fmt.Errorf("ssh -f cannot be used here: the connection is carried by this command, " +
-			"so ssh must not outlive it. Background the command instead: discobox tools ssh -N ... &")
-	}
+	userOptions, remoteCommand := splitSSHArgs(sshArgs)
 
-	bridge, err := app.startSSHBridgeSession(cmd, client, projectID)
+	session, err := app.startSSHClientSession(cmd, client, projectID)
 	if err != nil {
 		return err
 	}
-	defer bridge.close()
+	defer session.close()
 
-	full := append(sshBridgeArgs(bridge.port(), sandboxID, bridge.identity, bridge.knownHosts), userOptions...)
-	full = append(full, sshBridgeHost)
+	full := append([]string{"-l", sandboxID}, session.options...)
+	full = append(full, userOptions...)
+	full = append(full, sshClientHost(sandboxID))
 	full = append(full, remoteCommand...)
-	return runOverSSHBridge(cmd, "ssh", full)
-}
-
-// runOverSSHBridge runs an OpenSSH client attached to this terminal and reports
-// its exit status as this command's own.
-func runOverSSHBridge(cmd *cobra.Command, binary string, args []string) error {
-	path, err := exec.LookPath(binary)
-	if err != nil {
-		return fmt.Errorf("%s is not installed: %w", binary, err)
-	}
-	session := exec.CommandContext(cmd.Context(), path, args...) //nolint:gosec // G204: this command's own arguments, plus the user's own client arguments.
-	session.Stdin, session.Stdout, session.Stderr = cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr()
-	if err := session.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			// The session's own status, reported the way an attached process's
-			// is: ExitCode() turns this into a silent exit with that code,
-			// rather than printing a wrapper's message over the client's.
-			return execclient.ExitError{Code: exitErr.ExitCode()}
-		}
-		return err
-	}
-	return nil
+	return runSSHClient(cmd, "ssh", full, session.env)
 }
 
 // resolveSSHTarget splits the arguments into the sandbox and ssh's own
@@ -126,31 +90,4 @@ func (a *App) resolveSSHTarget(cmd *cobra.Command, sandboxArg string, args []str
 	}
 	app, projectID, sandboxID, client, sshArgs, err = a.resolveShellTarget(cmd, args)
 	return app, projectID, sandboxID, client, sshArgs, err
-}
-
-// writeTemporaryKnownHosts pins the server's host key for this command only.
-// The bridge's port is different every run, so the entry is written against the
-// port in use and thrown away with it: a stale entry for a reused loopback port
-// would be worse than none.
-func writeTemporaryKnownHosts(port int, hostKey string) (string, func(), error) {
-	if strings.TrimSpace(hostKey) == "" {
-		return "", nil, fmt.Errorf("server advertised no SSH host key to verify against")
-	}
-	file, err := os.CreateTemp("", "discobox-known-hosts-*")
-	if err != nil {
-		return "", nil, fmt.Errorf("create known_hosts: %w", err)
-	}
-	path := file.Name()
-	cleanup := func() { _ = os.Remove(path) }
-	entry := fmt.Sprintf("%s %s\n", knownHostsHost("127.0.0.1", port), strings.TrimSpace(hostKey))
-	if _, err := file.WriteString(entry); err != nil {
-		_ = file.Close()
-		cleanup()
-		return "", nil, fmt.Errorf("write known_hosts: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("write known_hosts: %w", err)
-	}
-	return filepath.Clean(path), cleanup, nil
 }

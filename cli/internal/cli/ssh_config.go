@@ -473,17 +473,6 @@ func safeHostAlias(name string) bool {
 	return true
 }
 
-// knownHostsHost renders a known_hosts(5) host field. A non-default port takes
-// the bracketed "[host]:port" form — and only a non-default one: ssh looks up
-// a port-22 host under its bare name, so bracketing it would produce an entry
-// that never matches.
-func knownHostsHost(host string, port int) string {
-	if port == 22 {
-		return host
-	}
-	return fmt.Sprintf("[%s]:%d", host, port)
-}
-
 // resolveSSHIdentity returns the private key path the emitted config should
 // name, enrolling it if the project does not already have it.
 //

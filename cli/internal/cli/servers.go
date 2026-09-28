@@ -365,8 +365,8 @@ type server struct {
 	id string
 	// app is this invocation aimed at the server. Every path a command takes
 	// to "the server" reads the App it runs on — the API client, the git
-	// transport, the terminals, the ssh bridge — so aiming one is all it takes
-	// to act on a discobox there.
+	// transport, the terminals, the ssh ProxyCommand — so aiming one is all it
+	// takes to act on a discobox there.
 	app *App
 }
 
