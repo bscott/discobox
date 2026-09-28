@@ -469,6 +469,15 @@ func (a *App) writeSecret(cmd *cobra.Command, secret *apimodel.Secret) error {
 	fmt.Fprintf(tw, "TYPE\t%s\n", secret.Type)
 	fmt.Fprintf(tw, "HOST\t%s\n", secret.Host.Or(""))
 	fmt.Fprintf(tw, "MAX GRANT TTL\t%s\n", formatGrantLimit(secret.MaxGrantTTLSeconds))
+	// The sentinel shape, and whether somebody chose it: a set one is kept
+	// when the value changes, a read one is re-read.
+	if format := secret.Format.Or(""); format != "" {
+		source := "read from the value"
+		if secret.FormatSet.Or(false) {
+			source = "set"
+		}
+		fmt.Fprintf(tw, "FORMAT\t%s (%s)\n", format, source)
+	}
 	// What an OAuth credential is, which is the half of it that can be shown:
 	// where it renews, what it may do, and when the access token goes stale.
 	if oauth, ok := secret.OAuth.Get(); ok {

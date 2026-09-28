@@ -128,16 +128,11 @@ func (s *Service) CreateSecret(ctx context.Context, projectID string, input serv
 	if v, ok := input.Host.Get(); ok {
 		host = strings.TrimSpace(v)
 	}
-	format := ""
-	if secretType == model.SecretTypeToken {
-		// The shape is read from the value; the host is not. What a credential
-		// is for is a binding somebody sets, and a secret nobody bound is
-		// usable wherever a grant says — which is the field that decides it.
-		if token := strings.TrimSpace(input.Value.Token.Or("")); token != "" {
-			format = secretformat.Describe(token)
-		}
-	}
 	if err := checkOAuthValue(secretType, input.Value); err != nil {
+		return nil, err
+	}
+	format, formatSet, err := sentinelFormat(input.Format)
+	if err != nil {
 		return nil, err
 	}
 	sec := &model.Secret{
@@ -146,6 +141,7 @@ func (s *Service) CreateSecret(ctx context.Context, projectID string, input serv
 		Type:           secretType,
 		Host:           normalizeHost(host),
 		Format:         format,
+		FormatSet:      formatSet,
 		MaxGrantTTL:    ttl,
 		EncryptedValue: valueBytes,
 	}
@@ -187,7 +183,7 @@ func (s *Service) UpdateSecret(ctx context.Context, projectID, secretID string, 
 	// A gate's secret stands for access, not a credential: there is no value
 	// to replace, and its host is where the pool admits the discobox API.
 	// Revoking its grants, or deleting it, is how a person takes access back.
-	if isGateSecret(sec) && (input.Value.IsSet() || input.Host.IsSet()) {
+	if isGateSecret(sec) && (input.Value.IsSet() || input.Host.IsSet() || input.Format.IsSet()) {
 		return nil, apperrors.NewStatusError(http.StatusBadRequest,
 			fmt.Sprintf("%s is a gate, with no value: revoke its grants, or delete it, to take access back", sec.WellKnownID))
 	}
@@ -200,6 +196,13 @@ func (s *Service) UpdateSecret(ctx context.Context, projectID, secretID string, 
 	}
 	if hostVal, ok := input.Host.Get(); ok {
 		sec.Host = normalizeHost(hostVal)
+	}
+	if input.Format.IsSet() {
+		// Cleared, the store reads the shape from the value again on this
+		// write, the way it does for a value nobody described.
+		if sec.Format, sec.FormatSet, err = sentinelFormat(input.Format); err != nil {
+			return nil, err
+		}
 	}
 	if ttl, ok := input.MaxGrantTTLSeconds.Get(); ok {
 		if ttl < 0 {
@@ -220,11 +223,6 @@ func (s *Service) UpdateSecret(ctx context.Context, projectID, secretID string, 
 			return nil, apperrors.NewStatusError(http.StatusBadRequest, "invalid secret value")
 		}
 		sec.EncryptedValue = valueBytes
-		if sec.Type == model.SecretTypeToken {
-			if token := strings.TrimSpace(valueVal.Token.Or("")); token != "" {
-				sec.Format = secretformat.Describe(token)
-			}
-		}
 	}
 	// A replaced value retracts what was recorded about the credential it
 	// replaced (ADR 0132 §4). The store does it, for every writer at once —
@@ -977,4 +975,20 @@ func secretCollision(err error, sec *model.Secret) error {
 func isAdvisoryMatchError(err error) bool {
 	var statusErr interface{ StatusCode() int }
 	return errors.As(err, &statusErr) && (statusErr.StatusCode() == http.StatusNotFound || statusErr.StatusCode() == http.StatusConflict)
+}
+
+// sentinelFormat is the format a person asked for, and whether they asked for
+// one: empty means "read it from the value", which is also what an update
+// setting it to empty goes back to. A template that does not parse is refused
+// here rather than stored, since the minter would quietly fall back to the
+// default shape and the person would never learn their template was ignored.
+func sentinelFormat(in apigen.OptString) (string, bool, error) {
+	format := strings.TrimSpace(in.Or(""))
+	if format == "" {
+		return "", false, nil
+	}
+	if _, err := secretformat.ParseChosen(format); err != nil {
+		return "", false, apperrors.NewStatusError(http.StatusBadRequest, fmt.Sprintf("invalid format: %v", err))
+	}
+	return format, true, nil
 }

@@ -109,7 +109,7 @@ func (s *Store) ListLiveAgentCredentials(ctx context.Context, projectID, sandbox
 			Assignment: *binding,
 			Grant:      grant,
 			Name:       secret.Name,
-			Format:     secret.Format,
+			Format:     s.SentinelFormat(ctx, secret),
 		})
 	}
 	return out, nil
@@ -133,7 +133,7 @@ func (s *Store) EnsureAgentBinding(ctx context.Context, projectID, sandboxID, en
 		return nil, apperrors.NewStatusError(http.StatusConflict,
 			fmt.Sprintf("discobox already has an agent credential in %s from another secret", envName))
 	}
-	sentinel, err := secretformat.MintSentinel(secret.Format)
+	sentinel, err := secretformat.MintSentinel(s.SentinelFormat(ctx, secret))
 	if err != nil {
 		return nil, err
 	}

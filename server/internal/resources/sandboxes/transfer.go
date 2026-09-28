@@ -439,7 +439,7 @@ func (s *Service) importSecretBindings(ctx context.Context, projectID string, sb
 				env, binding.Secret))
 			continue
 		}
-		format := secretFormat(ctx, s.store, secret)
+		format := s.store.SentinelFormat(ctx, secret)
 		sentinel, err := secretformat.MintSentinel(format)
 		if err != nil {
 			return nil, nil, err

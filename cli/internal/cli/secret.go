@@ -274,8 +274,12 @@ func (a *App) newSecretGetCommand() *cobra.Command {
 	}}
 }
 
+// secretFormatFlagUsage is the help for --format on create and update: the
+// template grammar, since nothing else in the CLI shows it.
+const secretFormatFlagUsage = `Shape of the sentinels that stand in for this secret: literal text with {charset:length} tokens, such as 'sk-ant-oat01-{base64url:95}'. Charsets: digits, hex, HEX, lower, upper, alnum, base62, base32, base64url, base64. Default: read from the value` //nolint:gosec // A template for sentinels, not a credential.
+
 func (a *App) newSecretCreateCommand() *cobra.Command {
-	var name, secretType, host, ttl, wellKnownID string
+	var name, secretType, host, ttl, wellKnownID, format string
 	var value secretValueOptions
 	var renewal secretRenewalOptions
 	cmd := &cobra.Command{Use: "create --name NAME --type TYPE", Short: "Create a secret", Long: `Create a secret.
@@ -285,7 +289,11 @@ machine (--refresh-command), which is run now for the first value and offered
 to whoever renews the token when it goes stale. --well-known fills in the name,
 host, and command a well-known credential suggests, such as com.github.api's
 'gh auth token', and makes the secret the one that answers requests for that
-ID; --token instead stores the value given and no command.`, RunE: func(cmd *cobra.Command, _ []string) error {
+ID; --token instead stores the value given and no command.
+
+A sentinel stands in for the secret inside a discobox, shaped like the value so
+a client that checks a key's prefix accepts it. --format sets that shape when
+reading it from the value gets it wrong, and is kept when the value changes.`, RunE: func(cmd *cobra.Command, _ []string) error {
 		client, err := a.apiClient()
 		if err != nil {
 			return err
@@ -300,6 +308,9 @@ ID; --token instead stores the value given and no command.`, RunE: func(cmd *cob
 		body, err := createSecretBody(cmd.Flags(), name, secretType, host, ttl, value)
 		if err != nil {
 			return err
+		}
+		if f := strings.TrimSpace(format); f != "" {
+			body.SetFormat(apiclientgen.NewOptString(f))
 		}
 		if id := strings.TrimSpace(wellKnownID); id != "" {
 			body.SetWellKnownId(apiclientgen.NewOptString(id))
@@ -336,6 +347,7 @@ ID; --token instead stores the value given and no command.`, RunE: func(cmd *cob
 	cmd.Flags().StringVar(&secretType, "type", "", "Secret type: token or oauth (default token)")
 	cmd.Flags().StringVar(&host, "host", "", "Optional host hint, such as github.com")
 	cmd.Flags().StringVar(&ttl, "max-grant-ttl", "", maxGrantTTLCreateFlagUsage)
+	cmd.Flags().StringVar(&format, "format", "", secretFormatFlagUsage)
 	cmd.Flags().StringVar(&wellKnownID, "well-known", "", "Well-known credential the secret answers, such as com.github.api; fills in the name, host, and refresh command it suggests")
 	addSecretValueFlags(cmd.Flags(), &value)
 	addSecretRenewalFlags(cmd.Flags(), &renewal)
@@ -373,7 +385,7 @@ func applyWellKnownDefaults(flags *pflag.FlagSet, id string, name, host *string,
 }
 
 func (a *App) newSecretUpdateCommand() *cobra.Command {
-	var name, host, ttl string
+	var name, host, ttl, format string
 	var value secretValueOptions
 	var renewal secretRenewalOptions
 	cmd := &cobra.Command{Use: "update SECRET_ID", Short: "Update a secret", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -392,6 +404,9 @@ func (a *App) newSecretUpdateCommand() *cobra.Command {
 		body, err := updateSecretBody(cmd.Flags(), name, host, ttl, value)
 		if err != nil {
 			return err
+		}
+		if cmd.Flags().Changed("format") {
+			body.SetFormat(apiclientgen.NewOptString(strings.TrimSpace(format)))
 		}
 		if err := renewal.apply(cmd.Flags(), func(command []string) {
 			body.SetRefreshCommand(apiclientgen.NewOptNilStringArray(command))
@@ -413,6 +428,7 @@ func (a *App) newSecretUpdateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "Secret name")
 	cmd.Flags().StringVar(&host, "host", "", "Optional host hint, such as github.com")
 	cmd.Flags().StringVar(&ttl, "max-grant-ttl", "", maxGrantTTLUpdateFlagUsage)
+	cmd.Flags().StringVar(&format, "format", "", secretFormatFlagUsage+`; "" goes back to that. A running discobox keeps the sentinel already in its environment`)
 	addSecretValueFlags(cmd.Flags(), &value)
 	addSecretRenewalFlags(cmd.Flags(), &renewal)
 	return cmd

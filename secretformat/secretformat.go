@@ -53,8 +53,14 @@ type part struct {
 type Template struct {
 	raw   string
 	parts []part
-	re    *regexp.Regexp
 }
+
+// MaxLength bounds the value a template a person wrote generates (ParseChosen).
+// It is not a bound on credentials: an inferred template is as long as the
+// value it was read from, and a long JWT or cloud token must still mint a
+// sentinel of its own shape rather than fail to parse and fall back to the
+// default one.
+const MaxLength = 4096
 
 // Parse compiles a format template.
 func Parse(format string) (*Template, error) {
@@ -92,12 +98,24 @@ func Parse(format string) (*Template, error) {
 	if literal.Len() > 0 {
 		parts = append(parts, part{literal: literal.String()})
 	}
-	t := &Template{raw: format, parts: parts}
-	re, err := compileRegex(parts)
+	return &Template{raw: format, parts: parts}, nil
+}
+
+// ParseChosen compiles a template a person wrote, which is also held to
+// MaxLength: every sentinel minted for the secret generates it, and nobody
+// means a template that generates megabytes.
+func ParseChosen(format string) (*Template, error) {
+	t, err := Parse(format)
 	if err != nil {
 		return nil, err
 	}
-	t.re = re
+	total := 0
+	for _, p := range t.parts {
+		total += len(p.literal) + p.length
+	}
+	if total > MaxLength {
+		return nil, fmt.Errorf("format generates %d characters, more than %d", total, MaxLength)
+	}
 	return t, nil
 }
 
@@ -126,7 +144,24 @@ func (t *Template) Generate() (string, error) {
 
 // Validate reports whether value matches the template's shape.
 func (t *Template) Validate(value string) bool {
-	return t.re != nil && t.re.MatchString(value)
+	// Walked part by part rather than compiled to a regular expression: RE2
+	// refuses a repeat count over 1000, and a template read from a long
+	// credential has segments far longer than that.
+	for _, p := range t.parts {
+		if p.charset == "" {
+			rest, ok := strings.CutPrefix(value, p.literal)
+			if !ok {
+				return false
+			}
+			value = rest
+			continue
+		}
+		if len(value) < p.length || !coversAll(charsets[p.charset], value[:p.length]) {
+			return false
+		}
+		value = value[p.length:]
+	}
+	return value == ""
 }
 
 // DefaultSentinelFormat is the shape used when a secret has no format of its
@@ -148,35 +183,4 @@ func MintSentinel(format string) (string, error) {
 		}
 	}
 	return tmpl.Generate()
-}
-
-func compileRegex(parts []part) (*regexp.Regexp, error) {
-	var b strings.Builder
-	b.WriteString("^")
-	for _, p := range parts {
-		if p.charset == "" {
-			b.WriteString(regexp.QuoteMeta(p.literal))
-			continue
-		}
-		b.WriteString("[")
-		b.WriteString(charClass(charsets[p.charset]))
-		b.WriteString("]{")
-		b.WriteString(strconv.Itoa(p.length))
-		b.WriteString("}")
-	}
-	b.WriteString("$")
-	return regexp.Compile(b.String())
-}
-
-// charClass escapes a charset alphabet for use inside a regex character class.
-func charClass(alphabet string) string {
-	var b strings.Builder
-	for _, r := range alphabet {
-		switch r {
-		case '-', ']', '^', '\\':
-			b.WriteByte('\\')
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
 }

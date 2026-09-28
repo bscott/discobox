@@ -28,7 +28,14 @@ type Provider struct {
 // that kept only `sk-` or `github_`. Where Infer already lands on the same
 // template — a plain `sk-` or `ghp_` key — there is nothing here to add, and a
 // row that says what the value says is a row to keep up to date for nothing.
+//
+// Anthropic's kind-and-version marker is kept, not only `sk-ant-`: Claude
+// Code tells an OAuth access token from an API key by it, so a sentinel for a
+// subscription login must read `sk-ant-oat01-` and one for a Console key
+// `sk-ant-api03-`.
 var providers = []Provider{
+	{Name: "anthropic-api-key", Prefix: "sk-ant-api03-", Format: "sk-ant-api03-{base64url:95}"},
+	{Name: "anthropic-oauth", Prefix: "sk-ant-oat01-", Format: "sk-ant-oat01-{base64url:95}"},
 	{Name: "anthropic", Prefix: "sk-ant-", Format: "sk-ant-{alnum:5}-{base64url:95}"},
 	{Name: "openai-project", Prefix: "sk-proj-", Format: "sk-proj-{base64url:48}"},
 	{Name: "github-pat", Prefix: "github_pat_", Format: "github_pat_{base62:82}"},
@@ -75,9 +82,7 @@ func Infer(value string) *Template {
 		}
 		parts = append(parts, inferSegment(seg)...)
 	}
-	t := &Template{parts: parts, raw: render(parts)}
-	t.re, _ = compileRegex(parts)
-	return t
+	return &Template{parts: parts, raw: render(parts)}
 }
 
 func inferSegment(seg string) []part {

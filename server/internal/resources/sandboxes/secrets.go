@@ -110,7 +110,7 @@ func (s *Service) applyHarnessConfigSecrets(ctx context.Context, projectID strin
 			}
 			return nil, err
 		}
-		format := secretFormat(ctx, s.store, secret)
+		format := s.store.SentinelFormat(ctx, secret)
 		sentinel, err := secretformat.MintSentinel(format)
 		if err != nil {
 			return nil, err
@@ -166,7 +166,7 @@ func (s *Service) applyPreviousConfigureSecrets(ctx context.Context, projectID s
 			}
 			return nil, err
 		}
-		format := secretFormat(ctx, s.store, secret)
+		format := s.store.SentinelFormat(ctx, secret)
 		sentinel, err := secretformat.MintSentinel(format)
 		if err != nil {
 			return nil, err
@@ -234,7 +234,7 @@ func (s *Service) resolveSecretForInput(ctx context.Context, projectID string, i
 		if err != nil {
 			return "", "", apperrors.NotFound(err, "secret not found")
 		}
-		return secret.ID, secretFormat(ctx, s.store, secret), nil
+		return secret.ID, s.store.SentinelFormat(ctx, secret), nil
 	case strings.TrimSpace(value) != "":
 		secret, err := s.createAnonymousSecret(ctx, projectID, value, strings.TrimSpace(input.Host.Or("")))
 		if err != nil {
@@ -246,29 +246,11 @@ func (s *Service) resolveSecretForInput(ctx context.Context, projectID string, i
 	}
 }
 
-// secretFormat returns the secret's stored format, falling back to inferring one
-// from the decrypted token so referenced secrets without a format still
-// mint a convincing sentinel.
-func secretFormat(ctx context.Context, st *store.Store, secret *model.Secret) string {
-	if strings.TrimSpace(secret.Format) != "" {
-		return secret.Format
-	}
-	if secret.Type == model.SecretTypeToken {
-		if val, err := st.OpenSecretValue(ctx, secret); err == nil && val != nil {
-			if token := strings.TrimSpace(val.Token); token != "" {
-				return secretformat.Describe(token)
-			}
-		}
-	}
-	return secretformat.DefaultSentinelFormat
-}
-
 func (s *Service) createAnonymousSecret(ctx context.Context, projectID, value, host string) (*model.Secret, error) {
 	secretID, err := id.New(id.PrefixSecret)
 	if err != nil {
 		return nil, err
 	}
-	format := secretformat.Describe(value)
 	//nolint:gosec // Secret values are intentionally marshaled before store encryption.
 	valueBytes, err := json.Marshal(model.SecretValue{Token: value})
 	if err != nil {
@@ -282,7 +264,6 @@ func (s *Service) createAnonymousSecret(ctx context.Context, projectID, value, h
 		Host:           host,
 		UniqueKey:      secretID, // keeps anonymous rows out of the (project,type,host) uniqueness domain
 		Anonymous:      true,
-		Format:         format,
 		MaxGrantTTL:    defaultAnonymousGrantTTLSeconds,
 		EncryptedValue: valueBytes,
 	}
@@ -339,7 +320,7 @@ func (s *Service) AssignSandboxHarnessSecrets(ctx context.Context, projectID, sa
 			}
 			return nil, err
 		}
-		format := secretFormat(ctx, s.store, secret)
+		format := s.store.SentinelFormat(ctx, secret)
 		sentinel, err := secretformat.MintSentinel(format)
 		if err != nil {
 			return nil, err
@@ -520,7 +501,7 @@ func rebindSandboxSecretRows(ctx context.Context, st *store.Store, projectID str
 			}
 			return false, err
 		}
-		format := secretFormat(ctx, st, secret)
+		format := st.SentinelFormat(ctx, secret)
 		assignment.SecretID = secret.ID
 		// An assignment minted before formats were recorded keeps its sentinel:
 		// what it was minted from is unknown, and guessing wrong costs a live

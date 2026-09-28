@@ -341,6 +341,7 @@ func (s *Service) copySecret(ctx context.Context, sourceProjectID, projectID, so
 		UniqueKey:      uniqueKey,
 		Anonymous:      sourceSecret.Anonymous,
 		Format:         sourceSecret.Format,
+		FormatSet:      sourceSecret.FormatSet,
 		MaxGrantTTL:    sourceSecret.MaxGrantTTL,
 		EncryptedValue: plaintext,
 	}

@@ -4,6 +4,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/discobox-ai/discobox/devimage"
@@ -187,6 +188,12 @@ func (s *Service) Start(ctx context.Context) error {
 	}
 	if err := s.store.BeginPoolHealthChecks(ctx); err != nil {
 		return err
+	}
+	// Before anything mints a sentinel: a stored shape read under an older
+	// provider table is brought up to date, so the first sandbox after an
+	// upgrade already gets the current one.
+	if err := s.store.RefreshSecretFormats(ctx); err != nil {
+		return fmt.Errorf("refresh secret formats: %w", err)
 	}
 	if err := s.engine.Start(ctx); err != nil {
 		return err

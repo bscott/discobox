@@ -529,6 +529,21 @@ sentinels come from that one function (`secretformat.MintSentinel`); a
 sentinel shaped by different rules at each end would be distinguishable from the
 real thing.
 
+A `Format` nobody set is the value's shape, and the store keeps it so: it is
+re-read on every write of the secret (`sealSecretForWrite`), the OAuth refresh's
+value-only write included (`UpdateSecretValueIfUnchanged`), for every writer
+and every type — an OAuth secret's access token is in `Token` — so the harness
+configure flow's raw rows carry one too. `Store.RefreshSecretFormats` runs at
+startup as the upgrade path: it re-reads every such row, so a shape stored under
+an older provider table (`sk-ant-{alnum:5}-` before the kind marker was kept) is
+corrected without anybody replacing the value. A person may set a format instead
+(`format` on create and update, bounded by `secretformat.ParseChosen`);
+`FormatSet` then keeps it through every write and the startup pass, and setting
+it to empty clears it. Minters read it through `Store.SentinelFormat`. A changed
+format reaches every sentinel minted after it — a new sandbox's, and the pool
+agent's per-use ones — but not the stable sentinel already in a running
+sandbox's environment, which is minted once and stored.
+
 ## OAuth
 
 An OAuth secret's access token rides in `SecretValue.Token` so the proxy swap is

@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/discobox-ai/discobox/hostscope"
+	"github.com/discobox-ai/discobox/secretformat"
 	"github.com/discobox-ai/discobox/server/internal/apperrors"
 	"github.com/discobox-ai/discobox/server/internal/model"
 	"github.com/discobox-ai/discobox/server/internal/secrets"
@@ -31,6 +32,19 @@ func (s *Store) sealSecretForWrite(ctx context.Context, secret *model.Secret) (*
 		}
 	}
 	persisted := *secret
+	// A format nobody set is the value's shape, read here on every write, for
+	// every writer at once — the secrets service, the harness configure flow,
+	// an anonymous inline value, an OAuth refresh — so none of them can store
+	// a credential whose sentinel says nothing about what it stands for. An
+	// OAuth secret's access token is in Token too, and is what a sentinel for
+	// it has to look like. It is read on a write that keeps the value as well,
+	// not only one that replaces it: a stored shape is only as current as the
+	// provider table was when it was read, and a rename is as good a moment as
+	// any to bring it up to date. A format a person set is theirs, and no
+	// write replaces it.
+	if !secret.FormatSet {
+		persisted.Format = s.valueFormat(ctx, secret, secret.Format)
+	}
 	ciphertext, err := secrets.SealIfUnsealed(ctx, s.sealer, secretValuePurpose, secretResourceID(secret), secret.EncryptedValue)
 	if err != nil {
 		return nil, fmt.Errorf("encrypt secret value: %w", err)
@@ -62,6 +76,68 @@ func (s *Store) OpenSecretValue(ctx context.Context, secret *model.Secret) (*mod
 		return nil, fmt.Errorf("unmarshal secret value: %w", err)
 	}
 	return &val, nil
+}
+
+// valueFormat is the shape of secret's value, or fallback when there is no
+// value to read one from — a gate, or a row whose key has moved on.
+func (s *Store) valueFormat(ctx context.Context, secret *model.Secret, fallback string) string {
+	val, err := s.OpenSecretValue(ctx, secret)
+	if err != nil || val == nil {
+		return fallback
+	}
+	if token := strings.TrimSpace(val.Token); token != "" {
+		return secretformat.Describe(token)
+	}
+	return fallback
+}
+
+// RefreshSecretFormats re-reads the format of every secret whose format
+// nobody set, and stores it where it changed. Run at startup, it is the
+// upgrade path for the shapes already stored: rows written before every value
+// write recorded one, and rows whose shape was read under an older provider
+// table — an Anthropic key stored as sk-ant-{alnum:5}- before the kind marker
+// was kept — would otherwise go on minting that shape until somebody replaced
+// the value. It is idempotent, so it runs every time rather than once, and a
+// row it cannot read is left as it is rather than failing the start.
+//
+// Only the format column is written: this is a correction of what the store
+// says about the value, not a write of the secret, and it must not move the
+// updated_at an OAuth refresh uses as its generation guard.
+func (s *Store) RefreshSecretFormats(ctx context.Context) error {
+	write, err := s.getWrite(ctx)
+	if err != nil {
+		return err
+	}
+	var rows []model.Secret
+	if err := write.Where("format_set = ?", false).Find(&rows).Error; err != nil {
+		return err
+	}
+	for i := range rows {
+		secret := &rows[i]
+		format := s.valueFormat(ctx, secret, secret.Format)
+		if format == secret.Format {
+			continue
+		}
+		if err := write.Model(&model.Secret{}).
+			Where("project_id = ? AND id = ? AND format_set = ?", secret.ProjectID, secret.ID, false).
+			UpdateColumn("format", format).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SentinelFormat is the template a sentinel for secret is minted from: the
+// format stored with its value, or, for a row written before every value
+// write recorded one, the shape read from the value itself. Every minter —
+// a sandbox's stable sentinel, an agent credential's binding, the format a
+// pool agent mints ephemeral ones from — asks here, so a secret's sentinels
+// cannot differ by which path minted them.
+func (s *Store) SentinelFormat(ctx context.Context, secret *model.Secret) string {
+	if format := strings.TrimSpace(secret.Format); format != "" {
+		return format
+	}
+	return s.valueFormat(ctx, secret, secretformat.DefaultSentinelFormat)
 }
 
 func (s *Store) CreateSecret(ctx context.Context, secret *model.Secret) error {
@@ -367,9 +443,15 @@ func (s *Store) UpdateSecretValueIfUnchanged(ctx context.Context, secret *model.
 	if err != nil {
 		return err
 	}
+	// The format rides with the value, as on every other value write; one a
+	// person set is left alone.
+	columns := map[string]any{"encrypted_value": sealed.EncryptedValue}
+	if !sealed.FormatSet {
+		columns["format"] = sealed.Format
+	}
 	result := write.Model(&model.Secret{}).
 		Where("project_id = ? AND id = ? AND updated_at = ?", sealed.ProjectID, sealed.ID, prevUpdatedAt).
-		Update("encrypted_value", sealed.EncryptedValue)
+		Updates(columns)
 	if result.Error != nil {
 		return result.Error
 	}

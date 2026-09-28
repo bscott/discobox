@@ -303,7 +303,7 @@ func (s *Service) bindAgentSecret(ctx context.Context, projectID, sandboxID, env
 		return apperrors.NewStatusError(http.StatusConflict,
 			fmt.Sprintf("sandbox already has an agent credential bound to %s from a different secret; revoke that grant first", envName))
 	}
-	binding, err := newAgentBinding(projectID, sandboxID, envName, secret)
+	binding, err := newAgentBinding(ctx, s.store, projectID, sandboxID, envName, secret)
 	if err != nil {
 		return err
 	}
@@ -312,8 +312,8 @@ func (s *Service) bindAgentSecret(ctx context.Context, projectID, sandboxID, env
 
 // newAgentBinding is an agent credential's binding: the stable sentinel the
 // pool translates a use's ephemeral one to, never injected into the sandbox.
-func newAgentBinding(projectID, sandboxID, envName string, secret *model.Secret) (*model.SandboxSecret, error) {
-	sentinel, err := secretformat.MintSentinel(secret.Format)
+func newAgentBinding(ctx context.Context, st *store.Store, projectID, sandboxID, envName string, secret *model.Secret) (*model.SandboxSecret, error) {
+	sentinel, err := secretformat.MintSentinel(st.SentinelFormat(ctx, secret))
 	if err != nil {
 		return nil, err
 	}

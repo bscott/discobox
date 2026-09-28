@@ -1007,6 +1007,11 @@ type Secret struct {
 	UniqueKey string `gorm:"column:unique_key;not null;type:text;default:'';uniqueIndex:idx_secret_project_type_host,priority:5" json:"-"`
 	Anonymous bool   `gorm:"column:anonymous;not null;default:false;index" json:"anonymous,omitempty" doc:"Sandbox-managed secret created from an inline value; referenced only by ID"`
 	Format    string `gorm:"column:format;not null;type:text;default:''" json:"format,omitempty" doc:"Generative format template describing the credential shape; used to mint sentinel placeholders"`
+	// FormatSet says Format was written by a person rather than read from the
+	// value. A value write re-reads the shape only when it is false, so an
+	// override survives the value being replaced — by a person, a refresh, or
+	// a harness reconfigure.
+	FormatSet bool `gorm:"column:format_set;not null;default:false" json:"formatSet,omitempty" doc:"Format was set explicitly rather than read from the value"`
 	// OAuth is what an oauth credential is, without being it: where it renews,
 	// which client it belongs to, what it may do, and when the access token
 	// goes stale. Never the access token, never the refresh token.

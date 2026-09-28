@@ -4460,6 +4460,9 @@ components:
                     description: Longest a grant on this secret may live, in seconds; 0 allows grants that never expire
                     format: int64
                     type: integer
+                format:
+                    description: 'Template the sentinels for this secret are minted from: literal text with {charset:length} tokens, such as sk-ant-oat01-{base64url:95}. Charsets are digits, hex, HEX, lower, upper, alnum, base62, base32, base64url, and base64. Omitted or empty reads the shape from the value. A format set here is kept when the value is replaced.'
+                    type: string
                 host:
                     description: Optional host used to match requests (e.g. github.com)
                     type: string
@@ -4708,6 +4711,9 @@ components:
                 format:
                     description: Generative format template describing the credential shape; used to mint sentinel placeholders
                     type: string
+                formatSet:
+                    description: Format was set explicitly rather than read from the value
+                    type: boolean
                 host:
                     description: Optional host used to match requests (e.g. github.com)
                     type: string
@@ -5191,6 +5197,9 @@ components:
                     description: Longest a grant on this secret may live, in seconds; 0 allows grants that never expire
                     format: int64
                     type: integer
+                format:
+                    description: 'Template the sentinels for this secret are minted from: literal text with {charset:length} tokens, such as sk-ant-oat01-{base64url:95}. Charsets are digits, hex, HEX, lower, upper, alnum, base62, base32, base64url, and base64. A format set here is kept when the value is replaced; an empty string clears it and reads the shape from the value again. A running sandbox keeps the sentinel already in its environment.'
+                    type: string
                 host:
                     description: Optional host used to match requests (e.g. github.com)
                     type: string

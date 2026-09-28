@@ -1682,6 +1682,11 @@ type CreateSecretBody struct {
 	Schema OptURI `json:"$schema"`
 	// Longest a grant on this secret may live, in seconds; 0 allows grants that never expire.
 	MaxGrantTTLSeconds OptInt64 `json:"maxGrantTTLSeconds"`
+	// Template the sentinels for this secret are minted from: literal text with {charset:length} tokens,
+	// such as sk-ant-oat01-{base64url:95}. Charsets are digits, hex, HEX, lower, upper, alnum, base62,
+	// base32, base64url, and base64. Omitted or empty reads the shape from the value. A format set here
+	// is kept when the value is replaced.
+	Format OptString `json:"format"`
 	// Optional host used to match requests (e.g. github.com).
 	Host OptString `json:"host"`
 	// A command a person's client may run to produce a new value, as an argument vector run without a
@@ -1714,6 +1719,11 @@ func (s *CreateSecretBody) GetSchema() OptURI {
 // GetMaxGrantTTLSeconds returns the value of MaxGrantTTLSeconds.
 func (s *CreateSecretBody) GetMaxGrantTTLSeconds() OptInt64 {
 	return s.MaxGrantTTLSeconds
+}
+
+// GetFormat returns the value of Format.
+func (s *CreateSecretBody) GetFormat() OptString {
+	return s.Format
 }
 
 // GetHost returns the value of Host.
@@ -1764,6 +1774,11 @@ func (s *CreateSecretBody) SetSchema(val OptURI) {
 // SetMaxGrantTTLSeconds sets the value of MaxGrantTTLSeconds.
 func (s *CreateSecretBody) SetMaxGrantTTLSeconds(val OptInt64) {
 	s.MaxGrantTTLSeconds = val
+}
+
+// SetFormat sets the value of Format.
+func (s *CreateSecretBody) SetFormat(val OptString) {
+	s.Format = val
 }
 
 // SetHost sets the value of Host.
@@ -22492,6 +22507,8 @@ type Secret struct {
 	MaxGrantTTLSeconds int64 `json:"maxGrantTTLSeconds"`
 	// Generative format template describing the credential shape; used to mint sentinel placeholders.
 	Format OptString `json:"format"`
+	// Format was set explicitly rather than read from the value.
+	FormatSet OptBool `json:"formatSet"`
 	// Optional host used to match requests (e.g. github.com).
 	Host OptString `json:"host"`
 	// Stable secret ID.
@@ -22543,6 +22560,11 @@ func (s *Secret) GetMaxGrantTTLSeconds() int64 {
 // GetFormat returns the value of Format.
 func (s *Secret) GetFormat() OptString {
 	return s.Format
+}
+
+// GetFormatSet returns the value of FormatSet.
+func (s *Secret) GetFormatSet() OptBool {
+	return s.FormatSet
 }
 
 // GetHost returns the value of Host.
@@ -22628,6 +22650,11 @@ func (s *Secret) SetMaxGrantTTLSeconds(val int64) {
 // SetFormat sets the value of Format.
 func (s *Secret) SetFormat(val OptString) {
 	s.Format = val
+}
+
+// SetFormatSet sets the value of FormatSet.
+func (s *Secret) SetFormatSet(val OptBool) {
+	s.FormatSet = val
 }
 
 // SetHost sets the value of Host.
@@ -25166,6 +25193,12 @@ type UpdateSecretBody struct {
 	Schema OptURI `json:"$schema"`
 	// Longest a grant on this secret may live, in seconds; 0 allows grants that never expire.
 	MaxGrantTTLSeconds OptInt64 `json:"maxGrantTTLSeconds"`
+	// Template the sentinels for this secret are minted from: literal text with {charset:length} tokens,
+	// such as sk-ant-oat01-{base64url:95}. Charsets are digits, hex, HEX, lower, upper, alnum, base62,
+	// base32, base64url, and base64. A format set here is kept when the value is replaced; an empty
+	// string clears it and reads the shape from the value again. A running sandbox keeps the sentinel
+	// already in its environment.
+	Format OptString `json:"format"`
 	// Optional host used to match requests (e.g. github.com).
 	Host OptString `json:"host"`
 	// A command a person's client may run to produce a new value, as an argument vector run without a
@@ -25192,6 +25225,11 @@ func (s *UpdateSecretBody) GetSchema() OptURI {
 // GetMaxGrantTTLSeconds returns the value of MaxGrantTTLSeconds.
 func (s *UpdateSecretBody) GetMaxGrantTTLSeconds() OptInt64 {
 	return s.MaxGrantTTLSeconds
+}
+
+// GetFormat returns the value of Format.
+func (s *UpdateSecretBody) GetFormat() OptString {
+	return s.Format
 }
 
 // GetHost returns the value of Host.
@@ -25232,6 +25270,11 @@ func (s *UpdateSecretBody) SetSchema(val OptURI) {
 // SetMaxGrantTTLSeconds sets the value of MaxGrantTTLSeconds.
 func (s *UpdateSecretBody) SetMaxGrantTTLSeconds(val OptInt64) {
 	s.MaxGrantTTLSeconds = val
+}
+
+// SetFormat sets the value of Format.
+func (s *UpdateSecretBody) SetFormat(val OptString) {
+	s.Format = val
 }
 
 // SetHost sets the value of Host.

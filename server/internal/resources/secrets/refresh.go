@@ -14,7 +14,6 @@ import (
 	"gorm.io/gorm"
 
 	apigen "github.com/discobox-ai/discobox/api/gen"
-	"github.com/discobox-ai/discobox/secretformat"
 	"github.com/discobox-ai/discobox/server/internal/apperrors"
 	"github.com/discobox-ai/discobox/server/internal/auth"
 	"github.com/discobox-ai/discobox/server/internal/model"
@@ -354,7 +353,6 @@ func (s *Service) RefreshSecret(ctx context.Context, projectID, secretID string,
 			return apperrors.NewStatusError(http.StatusBadRequest, "invalid secret value")
 		}
 		sec.EncryptedValue = valueBytes
-		sec.Format = secretformat.Describe(value)
 		sec.ValueWritten(now, expiresAt)
 		return txStore.UpdateSecret(ctx, sec)
 	})
