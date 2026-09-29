@@ -896,8 +896,10 @@ flowchart LR
   first ask carries the parser's metadata — a push's ref updates, read the way
   git's `receive-pack` reads them (`gitpush.go`), a JSON object's keys and
   what its endpoint lifts out of it (`endpoints.go`: where a fork lands; the
-  grants, assigned secrets, set variable names, prompt start and sources of a
-  discobox create, whose grants sit last behind a prompt of kilobytes), a
+  grants and their count (said when none, so a clipped prompt is not read as
+  hidden grants), assigned secrets, set variable names, prompt start and
+  sources of a discobox create, whose grants sit last behind a prompt of
+  kilobytes), a
   form's field names, a multipart body's parts —
   redacted and held to `judge.MaxMetadataBytes`: every string clipped and every
   list capped first, so a body shaped to be expensive costs a fixed amount,

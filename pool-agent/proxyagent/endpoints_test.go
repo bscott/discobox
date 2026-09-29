@@ -65,7 +65,7 @@ func TestADiscoboxCreateIsDescribedByWhatItGrants(t *testing.T) {
 		t.Fatal("a create's operation is its body, and an allow for one must not stand for the route")
 	}
 	grants, _ := metadata["grants"].([]any)
-	if len(grants) != 1 {
+	if len(grants) != 1 || metadata["grantsTotal"] != float64(1) {
 		t.Fatalf("grants = %v, want the one grant", metadata["grants"])
 	}
 	grant, _ := grants[0].(map[string]any)
@@ -107,6 +107,28 @@ func TestADiscoboxCreateWithNoSourceSaysSo(t *testing.T) {
 	_, metadata := describedMetadata(t, sandboxCreate(`{"config": {"name": "empty"}}`))
 	if metadata["source"] != "none" {
 		t.Fatalf("source = %v, want none", metadata["source"])
+	}
+}
+
+// A create that grants nothing says so. Its prompt is clipped with "…", and
+// without a count of none the judge read that as grants left out and refused.
+func TestADiscoboxCreateGrantingNothingCountsNone(t *testing.T) {
+	prompt := "Implement discobox-ai/discobox issue #43, a Wave 1 sub-issue of epic #42. " + strings.Repeat("Follow CLAUDE.md. ", 20)
+	_, metadata := describedMetadata(t, sandboxCreate(fmt.Sprintf(`{"config": {"name": "w", "prompt": [%q]}}`, prompt)))
+	if metadata["grantsTotal"] != float64(0) || metadata["grants"] != nil {
+		t.Fatalf("grantsTotal = %v, grants = %v; want a count of none and no list", metadata["grantsTotal"], metadata["grants"])
+	}
+	if said, _ := metadata["prompt"].(string); !strings.HasSuffix(said, "…") {
+		t.Fatalf("prompt = %q, want it clipped", said)
+	}
+}
+
+// Grants that cannot be read are not counted: a count of none would say the
+// body grants nothing when it may grant anything.
+func TestADiscoboxCreateWithUnreadableGrantsIsNotCounted(t *testing.T) {
+	_, metadata := describedMetadata(t, sandboxCreate(`{"config": {"name": "w"}, "grants": {"wellKnownId": "com.github.api"}}`))
+	if _, counted := metadata["grantsTotal"]; counted {
+		t.Fatalf("grantsTotal = %v, want none said for grants that could not be read", metadata["grantsTotal"])
 	}
 }
 

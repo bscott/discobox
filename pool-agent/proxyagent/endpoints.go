@@ -47,11 +47,16 @@ func liftValues(names ...string) func(map[string]json.RawMessage, parsedBody) ma
 // credential is usually approved around ("one discobox per issue, each
 // granted its own branch"), and they sit last in the body, after a prompt
 // that can be kilobytes long, so they are lifted rather than left to a round
-// that shows the body.
+// that shows the body. Their count is said even when it is none, so a create
+// that grants nothing reads as that, not as grants the metadata left out; a
+// grants field that cannot be read is not counted at all.
 func describeSandboxCreate(fields map[string]json.RawMessage, in parsedBody) map[string]any {
 	out := map[string]any{}
-	if grants := sandboxGrants(fields["grants"], in); grants != nil {
-		out["grants"] = grants
+	if grants, ok := sandboxGrants(fields["grants"], in); ok {
+		out["grantsTotal"] = len(grants)
+		if len(grants) > 0 {
+			out["grants"] = grants
+		}
 	}
 	for name, as := range map[string]string{"harnessName": "harness", "poolId": "pool"} {
 		if value, ok := scalar(fields[name], in); ok {
@@ -112,11 +117,15 @@ func describeSandboxCreate(fields map[string]json.RawMessage, in parsedBody) map
 
 // sandboxGrants is each grant a create hands the new discobox: the credential,
 // where it may go, and the sentences each use was granted as, which are what
-// the new discobox will be judged against.
-func sandboxGrants(raw json.RawMessage, in parsedBody) []any {
+// the new discobox will be judged against. It reports whether it could read
+// them: no grants field, or a null one, is none.
+func sandboxGrants(raw json.RawMessage, in parsedBody) ([]any, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, true
+	}
 	var grants []map[string]json.RawMessage
-	if json.Unmarshal(raw, &grants) != nil || len(grants) == 0 {
-		return nil
+	if json.Unmarshal(raw, &grants) != nil {
+		return nil, false
 	}
 	out := make([]any, 0, len(grants))
 	for _, grant := range grants {
@@ -143,7 +152,7 @@ func sandboxGrants(raw json.RawMessage, in parsedBody) []any {
 		}
 		out = append(out, described)
 	}
-	return out
+	return out, true
 }
 
 // sandboxSecrets is each secret a create assigns the new discobox outright,

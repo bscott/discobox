@@ -68,7 +68,7 @@ type endpoint struct {
 var endpoints = []*endpoint{
 	mustEndpoint(judge.EndpointGitHubFork, 1, "api.github.com", "POST /repos/{owner}/{repo}/forks", jsonParser,
 		liftValues("organization", "name", "default_branch_only")),
-	mustEndpoint(judge.EndpointDiscoboxSandboxCreate, 1, GateHost(), "POST /projects/{project}/sandboxes", jsonParser,
+	mustEndpoint(judge.EndpointDiscoboxSandboxCreate, 2, GateHost(), "POST /projects/{project}/sandboxes", jsonParser,
 		describeSandboxCreate),
 }
 
