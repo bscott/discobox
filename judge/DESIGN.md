@@ -68,7 +68,9 @@ a `Standing` route: net/http pattern syntax, one method and an exact path
 anything but an allow. `Job.Admits` keeps only a first-round route decided
 before the body's content was shown, on a request whose operation is not in its
 body (`Request.OperationInBody`: a recognized protocol, an endpoint that reads
-its body, or a body its parser could not read) — a JSON object's keys are its
+its body — every endpoint but the reads `operationOutsideBody` names, so one
+this package does not know is read as reading its body — or a body its parser
+could not read) — a JSON object's keys are its
 shape, not its operation, and do not stop one; the control plane asks the same
 of every request a standing allow would answer, since a route says nothing
 about a body — standing

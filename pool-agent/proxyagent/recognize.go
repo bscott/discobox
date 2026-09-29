@@ -68,8 +68,18 @@ type endpoint struct {
 var endpoints = []*endpoint{
 	mustEndpoint(judge.EndpointGitHubFork, 1, "api.github.com", "POST /repos/{owner}/{repo}/forks", jsonParser,
 		liftValues("organization", "name", "default_branch_only")),
-	mustEndpoint(judge.EndpointDiscoboxSandboxCreate, 3, GateHost(), "POST /projects/{project}/sandboxes", jsonParser,
+	mustEndpoint(judge.EndpointDiscoboxSandboxCreate, 4, GateHost(), "POST /projects/{project}/sandboxes", jsonParser,
 		describeSandboxCreate),
+	// What `discobox new` sends after a create to finish making the
+	// discobox: it polls it, pushes its source into its origin, and reports
+	// the push done. Each is judged on its own, so each is named.
+	mustEndpoint(judge.EndpointDiscoboxSandboxGet, 1, GateHost(), "GET /projects/{project}/sandboxes/{sandbox}", nil, nil),
+	mustEndpoint(judge.EndpointDiscoboxSandboxOriginRefs, 1, GateHost(),
+		"GET /projects/{project}/sandboxes/{sandbox}/git-origins/{repo}/info/refs", nil, nil),
+	mustEndpoint(judge.EndpointDiscoboxSandboxOriginPush, 1, GateHost(),
+		"POST /projects/{project}/sandboxes/{sandbox}/git-origins/{repo}/git-receive-pack", nil, nil),
+	mustEndpoint(judge.EndpointDiscoboxSandboxSourcePushed, 1, GateHost(),
+		"POST /projects/{project}/sandboxes/{sandbox}/complete-source-push", jsonParser, describeSourcePushed),
 }
 
 func mustEndpoint(name string, version int, host, pattern string, parser *bodyParser,

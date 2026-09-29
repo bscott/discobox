@@ -184,6 +184,18 @@ func TestAJobAdmitsOnlyARouteDerivedFromItsOwnEvidence(t *testing.T) {
 	if _, err := fork.Admits(standing); err == nil {
 		t.Fatal("an allow for an endpoint that reads its body was let stand")
 	}
+	// An endpoint this package does not know is read as one that reads its
+	// body; one it names as a read with nothing in its body may stand.
+	unknown := request(1, nil)
+	unknown.Request.Endpoint = &judge.Recognition{Name: "forge.unknown", Version: 1}
+	if _, err := unknown.Admits(standing); err == nil {
+		t.Fatal("an allow for an endpoint nobody named was let stand")
+	}
+	read := request(1, nil)
+	read.Request.Endpoint = &judge.Recognition{Name: judge.EndpointDiscoboxSandboxGet, Version: 1}
+	if _, err := read.Admits(standing); err != nil {
+		t.Fatalf("an allow for a named read refused the route: %v", err)
+	}
 	unreadable := &judge.Body{Length: 10, Parser: &judge.Recognition{Name: judge.ParserJSON, Version: 1},
 		ParseError: "the body is encoded as \"br\", which this proxy does not decode"}
 	if _, err := request(1, unreadable).Admits(standing); err == nil {

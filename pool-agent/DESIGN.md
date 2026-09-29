@@ -886,7 +886,10 @@ flowchart LR
 - **A request is recognized before it is judged** (`recognize.go`; ADR
   26-09-26-240 §1): its protocol (`protocols`: a git push) from its method,
   path and media type, and its endpoint (`endpoints`: GitHub's fork, the
-  discobox API's create through the gate) from its host, method and path. Both are built-in, ordered registries — a new protocol
+  discobox API's create through the gate, and the calls `discobox new` makes
+  after it to finish the discobox — the poll, the source push into its
+  origin, and the report that the push is done) from its host, method and
+  path. Both are built-in, ordered registries — a new protocol
   or API is one entry and its tests — and the names go to the control plane,
   which adds the guidance the judge package keeps for them; a pool never sends
   guidance of its own.

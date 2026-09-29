@@ -166,3 +166,79 @@ func TestOnlyADiscoboxCreateIsRecognizedAsOne(t *testing.T) {
 		t.Fatal("another host's path was recognized as the discobox API's")
 	}
 }
+
+// apiCall is a call to the discobox API through the gate, at path.
+func apiCall(method, path, body string) proxy.SecretAuthorizeRequest {
+	req := withBody([]byte(body), "application/json")
+	if body == "" {
+		req = authorizeRequest()
+		req.Header.Del("Content-Type")
+		req.Header.Del("Content-Length")
+	}
+	req.Method = method
+	req.Host = GateHost()
+	req.URL = "https://" + GateHost() + path
+	return req
+}
+
+// What `discobox new` sends after a create to finish making the discobox is
+// each named, so the judge is told it is that and not something else under
+// the same use. The reads carry nothing in their bodies and may stand, so a
+// poll once a second is not a judge once a second; the push and the report
+// are read every time.
+func TestTheCallsThatFinishADiscoboxCreateAreRecognized(t *testing.T) {
+	const sandbox = "/projects/default/sandboxes/sbx_99sxwvjtnv0sgsdw"
+	for _, tc := range []struct {
+		name, method, path, body string
+		endpoint                 string
+		protocol                 string
+		stands                   bool
+	}{
+		{name: "poll", method: http.MethodGet, path: sandbox,
+			endpoint: judge.EndpointDiscoboxSandboxGet, stands: true},
+		{name: "discovery", method: http.MethodGet, path: sandbox + "/git-origins/primary.git/info/refs?service=git-receive-pack",
+			endpoint: judge.EndpointDiscoboxSandboxOriginRefs, stands: true},
+		{name: "push", method: http.MethodPost, path: sandbox + "/git-origins/primary.git/git-receive-pack",
+			endpoint: judge.EndpointDiscoboxSandboxOriginPush, protocol: judge.ProtocolGitReceivePack},
+		{name: "report", method: http.MethodPost, path: sandbox + "/complete-source-push", body: `{"sources": {"primary": "f3d4e53c"}}`,
+			endpoint: judge.EndpointDiscoboxSandboxSourcePushed},
+	} {
+		evidence := evidenceOf(context.Background(), apiCall(tc.method, tc.path, tc.body))
+		if evidence.Endpoint == nil || evidence.Endpoint.Name != tc.endpoint {
+			t.Fatalf("%s: endpoint = %+v, want %s", tc.name, evidence.Endpoint, tc.endpoint)
+		}
+		if tc.protocol != "" && (evidence.Protocol == nil || evidence.Protocol.Name != tc.protocol) {
+			t.Fatalf("%s: protocol = %+v, want %s", tc.name, evidence.Protocol, tc.protocol)
+		}
+		if stands := evidence.OperationInBody() == ""; stands != tc.stands {
+			t.Fatalf("%s: may stand = %v, want %v", tc.name, stands, tc.stands)
+		}
+		if len(judge.GuidanceFor(evidence)) == 0 {
+			t.Fatalf("%s: no guidance says what it is", tc.name)
+		}
+	}
+}
+
+// The report is described by what it says was pushed: the commit each
+// source of the discobox will start from.
+func TestASourcePushedReportIsDescribedByItsCommits(t *testing.T) {
+	_, metadata := describedMetadata(t, apiCall(http.MethodPost,
+		"/projects/default/sandboxes/sbx_1/complete-source-push", `{"sources": {"primary": "f3d4e53c", "hooks": "a2b5db14"}}`))
+	sources, _ := metadata["sources"].(map[string]any)
+	if sources["primary"] != "f3d4e53c" || sources["hooks"] != "a2b5db14" {
+		t.Fatalf("sources = %v, want each source's commit", metadata["sources"])
+	}
+}
+
+// Reading one discobox is not listing them, and the discobox API's paths
+// mean nothing on another host.
+func TestOnlyReadingOneDiscoboxIsRecognizedAsIt(t *testing.T) {
+	if got := recognize(apiCall(http.MethodGet, "/projects/default/sandboxes", "")).endpoint; got != nil {
+		t.Fatalf("listing discoboxes was recognized as %s", got.Name)
+	}
+	req := apiCall(http.MethodGet, "/projects/default/sandboxes/sbx_1", "")
+	req.Host = "api.example.com"
+	if recognize(req).endpoint != nil {
+		t.Fatal("another host's path was recognized as the discobox API's")
+	}
+}

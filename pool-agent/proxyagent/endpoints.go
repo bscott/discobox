@@ -115,6 +115,22 @@ func describeSandboxCreate(fields map[string]json.RawMessage, in parsedBody) map
 	return out
 }
 
+// describeSourcePushed is which commit a discobox's source-push report says
+// was pushed for each of its sources: what the discobox will start from.
+func describeSourcePushed(fields map[string]json.RawMessage, in parsedBody) map[string]any {
+	var sources map[string]json.RawMessage
+	if json.Unmarshal(fields["sources"], &sources) != nil || len(sources) == 0 {
+		return nil
+	}
+	pushed := map[string]any{}
+	for slug, raw := range sources {
+		if commit, ok := scalar(raw, in); ok {
+			pushed[in.redact(slug)] = commit
+		}
+	}
+	return map[string]any{"sources": pushed}
+}
+
 // sandboxGrants is each grant a create hands the new discobox: the credential,
 // where it may go, and the sentences each use was granted as, which are what
 // the new discobox will be judged against. It reports whether it could read

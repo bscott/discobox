@@ -180,7 +180,9 @@ func (b *Body) Supplied() bool { return b != nil && (b.Content != nil || b.Missi
 // It goes by what the request was recognized as, not by what its metadata
 // happened to say: a push is its ref updates whether or not they were read,
 // and an endpoint that reads its body does so for every request to it,
-// including one that happened to send none. It is asked of the request an
+// including one that happened to send none. An endpoint is taken to read its
+// body unless this package names it as one whose method and path are its
+// whole operation (operationOutsideBody). It is asked of the request an
 // allow is granted on and of every request a standing allow would cover. A
 // parser's generic description of a body — a JSON object's keys — is not
 // the operation, and does not stop a route standing; posting review comments
@@ -191,7 +193,7 @@ func (r *Request) OperationInBody() string {
 		return ""
 	case r.Protocol != nil:
 		return "a request in a protocol Discobox recognized carries its operation in its body, and an allow for one does not stand"
-	case r.Endpoint != nil:
+	case r.Endpoint != nil && !operationOutsideBody[r.Endpoint.Name]:
 		return "an endpoint whose operation Discobox reads from its body was allowed for that body, and the allow does not stand"
 	case r.Body != nil && r.Body.ParseError != "":
 		return "a body its parser could not read may be anything, and an allow for it does not stand"
