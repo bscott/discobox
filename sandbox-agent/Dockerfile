@@ -129,6 +129,7 @@ COPY sandboxmeta ./sandboxmeta
 COPY sandboxservices ./sandboxservices
 COPY sandboxshell ./sandboxshell
 COPY sandboxuser ./sandboxuser
+COPY secretformat ./secretformat
 COPY serverstage ./serverstage
 COPY tools ./tools
 COPY version ./version

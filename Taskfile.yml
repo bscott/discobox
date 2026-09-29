@@ -809,7 +809,7 @@ tasks:
       - |
         set -eu
         missing=""
-        for entry in pool-agent/Dockerfile:pool-agent sandbox-agent/Dockerfile:sandbox-agent; do
+        for entry in pool-agent/Dockerfile:pool-agent sandbox-agent/Dockerfile:sandbox-agent sandbox-agent/Dockerfile:access sandbox-agent/Dockerfile:cli; do
           dockerfile="${entry%:*}"
           module="${entry##*:}"
           copied="$(awk '/^COPY [a-z]/ { split($2, parts, "/"); print parts[1] }' "$dockerfile" | sort -u)"
