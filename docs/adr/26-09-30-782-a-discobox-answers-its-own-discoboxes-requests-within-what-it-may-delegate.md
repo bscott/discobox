@@ -3,13 +3,11 @@
 - **Status**: Proposed
 - **Date**: 2026-09-30
 - **Supersedes in part**: [0140](0140-a-discobox-reaches-the-discobox-api-through-its-pool-with-a-fixed-role.md)
-  §4's pre-assigned grants on a create from a sandbox, its secret requests
-  answered "with any project secret", and its secrets list in the role; §5's
-  "the server reads no grant"; its rejections of "Authorize by who created a
-  discobox" (for answering requests) and "The server evaluates grants and their
-  uses"; and settles its Deferred "Holding a sandbox to what it was given".
-  [26-09-24-630](26-09-24-630-a-discobox-delivers-the-source-of-the-discoboxes-it-creates.md)
-  §4's `--grant` on `discobox new`, from a sandbox.
+  §4's grants pre-assigned or approved by a sandbox "with any project secret",
+  and its secrets list in the role; §5's "the server reads no grant"; its
+  rejections of "Authorize by who created a discobox" (for answering requests)
+  and "The server evaluates grants and their uses"; and settles its Deferred
+  "Holding a sandbox to what it was given".
 - **Relates to**: [26-09-30-854](26-09-30-854-a-request-is-judged-against-the-command-its-sentinel-was-minted-for.md),
   which gives the request judge the command; this ADR takes delegation away
   from the request judge altogether.
@@ -41,12 +39,17 @@ credentials; it has to be decided where the grants are.
 
 ## Decision
 
-### 1. A create from a discobox carries no grants
+### 1. A discobox launches its discoboxes with none, and is held to the bounds if it does not
 
-A discobox created by a discobox starts with no credential uses. It asks for
-what its work needs, through `discobox-access`, when it knows. A create from a
-sandbox that carries `grants` is refused, as one carrying inline secrets
-already is. A person may still pre-assign grants.
+The way a discobox runs others is to create them with no credential uses and
+answer what they ask for: a worker asks through `discobox-access` when it
+knows what its work needs. The in-box skills teach that, and teach wording the
+create use for any prompt, because a create is judged against the creator's
+use and grants folded into it are read there as part of the prompt.
+
+`discobox new --grant` stays, for people and discoboxes alike. A create from a
+discobox that does carry grants is held to what §3 holds an approval to, grant
+by grant, and a create with a grant outside those bounds creates nothing.
 
 ### 2. A discobox answers only the requests of discoboxes it created
 
@@ -107,10 +110,12 @@ HTTP request.
 **Keep delegation in the request judge** (0140 as written). It lacks the facts
 and reads delegation as nested prose; see Context.
 
-**Let a discobox pre-assign grants on create, bounded as §3 bounds approval.**
-Two paths to the same authority, one of them inside a create body the request
-judge must also read. The worker's own request says what it needs once it
-knows, and one path is checked once.
+**Refuse grants on a create from a discobox.** One path to the authority
+instead of two, and no grants in a create body for the request judge to read.
+But `--grant` is one flag for people and discoboxes, and refusing it to one of
+them makes the create API mean different things by caller. With §3's bounds on
+both paths, a discobox gains nothing by pre-assigning that it could not get by
+approving, and the skills keep discoboxes on the path that judges well.
 
 **Show the request judge the approver's delegation grants.** It moves the
 server's facts into a model's reading of an HTTP request, and still leaves the
@@ -126,14 +131,15 @@ needs.
 
 ## Consequences
 
-- The sandbox role changes: create refuses `grants`; the secrets list leaves
-  it; secret-request routes are scoped to discoboxes the caller created.
+- The sandbox role changes: a create's grants are held to the creator's
+  delegation grants; the secrets list leaves it; secret-request routes are
+  scoped to discoboxes the caller created.
 - A lead needs a delegation grant for each credential it will hand on, which a
   person approves once. Without one, its workers' requests wait for a person.
-- `discobox new --grant` and `--json` `"grants"` are refused from a discobox;
-  the in-box skills stop teaching them and teach approving instead.
+- `discobox new --grant` and `--json` `"grants"` stay. The in-box skills teach
+  a discobox to launch with none and approve instead.
 - The approve API defaults an omitted lifetime to the one the request asked
   for, for every caller, within the secret's limit — which is what the window
   already opens on, so the CLI stops reading the request first.
 - The judge gains a delegation job kind, and `PromptVersion` changes with it.
-- Grants already pre-assigned by discoboxes stay as they are.
+- Grants already pre-assigned or approved by discoboxes stay as they are.
