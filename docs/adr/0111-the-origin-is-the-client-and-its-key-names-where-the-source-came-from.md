@@ -1,6 +1,8 @@
 # 0111 — The origin is the client, and its key names where the source came from
 
-- **Status**: Accepted
+- **Status**: Accepted (§3's folder the launcher's header opens on superseded
+  by [ADR 26-09-30-188](26-09-30-188-the-consoles-filters-open-on-everything-and-are-kept-per-directory.md);
+  the rest stands)
 - **Date**: 2026-09-11
 - **Supersedes**: [0001](0001-sandbox-origin-and-remote-source-push.md) §1's
   `Origin.ProjectPath` and its derivation of `OriginKey`. The origin records
