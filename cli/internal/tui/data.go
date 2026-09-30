@@ -365,10 +365,38 @@ type Session struct {
 	// DataSource.SaveDraft.
 	Draft string
 
+	// View is how the header's filters were left in Directory when a window
+	// was last open on it, and is what the window opens on. The zero value is
+	// every server, every folder and every tag. See DataSource.SaveView.
+	View ListView
+
+	// ServerChosen and SourceChosen are whether the command line named the
+	// server (--server, which makes it the primary) and the source (-C, which
+	// makes it the window's own folder). A folder with no saved View opens
+	// narrowed to what was named rather than on everything: naming one is
+	// saying which you mean.
+	ServerChosen bool
+	SourceChosen bool
+
 	// Servers are the servers a discobox can be created on, by the names the
 	// window lists them under, the primary first (ADR 0116 §5). Nil when there
 	// is only the primary, and then the run options offer no choice.
 	Servers []string
+}
+
+// ListView is the header's three filters as a window leaves them: the server,
+// the folder and the tag the list is narrowed to, each empty for every one.
+//
+// The folder is carried whole rather than by key alone, because the window
+// opens on it before a listing has landed to name it from: its label is what
+// the header draws and its source is what a create cuts from.
+type ListView struct {
+	Server       string
+	FolderKey    string
+	FolderLabel  string
+	FolderSource string
+	FolderLocal  bool
+	Tag          string
 }
 
 // HarnessState is what a harness is set to, and so whether a discobox can be
@@ -1552,6 +1580,12 @@ type DataSource interface {
 	// come back to — and a folder is required, since a draft nothing can be
 	// keyed by is one nothing can return.
 	SaveDraft(ctx context.Context, folder, prompt string) error
+
+	// SaveView records the header's filters against the folder the window is
+	// open in, so the next window there opens on them: Session hands them back
+	// as Session.View. The zero view is the default, and saving it drops what
+	// was kept. A folder is required, the way it is for a draft.
+	SaveView(ctx context.Context, folder string, view ListView) error
 
 	// MarkWelcomed records that the project has shown its introduction, so no
 	// window on it opens on the welcome again. It is the project that

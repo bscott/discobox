@@ -217,7 +217,11 @@ type fakeSource struct {
 	pushCalls []string
 
 	// Calls, in order.
-	drafts      []string // "folder prompt"
+	drafts []string // "folder prompt"
+	views  []savedView
+	// freshFolder is a folder no window has narrowed yet, which opens on
+	// every server, folder and tag rather than on its own folder.
+	freshFolder bool
 	runs        []RunRequest
 	did         []string     // "verb id"
 	renames     []string     // "id name"
@@ -330,7 +334,17 @@ func testHarnesses() []Harness {
 	}
 }
 
-func (f *fakeSource) Session(context.Context) (Session, error) { return f.session, nil }
+// Session is the fake's session. Unless a test says the folder is a fresh one,
+// it hands back a view saved on the window's own folder: most tests are about
+// one folder's discoboxes, which is what a window left narrowed there opens on.
+func (f *fakeSource) Session(context.Context) (Session, error) {
+	s := f.session
+	if !f.freshFolder && s.View == (ListView{}) {
+		own := s.folder()
+		s.View = ListView{FolderKey: own.key, FolderLabel: own.label, FolderSource: own.source, FolderLocal: own.local}
+	}
+	return s, nil
+}
 
 func (f *fakeSource) MarkWelcomed(context.Context) error {
 	f.mu.Lock()
@@ -344,6 +358,20 @@ func (f *fakeSource) MarkWelcomed(context.Context) error {
 func (f *fakeSource) SaveDraft(_ context.Context, folder, prompt string) error {
 	f.drafts = append(f.drafts, folder+" "+prompt)
 	return f.draftErr
+}
+
+// savedView is one SaveView call.
+type savedView struct {
+	folder string
+	view   ListView
+}
+
+// SaveView records the filters the window handed the store, in order.
+func (f *fakeSource) SaveView(_ context.Context, folder string, view ListView) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.views = append(f.views, savedView{folder: folder, view: view})
+	return nil
 }
 
 func (f *fakeSource) List(context.Context) (Listing, error) {

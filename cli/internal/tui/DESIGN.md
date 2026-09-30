@@ -677,7 +677,8 @@ at them every time a poll runs long.
 left and right change it, Enter or a click opens the dropdown — and it is there
 only when `Session.Servers` has more than one. It is the top rung of the focus
 ladder, above the folder, so Down from it steps back to the folder (see "Focus
-is a ladder" below). It opens on `all servers`, which leads the choices and is
+is a ladder" below). It opens on `all servers` (unless the folder was left on
+one; see `view.go`), which leads the choices and is
 the listing §4 describes; the servers follow it, the primary first.
 
 **The header can narrow the list to one tag** (`tags.go`, `sandboxList.tag`),
@@ -2007,6 +2008,25 @@ one thing the renderer cannot redraw its way out of.
 Pool preload is reported through the sandbox launch's normal busy status. The
 console has no independent prepull subscription or reserved setup row.
 
+**The header's filters are kept per folder** (`view.go`,
+[ADR 26-09-30-188](../../../docs/adr/26-09-30-188-the-consoles-filters-open-on-everything-and-are-kept-per-directory.md)). A window opens on
+`Session.View`: the server, folder and tag the last window in the session's
+directory was left on, or — in a directory never narrowed — every server, every
+folder and every tag, the zero `ListView`, narrowed by what the command line
+named (`Session.ServerChosen`, `SourceChosen`): `--server` opens on the primary
+it made, and `-C` on the window's own folder — already the absolute project
+root, so `-C ../foo` is `/home/…/foo`. That narrowing is taken as what the store
+has, so it is saved only once the filters move off it, and a saved view
+outranks it: the flags choose the default and nothing else. They are written through
+`DataSource.SaveView` exactly when a draft is, on the listing's tick when they
+have moved and from `closeWindow` on the way out, and never by a one-shot
+window, whose header nobody chose. The folder is carried whole (key, label,
+source) because the window opens on it before any listing has landed to name
+it; a saved server no longer registered opens as every server. On `all
+folders` a create still asks where to cut from (`askWhereToCutFrom`), so the
+first prompt in a fresh directory asks, and answering narrows the folder —
+which is then what that directory opens on.
+
 **An unsent prompt outlives the window** (`draft.go`). What is in the composer
 is written through `DataSource.SaveDraft`, keyed by the session's directory, and
 `Session.Draft` is what the next window in that folder opens holding. Closing a
@@ -2230,9 +2250,10 @@ which folder's sandboxes are listed (`folder.go`). A folder is an origin key
 a machine, and where the discoboxes in it had their source from — a directory or
 a repository URL. It is matched by the key the server stored on each row
 (`Sandbox.OriginKey`) and named by that source, so a URL is a folder the way a
-directory is. The header opens on the window's own folder (`Session.OriginKey`,
-what `discobox ls` lists here), with every folder something is filed in one
-press away, plus `allFolders`. A folder of this machine's also holds its
+directory is. The header opens on the folder the directory's saved view names,
+or on `allFolders` (see "The header's filters are kept per folder"); the window's
+own folder (`Session.OriginKey`, what `discobox ls` lists here) leads the
+choices, with every folder something is filed in one press away. A folder of this machine's also holds its
 discoboxes with no source, which are filed under the machine alone
 (`Session.HostKey`) — `ls` sends both keys the same way — so that key is never
 offered as a folder of its own. The choices come from the listing itself, so the

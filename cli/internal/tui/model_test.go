@@ -712,8 +712,9 @@ func TestArchivedSandboxesAreHiddenUntilAskedFor(t *testing.T) {
 	}
 }
 
-// The window opens on the folder it is running in, which is what `discobox ls`
-// shows, and the header's dropdown is how you reach the others.
+// A window left on the folder it is running in opens on it, and the header's
+// dropdown is how you reach the others. (A folder never narrowed opens on
+// every folder; see view_test.go.)
 func TestTheFolderFilterOpensOnThisDirectory(t *testing.T) {
 	t.Parallel()
 	m := newTestModel(t, newFakeSource(testSandboxes()...))

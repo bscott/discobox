@@ -1,0 +1,174 @@
+package tui
+
+import (
+	"strings"
+	"testing"
+)
+
+// A folder no window has narrowed opens on everything: every server, every
+// folder and every tag.
+func TestAFreshFolderOpensOnEverything(t *testing.T) {
+	t.Parallel()
+	ds := newFakeSource(onServer("alpha", testSandboxes())...)
+	ds.session.Servers = []string{"alpha", "beta"}
+	ds.freshFolder = true
+	m := newTestModel(t, ds)
+
+	if m.list.server != "" || m.list.folder.key != "" || m.list.tag != "" {
+		t.Fatalf("view = %+v, want every server, folder and tag", m.currentView())
+	}
+	if got := len(m.list.rows()); got != 3 {
+		t.Fatalf("rows = %d, want every unarchived discobox", got)
+	}
+	// Opening on the default is no choice anybody made, so nothing is saved.
+	send(t, m, tickMsg{})
+	if len(ds.views) != 0 {
+		t.Fatalf("an untouched header wrote %v", ds.views)
+	}
+}
+
+// The filters the last window in this folder was left on are where the next
+// one opens, and a create goes where they say.
+func TestASavedViewIsWhereTheWindowOpens(t *testing.T) {
+	t.Parallel()
+	ds := newFakeSource(onServer("alpha", testSandboxes())...)
+	ds.session.Servers = []string{"alpha", "beta"}
+	ds.session.View = ListView{
+		Server:       "beta",
+		FolderKey:    testKey("/src/obot"),
+		FolderLabel:  "/src/obot",
+		FolderSource: "/src/obot",
+		Tag:          "wip",
+	}
+	m := newTestModel(t, ds)
+
+	if m.list.server != "beta" || m.list.folder.key != testKey("/src/obot") || m.list.tag != "wip" {
+		t.Fatalf("view = %+v, want the one saved", m.currentView())
+	}
+	if m.opts.folder != "/src/obot" {
+		t.Fatalf("the run options cut from %q, want the saved folder's source", m.opts.folder)
+	}
+	if got := m.opts.command("fix it"); !strings.Contains(got, "--server beta") {
+		t.Fatalf("command = %q, want it on the saved server", got)
+	}
+}
+
+// A saved server that is no longer registered would list nothing, so the
+// window opens on every server instead.
+func TestASavedServerThatIsGoneIsEveryServer(t *testing.T) {
+	t.Parallel()
+	ds := newFakeSource(onServer("alpha", testSandboxes())...)
+	ds.session.Servers = []string{"alpha", "beta"}
+	ds.session.View = ListView{Server: "gamma"}
+	m := newTestModel(t, ds)
+	if m.list.server != "" {
+		t.Fatalf("server = %q, want every server", m.list.server)
+	}
+}
+
+// Changing a filter is saved against the window's folder on the listing's
+// clock, once, and on the way out.
+func TestChangingAFilterIsSaved(t *testing.T) {
+	t.Parallel()
+	ds := newFakeSource(testSandboxes()...)
+	ds.freshFolder = true
+	m := newTestModel(t, ds)
+
+	// Right off "all folders" wraps to the first folder, the window's own.
+	send(t, m, keyPress("tab"), keyPress("up"), keyPress("right"))
+	if m.list.folder.key != testKey("/src/disco2") {
+		t.Fatalf("folder = %q, want the window's own", m.list.folder.label)
+	}
+	send(t, m, tickMsg{})
+	if len(ds.views) != 1 || ds.views[0].folder != "/src/disco2" || ds.views[0].view.FolderKey != testKey("/src/disco2") {
+		t.Fatalf("views = %+v, want the folder saved against /src/disco2", ds.views)
+	}
+	send(t, m, tickMsg{})
+	if len(ds.views) != 1 {
+		t.Fatalf("an unchanged header wrote again: %+v", ds.views)
+	}
+
+	// Back to every folder is a change too, and closing the window saves it.
+	send(t, m, keyPress("left"))
+	send(t, m, keyPress("ctrl+c"))
+	if len(ds.views) != 2 || ds.views[1].view != (ListView{}) {
+		t.Fatalf("views = %+v, want the default saved on the way out", ds.views)
+	}
+}
+
+// With nothing saved, what the command line named is what the window opens
+// narrowed to: -C is the window's own folder and --server the primary. That is
+// where it opens rather than a change made in it, so nothing is saved for it.
+func TestTheCommandLineNarrowsAFreshFolder(t *testing.T) {
+	t.Parallel()
+	ds := newFakeSource(onServer("alpha", testSandboxes())...)
+	ds.session.Servers = []string{"alpha", "beta"}
+	ds.session.ServerChosen, ds.session.SourceChosen = true, true
+	ds.freshFolder = true
+	m := newTestModel(t, ds)
+
+	if m.list.server != "alpha" {
+		t.Fatalf("server = %q, want the one --server named", m.list.server)
+	}
+	if m.list.folder.key != testKey("/src/disco2") {
+		t.Fatalf("folder = %q, want the one -C named", m.list.folder.label)
+	}
+	if m.list.tag != "" {
+		t.Fatalf("tag = %q, want every tag", m.list.tag)
+	}
+	send(t, m, tickMsg{})
+	if len(ds.views) != 0 {
+		t.Fatalf("the window saved where the command line opened it: %+v", ds.views)
+	}
+
+	// Moving off it is a change, and back to everything is saved as the
+	// default the store drops.
+	send(t, m, keyPress("tab"), keyPress("up"), keyPress("left"))
+	send(t, m, tickMsg{})
+	if len(ds.views) != 1 || ds.views[0].view.FolderKey != "" || ds.views[0].view.Server != "alpha" {
+		t.Fatalf("views = %+v, want every folder on alpha saved", ds.views)
+	}
+}
+
+// Each flag narrows only its own filter.
+func TestOnlyTheNamedFilterIsNarrowed(t *testing.T) {
+	t.Parallel()
+	ds := newFakeSource(onServer("alpha", testSandboxes())...)
+	ds.session.Servers = []string{"alpha", "beta"}
+	ds.session.SourceChosen = true
+	ds.freshFolder = true
+	m := newTestModel(t, ds)
+	if m.list.server != "" || m.list.folder.key != testKey("/src/disco2") {
+		t.Fatalf("view = %+v, want every server in the -C folder", m.currentView())
+	}
+}
+
+// A folder with filters saved opens on them whatever the command line named:
+// the flags only choose the default.
+func TestASavedViewOutranksTheCommandLine(t *testing.T) {
+	t.Parallel()
+	ds := newFakeSource(onServer("alpha", testSandboxes())...)
+	ds.session.Servers = []string{"alpha", "beta"}
+	ds.session.ServerChosen, ds.session.SourceChosen = true, true
+	ds.session.View = ListView{Server: "beta", Tag: "wip"}
+	m := newTestModel(t, ds)
+	if m.list.server != "beta" || m.list.folder.key != "" || m.list.tag != "wip" {
+		t.Fatalf("view = %+v, want the saved one", m.currentView())
+	}
+}
+
+// The window's own folder is restored from the session rather than from the
+// saved copy, whose branch and ref may since have moved on.
+func TestTheOwnFolderIsRestoredFromTheSession(t *testing.T) {
+	t.Parallel()
+	ds := newFakeSource(testSandboxes()...)
+	ds.session.View = ListView{FolderKey: testKey("/src/disco2"), FolderLabel: "/src/disco2 @ old", FolderSource: "/src/disco2@old"}
+	m := newTestModel(t, ds)
+	own := ds.session.folder()
+	if m.list.folder != own {
+		t.Fatalf("folder = %+v, want the session's own %+v", m.list.folder, own)
+	}
+	if m.opts.folder != own.source {
+		t.Fatalf("the run options cut from %q, want %q", m.opts.folder, own.source)
+	}
+}

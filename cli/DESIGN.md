@@ -310,7 +310,8 @@ private key another principal can reach, and reports only "Bad owner or
 permissions". `assertPrivateToUser` in the tests checks the real thing on each
 platform — the mode on Unix, the owner and every ACE on Windows.
 
-The JSON memories under it — `recent-selections.json` and `prompt-drafts.json` —
+The JSON memories under it — `recent-selections.json`, `prompt-drafts.json` and
+`console-views.json` —
 are written by `writeStateFile` (`internal/cli/statefile.go`) through a
 temporary file beside the target, so a crash mid-write cannot leave a reader
 parsing half a file for the rest of the install's life. Each is bounded to a
@@ -324,6 +325,11 @@ unwritable or corrupt file costs the convenience and never the command.
   back in another. An empty prompt deletes its entry rather than storing nothing
   under it, and a prompt past the cap is cut on a rune boundary — a state file
   is not where a pasted log belongs.
+- `console-views.json` (`internal/cli/consoleviews.go`) is the console header's
+  server, folder and tag filters per project directory, keyed the same way:
+  what `tui.Session.View` is loaded from and what `DataSource.SaveView` writes.
+  A directory with no entry opens on every server, folder and tag, and saving
+  that default deletes the entry.
 
 ## Uninstall (`discobox admin uninstall`)
 

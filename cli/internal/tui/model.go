@@ -104,6 +104,10 @@ type Model struct {
 	// and a window closed mid-sentence has the sentence. See saveDraft.
 	draft string
 
+	// savedView is the header's filters as the store last had them, written only
+	// when they move away from it. See view.go.
+	savedView ListView
+
 	// edits is the composer's kill ring and undo history — the readline state
 	// the textarea does not keep for itself. See readline.go.
 	edits promptEditor
@@ -794,16 +798,14 @@ func (m *Model) update(msg tea.Msg) tea.Cmd {
 		m.session = msg.session
 		m.list.session = msg.session
 		cmd := m.restoreDraft(msg.session.Draft)
-		// The window opens on the folder it was opened in, which is what
-		// `discobox ls` shows and what the header has always said. Everything
-		// else is one press away in the dropdown.
-		m.list.folder = msg.session.folder()
-		// The server filter opens on every server, which is the listing ADR
-		// 0116 §4 describes and what the window has always shown: narrowing to
-		// one is the header's to do, and nothing has asked for it yet.
-		m.list.server = ""
+		// The window opens on the filters the last window in this folder was
+		// left on, and on every server, folder and tag in a folder that has
+		// never been narrowed: seeing everything side by side is the listing
+		// ADR 0116 §4 describes. See view.go.
+		m.restoreView(msg.session.View)
 		m.opts = newOptions(msg.session)
 		m.opts.setFolder(m.list.folder.source)
+		m.opts.setServer(m.list.server)
 		// The two loads race, and either order has to end with the panel
 		// offering the harnesses that are actually there.
 		m.opts.setHarnesses(m.harnesses.all)
@@ -933,6 +935,10 @@ func (m *Model) update(msg tea.Msg) tea.Cmd {
 		// loses at most the last few seconds of what was typed. The keys that
 		// close the window save it themselves; see closeWindow.
 		if cmd := m.saveDraft(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		// And the header's filters with it, on the same terms.
+		if cmd := m.saveView(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 		// Harnesses change when somebody changes them, which is here — so they are
@@ -3948,11 +3954,15 @@ func (m *Model) helpText() string {
 		"The folder filter",
 		"",
 		"  The header names the folder whose discoboxes are listed: the",
-		"  directory or repository URL they were cut from. It starts as the",
-		"  window's own, which is what `discobox ls` shows, and this",
-		"  machine's discoboxes with no source are listed in it too. On",
+		"  directory or repository URL they were cut from. The window's own",
+		"  folder lists this machine's discoboxes with no source too. On",
 		"  `all folders` the list is in a section per folder — per folder",
 		"  and server, as `folder on server`, while it shows every server.",
+		"",
+		"  A directory you have never narrowed opens on every server, folder",
+		"  and tag — or on the server --server named and the folder -C named,",
+		"  when they are given. Change any of them and the next window",
+		"  opened in that directory opens where you left them.",
 		"",
 		"    ↑              reach it, from the top of the discobox list",
 		"    ← →            change it without opening anything",
