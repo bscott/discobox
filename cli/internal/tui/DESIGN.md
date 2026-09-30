@@ -727,12 +727,18 @@ discoboxes (`sandboxList.onPrimary`) — unnamed above a list narrowed to anothe
 server, it reads as that server's capacity, which is the number checked before
 creating there.
 
-**The list is one section per server** while it is showing every one of them
-(`sandboxList.grouped`, from `Session.Servers`, the primary first; filtered to
-one server there is nothing to tell apart and the header has said the name).
-Rows are ordered by section and newest-first within one, and each section is introduced
-by the band the list's own title is drawn as (`renderTitle`, in the dim of the
-two): `server <name>` with that section's count, or `not answering` for a
+**The list is sectioned by every filter the header leaves open**
+(`sandboxList.grouped`, `sectionKey`): by server while it shows every server
+and there is more than one (`byServer`, from `Session.Servers`, the primary
+first), and by folder on `all folders` (`byFolder`, in the dropdown's order,
+the window's own first), since the rows carry no folder column. On both, a
+section is a folder and a server at once; a filter narrowed to one value drops
+out of the sections, because the header has said the name, so one server and
+one folder is no sections at all. Rows are ordered by section — folders leading,
+each one's servers under it — and newest-first within one, and each section is
+introduced by the band the list's own title is drawn as (`renderTitle`, in the
+dim of the two): `server <name>`, the folder's label, or `<folder> on <server>`,
+with that section's count; or `server <name>` and `not answering` for a
 server that did not answer, whose section has no rows under it — rows that are
 missing say why rather than vanishing. A band rather than a line of text
 because a bare name above a list of discoboxes is one more name among them,

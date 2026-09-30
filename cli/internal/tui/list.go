@@ -148,12 +148,34 @@ func (l *sandboxList) rows() []Sandbox {
 		}
 		out = append(out, s)
 	}
-	// Grouped by server, and newest-first inside a section as everywhere else:
-	// the sort is stable, so the order the listing arrived in is what orders a
-	// section (ADR 0116 §4).
+	// Grouped by section, and newest-first inside one as everywhere else: the
+	// sort is stable, so the order the listing arrived in is what orders a
+	// section (ADR 0116 §4). Folders lead and servers follow inside each, so
+	// one folder's servers sit together under it.
 	if l.grouped() {
+		folders := l.folderRanks()
+		rank := func(s Sandbox) (server, folder int, key string) {
+			if l.byServer() {
+				server = l.section(s.Server)
+			}
+			if l.byFolder() {
+				folder, key = folderRank(folders, s.OriginKey), s.OriginKey
+			}
+			return server, folder, key
+		}
 		sort.SliceStable(out, func(i, j int) bool {
-			return l.section(out[i].Server) < l.section(out[j].Server)
+			si, fi, ki := rank(out[i])
+			sj, fj, kj := rank(out[j])
+			if fi != fj {
+				return fi < fj
+			}
+			// Folders the dropdown does not offer share a rank, and each is
+			// still a section of its own: kept apart by key, or their rows
+			// interleave and every change of key draws another header.
+			if ki != kj {
+				return ki < kj
+			}
+			return si < sj
 		})
 	}
 	return out
@@ -184,12 +206,67 @@ func (l *sandboxList) setWaiting(servers []string) {
 	l.waiting = append(l.waiting[:0], servers...)
 }
 
-// grouped reports whether the list is drawn as one section per server, which
-// it is once there is more than one server on screen to tell apart. With one —
-// because there is one, or because the header is filtered to one — naming it
-// on every row, or over them, says what the header already says.
+// grouped reports whether the list is drawn in sections: one per server, one
+// per folder, or one per server and folder when it is showing every one of
+// both. A dimension the header narrows to one value is not a dimension of the
+// sections — a band naming it over every row says what the header already
+// says — so a list filtered to one server and one folder has none.
 func (l *sandboxList) grouped() bool {
+	return l.byServer() || l.byFolder()
+}
+
+// byServer reports whether the sections tell servers apart, which they do once
+// there is more than one server on screen: because there is one, or because
+// the header is filtered to one, there is nothing to tell apart.
+func (l *sandboxList) byServer() bool {
 	return l.server == "" && len(l.session.Servers) > 1
+}
+
+// byFolder reports whether the sections tell folders apart, which they do on
+// "all folders": the rows carry no folder column, since the header stands in
+// for one, so a list of every folder has to say which rows came from where.
+func (l *sandboxList) byFolder() bool {
+	return l.folder.key == ""
+}
+
+// sectionKey is what decides a row's section: the dimensions the list is
+// sectioned by, and nothing of the ones it is not.
+type sectionKey struct {
+	server, folder string
+}
+
+// sectionOf is the section a row is drawn under.
+func (l *sandboxList) sectionOf(s Sandbox) sectionKey {
+	var k sectionKey
+	if l.byServer() {
+		k.server = s.Server
+	}
+	if l.byFolder() {
+		k.folder = s.OriginKey
+	}
+	return k
+}
+
+// folderRanks is where each folder's rows go: the order the header's dropdown
+// offers them in, the window's own first.
+func (l *sandboxList) folderRanks() map[string]int {
+	folders := l.folders()
+	ranks := make(map[string]int, len(folders))
+	for i, f := range folders {
+		ranks[f.key] = i
+	}
+	return ranks
+}
+
+// folderRank is a folder's place among ranks. A folder the dropdown does not
+// offer — this machine's discoboxes with no source, which are in every folder
+// of this machine's rather than one of their own — sorts after the ones it
+// does.
+func folderRank(ranks map[string]int, key string) int {
+	if i, ok := ranks[key]; ok {
+		return i
+	}
+	return len(ranks)
 }
 
 // missing is the servers the last listing could not reach, as this list has to
@@ -589,26 +666,26 @@ func (l *sandboxList) view(st *styles, z *zones, focused bool) string {
 	if l.sectioned() {
 		l.drawn.rows = make([]int, 0, max(bodyBudget, 0))
 	}
-	// How many each server has, for its band to say, counted once rather than
-	// per header: a section scrolled into twice is one section.
-	sectionCounts := map[string]int{}
+	// How many each section has, for its band to say, counted once rather
+	// than per header: a section scrolled into twice is one section.
+	sectionCounts := map[sectionKey]int{}
 	if l.grouped() {
 		for _, s := range rows {
-			sectionCounts[s.Server]++
+			sectionCounts[l.sectionOf(s)]++
 		}
 	}
-	drawnSection := ""
+	var drawnSection *sectionKey
 	for i := l.offset; i < len(rows) && len(body) < rowBudget; i++ {
-		// A header in front of each server's rows, and in front of the first
+		// A header in front of each section's rows, and in front of the first
 		// row drawn whichever section it is in: a window scrolled into the
-		// middle of one still says which server is on screen.
-		if l.grouped() && rows[i].Server != drawnSection {
+		// middle of one still says which server and folder is on screen.
+		if key := l.sectionOf(rows[i]); l.grouped() && (drawnSection == nil || key != *drawnSection) {
 			if len(body)+1 >= rowBudget {
 				break
 			}
-			body = append(body, l.sectionHeader(st, rows[i].Server, "", sectionCounts[rows[i].Server]))
+			body = append(body, l.sectionHeader(st, l.sectionTitle(rows[i]), plural(sectionCounts[key], "box", "boxes")))
 			l.drawn.rows = append(l.drawn.rows, -1)
-			drawnSection = rows[i].Server
+			drawnSection = &key
 		}
 		body = append(body, l.row(st, rows[i], i, focused))
 		if l.drawn.rows != nil {
@@ -623,7 +700,7 @@ func (l *sandboxList) view(st *styles, z *zones, focused bool) string {
 		if len(body) >= bodyBudget {
 			break
 		}
-		body = append(body, l.sectionHeader(st, name, "not answering", 0))
+		body = append(body, l.sectionHeader(st, serverTitle(name), "not answering"))
 		l.drawn.rows = append(l.drawn.rows, -1)
 	}
 	// And the ones that have not answered yet, which is a different thing to
@@ -632,7 +709,7 @@ func (l *sandboxList) view(st *styles, z *zones, focused bool) string {
 		if len(body) >= bodyBudget {
 			break
 		}
-		body = append(body, l.sectionHeader(st, name, "still listing", 0))
+		body = append(body, l.sectionHeader(st, serverTitle(name), "still listing"))
 		l.drawn.rows = append(l.drawn.rows, -1)
 	}
 	for len(body) < bodyBudget {
@@ -648,7 +725,7 @@ func (l *sandboxList) view(st *styles, z *zones, focused bool) string {
 // lineSpan is how many lines rows from through to take, headers included. It
 // is what tells the window whether the cursor still fits, and it counts the
 // way the body draws: a header in front of the first row, and one wherever the
-// server changes.
+// section changes.
 func (l *sandboxList) lineSpan(rows []Sandbox, from, to int) int {
 	if from < 0 || to >= len(rows) || from > to {
 		return 0
@@ -659,30 +736,59 @@ func (l *sandboxList) lineSpan(rows []Sandbox, from, to int) int {
 	}
 	lines++
 	for i := from + 1; i <= to; i++ {
-		if rows[i].Server != rows[i-1].Server {
+		if l.sectionOf(rows[i]) != l.sectionOf(rows[i-1]) {
 			lines++
 		}
 	}
 	return lines
 }
 
-// sectionHeader introduces one server's rows: the band the list's own title is
-// drawn as, in the dim of the two, so a section reads as a header of the same
-// kind rather than as a row whose glyph went missing. It says "server" because
-// a bare name over a list of discoboxes is one more name among them.
+// sectionHeader introduces one section's rows: the band the list's own title
+// is drawn as, in the dim of the two, so a section reads as a header of the
+// same kind rather than as a row whose glyph went missing.
 //
 // It is a label rather than a row: nothing acts on it, the cursor never lands
 // on it, and the mouse walks past it onto the list (zones.go).
-func (l *sandboxList) sectionHeader(st *styles, server, note string, count int) string {
-	name := strings.TrimSpace(server)
-	if name == "" {
-		name = "this server"
+func (l *sandboxList) sectionHeader(st *styles, title, right string) string {
+	return renderTitle(st.titleDim, title, right, l.width)
+}
+
+// sectionTitle names the section a row is drawn under, in the dimensions the
+// list is sectioned by: `server alpha`, the folder alone, or both as
+// `<folder> on alpha`.
+func (l *sandboxList) sectionTitle(s Sandbox) string {
+	switch {
+	case l.byServer() && l.byFolder():
+		return l.folderOf(s).label + " on " + sectionServer(s.Server)
+	case l.byServer():
+		return serverTitle(s.Server)
+	default:
+		return l.folderOf(s).label
 	}
-	right := note
-	if right == "" {
-		right = plural(count, "box", "boxes")
+}
+
+// folderOf is the folder a row is filed in, named the way the header's
+// dropdown names it: the window's own folder by its source and branch.
+func (l *sandboxList) folderOf(s Sandbox) folder {
+	if s.OriginKey != "" && s.OriginKey == l.session.OriginKey {
+		return l.session.folder()
 	}
-	return renderTitle(st.titleDim, "server "+name, right, l.width)
+	return s.folder(l.session)
+}
+
+// serverTitle is a server as a band names it. It says "server" because a bare
+// name over a list of discoboxes is one more name among them.
+func serverTitle(server string) string {
+	return "server " + sectionServer(server)
+}
+
+// sectionServer is a server's name as a band spells it, with the unnamed one —
+// what a listing that arrived before the session carries — said as such.
+func sectionServer(server string) string {
+	if name := strings.TrimSpace(server); name != "" {
+		return name
+	}
+	return "this server"
 }
 
 // markBand makes the two offers on the title band pressable: the archived

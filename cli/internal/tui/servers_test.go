@@ -181,9 +181,11 @@ func TestTheListIsOneSectionPerServer(t *testing.T) {
 }
 
 // With one server there is nothing to tell apart, and a header over every row
-// would say it anyway.
+// would say it anyway. The list is on one folder, so no other dimension
+// sections it either.
 func TestTheListHasNoSectionsWithOneServer(t *testing.T) {
-	l := listForTest(Session{}, []Sandbox{{ID: "sbx_a1", Name: "one", State: StateRunning}})
+	l := listForTest(Session{}, []Sandbox{{ID: "sbx_a1", Name: "one", State: StateRunning, OriginKey: testKey("/src/disco2")}})
+	l.folder = folder{key: testKey("/src/disco2"), label: "/src/disco2"}
 	if l.grouped() {
 		t.Fatal("the list is grouped with one server")
 	}
@@ -239,8 +241,8 @@ func listForTest(session Session, boxes []Sandbox) *sandboxList {
 func TestUnreachableSectionsDrawBeforeTheSessionArrives(t *testing.T) {
 	l := listForTest(Session{}, nil)
 	l.setUnreachable([]string{"beta"})
-	if l.grouped() {
-		t.Fatal("the list is grouped before the session says there is more than one server")
+	if l.byServer() {
+		t.Fatal("the list is grouped by server before the session says there is more than one server")
 	}
 
 	out := l.view(newStyles(false), &zones{}, true)
@@ -906,5 +908,79 @@ func TestTheMachineLineIsOnlyOverThePrimary(t *testing.T) {
 		if got := strings.Contains(plainFrame(m), "cpu 4.2/24"); got != step.shown {
 			t.Fatalf("showing %q: machine line drawn = %v, want %v:\n%s", step.server, got, step.shown, plainFrame(m))
 		}
+	}
+}
+
+// On every server and every folder, a section is a folder and a server at
+// once, named `folder on server`, folders leading and each one's servers under it.
+func TestEveryServerAndFolderIsASectionEach(t *testing.T) {
+	session := Session{Servers: []string{"alpha", "beta"}, OriginKey: testKey("/src/disco2"), Directory: "/src/disco2"}
+	l := listForTest(session, []Sandbox{
+		{ID: "sbx_1", Name: "one", Server: "beta", State: StateRunning, OriginKey: testKey("/src/obot"), Source: "/src/obot"},
+		{ID: "sbx_2", Name: "two", Server: "alpha", State: StateRunning, OriginKey: testKey("/src/obot"), Source: "/src/obot"},
+		{ID: "sbx_3", Name: "three", Server: "alpha", State: StateRunning, OriginKey: testKey("/src/disco2"), Source: "/src/disco2"},
+		{ID: "sbx_4", Name: "four", Server: "beta", State: StateRunning, OriginKey: testKey("/src/disco2"), Source: "/src/disco2"},
+	})
+	out := l.view(newStyles(false), &zones{}, true)
+	// The window's own folder leads, the way the dropdown offers it, and each
+	// folder's servers follow in the session's order.
+	order := []string{"/src/disco2 on alpha", "three", "/src/disco2 on beta", "four", "/src/obot on alpha", "two", "/src/obot on beta", "one"}
+	last := -1
+	for _, text := range order {
+		i := strings.Index(out, text)
+		if i <= last {
+			t.Fatalf("%q is missing or out of order:\n%s", text, out)
+		}
+		last = i
+	}
+	if want := []int{-1, 0, -1, 1, -1, 2, -1, 3}; !slices.Equal(l.drawn.rows, want) {
+		t.Fatalf("drawn rows = %v, want %v", l.drawn.rows, want)
+	}
+
+	// Narrowed to one server, the server drops out of the bands and the
+	// folders are what is left to tell apart.
+	l.server = "alpha"
+	out = l.view(newStyles(false), &zones{}, true)
+	if strings.Contains(out, " on alpha") || !strings.Contains(out, "/src/obot") {
+		t.Fatalf("one server's list is not sectioned by folder alone:\n%s", out)
+	}
+	if want := []int{-1, 0, -1, 1}; !slices.Equal(l.drawn.rows, want) {
+		t.Fatalf("drawn rows = %v, want %v", l.drawn.rows, want)
+	}
+
+	// Narrowed to one folder as well, there is one section, and so none.
+	l.folder = session.folder()
+	if l.grouped() {
+		t.Fatal("the list is sectioned while it shows one server and one folder")
+	}
+
+	// And one folder on every server is sectioned by server as it always was.
+	l.server = ""
+	out = l.view(newStyles(false), &zones{}, true)
+	if !strings.Contains(out, "server alpha") || !strings.Contains(out, "server beta") || strings.Contains(out, "/src/disco2 on") {
+		t.Fatalf("one folder's list is not sectioned by server alone:\n%s", out)
+	}
+}
+
+// Folders the dropdown does not offer — this machine's sourceless discoboxes,
+// and rows with no key at all — are each one section, however their rows
+// arrived interleaved.
+func TestUnofferedFoldersAreOneSectionEach(t *testing.T) {
+	session := Session{OriginKey: testKey("/src/disco2"), HostKey: testHostKey, HostID: testHostID}
+	l := listForTest(session, []Sandbox{
+		{ID: "sbx_1", Name: "one", State: StateRunning, OriginKey: testHostKey, OriginHostID: testHostID},
+		{ID: "sbx_2", Name: "two", State: StateRunning},
+		{ID: "sbx_3", Name: "three", State: StateRunning, OriginKey: testHostKey, OriginHostID: testHostID},
+		{ID: "sbx_4", Name: "four", State: StateRunning},
+	})
+	l.view(newStyles(false), &zones{}, true)
+	headers := 0
+	for _, r := range l.drawn.rows {
+		if r < 0 {
+			headers++
+		}
+	}
+	if headers != 2 {
+		t.Fatalf("drawn rows = %v, want two sections of two", l.drawn.rows)
 	}
 }
