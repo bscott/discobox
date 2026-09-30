@@ -108,7 +108,7 @@ getting them wrong is then impossible:
 | ID | What it is for | Delivered in | Sent to |
 | --- | --- | --- | --- |
 | `com.github.api` | GitHub: repositories over HTTPS, and the REST and GraphQL API as `gh` uses it | `GH_TOKEN` | `github.com`, and the hosts beneath it such as `api.github.com` |
-| `ai.discobox.sandbox` | The discobox API: create, list, and get discoboxes, give a new one uses of project secrets, and answer credential requests | `DISCOBOX_TOKEN` | `api.discobox.internal`, through this discobox's pool |
+| `ai.discobox.sandbox` | The discobox API: create, list, and get discoboxes, and answer credential requests | `DISCOBOX_TOKEN` | `api.discobox.internal`, through this discobox's pool |
 
 ```bash
 discobox-access request com.github.api --use "Open a pull request against the current repo" --why "the task asks for a PR" --wait
@@ -119,52 +119,8 @@ or `"id": "com.github.api"` in the `--json` body. Everything else — `uses`,
 as above.
 For anything not in this table, spell out `name`, `envVar`, and `host`.
 
-`ai.discobox.sandbox` is how you drive other discoboxes. The `discobox` CLI is
-installed and already pointed at the API; run it under an approved use, as
-with any credential.
-
-Make a discobox with `discobox new --json`, the request on stdin:
-
-```bash
-discobox-access run --use <id> -- discobox new --json <<'EOF'
-{
-  "prompt": "Fix issue 42 in org/repo, then push the branch fix-42.",
-  "grants": [
-    {"id": "com.github.api", "uses": [{"description": "push the branch fix-42 to org/repo"}]}
-  ]
-}
-EOF
-```
-
-- It is cut from the directory you run it in: your repository at its current
-  commit, **with your uncommitted work on top**. Set `"includeDirty": false`
-  to hand over only what is committed. `"noSource": true` gives it nothing
-  checked out; `"include": ["../other"]` brings in another source beside it.
-- It runs the project's default harness. Leave `"harness"` out unless the
-  person asked for a particular one.
-- It runs as your user, with your Git identity, like a discobox a person
-  starts with `discobox new`.
-- `"grants"` gives it uses of credentials: a well-known one by `"id"`, or any
-  other project secret as `"secret"` (its name) and `"envVar"`, with an
-  optional `"host"` to narrow it. Write each use as the command it will run,
-  exactly as you would ask for one yourself — its agent is judged against
-  that sentence when it runs it.
-- It answers with the new discobox as JSON. Its `"id"` is how you read it
-  again: `discobox admin box get <id>`.
-
-`discobox new --help` lists every field. The rest of what you may do:
-
-```bash
-discobox-access run --use <id> -- discobox admin box ls
-discobox-access run --use <id> -- discobox admin box get <discobox-id>
-discobox-access run --use <id> -- discobox secret request ls --status pending
-discobox-access run --use <id> -- discobox secret request approve <request-id> --secret-id github
-```
-
-You cannot give a discobox `ai.discobox.sandbox`: a person grants that, when
-the new discobox asks for it itself. What you give is recorded as given by
-you. Anything outside those commands is refused — you cannot attach to,
-stop, or delete a discobox you made.
+`ai.discobox.sandbox` is how you drive other discoboxes; §5 says how to ask
+for it and launch them.
 
 Use `--json` with a heredoc rather than flags: your justification will contain
 apostrophes and quotes, and the shell would eat them. Unknown JSON fields are
@@ -255,6 +211,96 @@ discobox-access trust 34.70.64.109:443 \
 - `discobox-access trusts` lists what this sandbox trusts. `--json` reads the
   same fields from stdin as `request` does: `host`, `justification`, `uses`,
   `suppliedCA`, `grantTTLSeconds`, `wait`, `timeoutSeconds`.
+
+## 5. Launching other discoboxes
+
+`ai.discobox.sandbox` is how you drive other discoboxes: create workers, watch
+them, and answer what they ask for. The `discobox` CLI is installed and already
+pointed at the API; run it under an approved use, as with any credential.
+
+**Launch workers with no credentials, and give them only what they ask for.**
+A worker starts with none. When it needs one it asks with `discobox-access`,
+as you do, and you approve or deny that request. Do not pass `--grant` or
+`"grants"` to `discobox new`: a create is judged against your use, and
+credentials folded into it are judged there as if handing them on were part
+of the prompt. Answering a request is where handing a credential on is
+decided.
+
+### Ask for everything up front, once
+
+Before the first worker, ask for everything the orchestration needs in one
+request, so the person approves once and you can work on your own afterwards:
+
+```bash
+discobox-access request --json <<'EOF'
+{
+  "id": "ai.discobox.sandbox",
+  "justification": "the task asks me to split the work across worker discoboxes; I create them with no credentials and answer what they ask for",
+  "uses": [
+    {"description": "discobox new -d --include-dirty=false -p <any prompt>, run in <this directory>: create a discobox with any prompt and no grants or secrets, including the polling, source push and complete-source-push that discobox new makes for the discobox it just created"},
+    {"description": "discobox admin box ls and discobox admin box get <discobox-id>, to watch the discoboxes I created"},
+    {"description": "discobox secret request ls, to see what the discoboxes I created are asking for"},
+    {"description": "discobox secret request approve <request-id> --grant-ttl <duration>, for a request from a discobox I created"},
+    {"description": "discobox secret request deny <request-id>, for a request from a discobox I created"}
+  ],
+  "grantTTLSeconds": 28800,
+  "wait": true
+}
+EOF
+```
+
+Then, for each credential your workers will need, ask to delegate it
+(`"purpose": "delegate"`, in §2), with uses saying what you will hand it on
+for — "read-only GitHub access to issues in org/repo, for the discoboxes I
+create" — so a person sees what you mean to hand on before you hand on any of
+it.
+
+Word the create use as broadly as above: **any prompt**. A use that quotes the
+prompt, or names which work it is for, is read against the prompt of every
+create, and the judge mistakes the worker's instructions for your purpose.
+
+### Create a worker
+
+```bash
+discobox-access run --use <id> -- discobox new -d --include-dirty=false \
+  -p "Implement issue #43 in org/repo. Follow CLAUDE.md, make the tests pass, and commit locally on main. Do not push or open a pull request."
+```
+
+- **The prompt states the task and nothing else.** Do not tell the worker how
+  to get credentials or which to ask for, and do not name skills: its own
+  skills say how, and credentials named in a prompt are read as credentials
+  you are handing out. It asks for what it needs when it knows.
+- It is cut from the directory you run it in, at its current commit.
+  `--include-dirty=false` hands over only what is committed; leave it out to
+  carry your uncommitted work too. `--no-source` gives it nothing checked out;
+  `-i ../other` brings in another source beside it.
+- It runs the project's default harness, as your user, with your Git identity.
+  Leave `-H` out unless the person asked for a particular harness.
+- It prints the new discobox; its ID is how you read it again:
+  `discobox admin box get <id>`.
+
+### Answer what your workers ask for
+
+```bash
+discobox-access run --use <id> -- discobox secret request ls -o json
+discobox-access run --use <id> -- discobox secret request approve <request-id> --grant-ttl 2h
+discobox-access run --use <id> -- discobox secret request deny <request-id>
+```
+
+- **Answer only requests from discoboxes you created**: each request's
+  `sandboxId` is one of yours. Leave everyone else's for a person.
+- Read its `uses` and `justification`. Approve what the worker's task needs
+  and what you were approved to delegate; deny the rest, and do not widen it.
+- Approve with the **full request ID**, and `--grant-ttl` set to what the
+  request asked for (`grantTTLSeconds`). For a well-known credential, leave
+  out `--secret-id`: the credential names its secret. `approve` is then one
+  call to the API. Given a short ID, a secret's name, or no lifetime, it first
+  reads other things, and each read is judged on its own against your use.
+
+You cannot give a discobox `ai.discobox.sandbox`: a person grants that, when
+the new discobox asks for it itself. What you approve is recorded as given by
+you. Anything outside these commands is refused: you cannot attach to, stop,
+or delete a discobox you made.
 
 ## Never do this with the value
 
