@@ -130,7 +130,13 @@ func (a *App) runConsole(cmd *cobra.Command, leaderFlag string, options ...tui.O
 	// receive-pack and the lease that guards it — the thing the push path is
 	// careful not to do.
 	defer ds.waitForPushes(cmd.ErrOrStderr())
-	return tui.Run(cmd.Context(), ds, options...)
+	// Started last, just before the window takes the terminal: the guard
+	// saves the terminal's state as it finds it, and a crash before this
+	// point leaves nothing to put back.
+	guard := startConsoleGuard()
+	err = tui.Run(cmd.Context(), ds, options...)
+	guard.Release()
+	return err
 }
 
 // canOpenWindow reports whether this invocation can put a full-screen window

@@ -22,6 +22,7 @@ transport helpers where OpenAPI does not model the stream.
 | `internal/localpty` | Running one of this CLI's own commands on a pty of its own for a console pane: `creack/pty` on Unix, ConPTY on Windows (ADR 0065). Sets `DISCOBOX_PARENT_PID` on the child. |
 | `internal/lifetime` | How long a grant lives, said the way people say it: the presets an approval offers, the words `--grant-ttl` and `--max-grant-ttl` parse, and how one is read back. Owned here because the window's picker and the flags have to mean the same thing by "1 week". Zero is forever. |
 | `internal/refreshcmd` | Running the command a token suggests for its renewal (ADR 26-09-25-122): an argument vector split as a person types it, run with no shell, no stdin, a deadline, and a bound on output, printed value trimmed. Shared by `discobox secret refresh`/`create` and the console's data source, so the command a person was shown is run one way everywhere. |
+| `internal/termguard` | Putting the terminal back when the console dies holding it: a second process (`discobox admin console-guard`) on a lifeline pipe, plus the runtime's crash output sent to a temporary file it names. See below. |
 | `internal/keys` | The leader: its default, its `DISCOBOX_LEADER` override, normalization, and the byte a raw stream matches it as. Owned here because the console's panes and a plain attach must reserve the same key. |
 
 ## UI Dependency Direction
@@ -198,6 +199,30 @@ transport helpers where OpenAPI does not model the stream.
   output would go out before anything was listening. `TestPaneTerminalsE2E`
   (opt-in, `DISCOBOX_PANE_E2E=1`) is what catches the omission, since a pane
   attached to an unstarted exec draws an empty screen forever with no error.
+
+## The Console Leaves the Terminal as It Found It
+
+The console must not leave the terminal broken, however it ends. Bubble
+Tea restores it on every exit it sees, but not one it does not: a panic on a
+goroutine it did not start (its own renderer and input reader included), a
+runtime fatal error, `os.Exit`, SIGKILL. `runConsole` therefore starts
+`internal/termguard` just before the window opens: the same binary re-run as
+`discobox admin console-guard`, which saves the terminal's modes and waits on
+a pipe only the console writes. A proper exit writes a byte before closing
+it; a pipe that closes without one is a console that died, and the guard
+writes every reset Bubble Tea could have needed, restores the modes, and
+names in one line the temporary file holding the crash report
+(`debug.SetCrashOutput`, tracebacks of every goroutine) that the alternate
+screen swallowed. The report is named rather than printed: it runs to a
+thousand lines, and on screen it would scroll the rest away. Bubble Tea's own panic recovery stays on:
+a panic it recovers ends `Run` normally, so the terminal is already back and
+an in-flight push still finishes (`waitForPushes`); the guard is for the
+deaths nothing in the process can catch. The guard is a child rather than a
+supervisor so nothing the command did before the window is run twice; the
+cost is that the shell gets the terminal back as the guard does, which the
+guard wins in practice because the kernel closes the pipe before it tells
+the shell, and survives otherwise by ignoring SIGTTOU/SIGTTIN (and SIGHUP,
+which a console that led its own session sends it by dying).
 
 ## The Key That Dials Is Not the Key That Is Enrolled
 
