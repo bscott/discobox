@@ -20,12 +20,12 @@ import (
 // its proxy material go, and the pool cache is untouched because it is shared
 // by the whole pool and was never this sandbox's to release.
 //
-// The marker file below is what makes retained data legible as retained. On
-// disk an archived sandbox and a sandbox whose container was lost out of band
-// look identical — a directory with no container — and they must not be treated
-// the same: one is holding data by intent, the other is garbage awaiting the
-// reaper's retention window. The marker is the only thing that tells them
-// apart, so it is what the reaper skips and what refuses an on-demand start.
+// The marker file below is what makes an archived tree legible as archived to
+// this agent. On disk an archived sandbox and one whose container was lost look
+// identical — a directory with no container — and only the archived one must
+// refuse an on-demand start. The marker is what refuses it. It is not what
+// keeps the tree: both are sandboxes the control plane holds, and the reaper
+// keeps every tree the control plane holds (ADR 26-10-01-876).
 const sandboxArchiveMarker = ".discobox-archived"
 
 // ErrArchived reports that a sandbox exists as data but has no runtime. It is
@@ -94,7 +94,8 @@ func (r *DockerSandboxRuntime) ArchiveSandbox(ctx context.Context, sandboxID str
 	// Mark before tearing down. If the agent dies mid-archive, a marked tree
 	// with a surviving container is recoverable — the next archive finishes the
 	// job, and nothing starts it in the meantime. The reverse order would leave
-	// an unmarked, container-less tree, which the reaper reads as garbage.
+	// an unmarked, container-less tree, which answers as a sandbox awaiting a
+	// rebuild rather than as an archived one.
 	if err := writeSandboxArchiveMarker(root, time.Now()); err != nil {
 		return fmt.Errorf("archive sandbox %s: %w", sandboxID, err)
 	}
@@ -114,14 +115,7 @@ func (r *DockerSandboxRuntime) ArchiveSandbox(ctx context.Context, sandboxID str
 	if err := proxyagent.RemoveSandboxSentinels(r.projectID, r.poolID, sandboxID); err != nil {
 		return err
 	}
-	if err := proxyagent.RemoveSandboxMaterial(r.projectID, r.poolID, sandboxID); err != nil {
-		return err
-	}
-	// A tombstone from an earlier period without a container would otherwise
-	// outlive the archive and start the reaper's clock the moment the sandbox is
-	// unarchived and stopped again.
-	_ = os.Remove(filepath.Join(root, sandboxVolumeTombstone))
-	return nil
+	return proxyagent.RemoveSandboxMaterial(r.projectID, r.poolID, sandboxID)
 }
 
 // clearSandboxArchiveMarker un-archives a tree. Creation calls it, which is the

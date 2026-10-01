@@ -77,6 +77,7 @@ const (
 	ListHarnessHooksOperation                 OperationName = "ListHarnessHooks"
 	ListJobsOperation                         OperationName = "ListJobs"
 	ListPeersOperation                        OperationName = "ListPeers"
+	ListPoolHeldSandboxesOperation            OperationName = "ListPoolHeldSandboxes"
 	ListPoolHostTrustsOperation               OperationName = "ListPoolHostTrusts"
 	ListPoolsOperation                        OperationName = "ListPools"
 	ListProjectsOperation                     OperationName = "ListProjects"

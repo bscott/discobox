@@ -706,6 +706,16 @@ func (UnimplementedHandler) ListPeers(ctx context.Context) (r ListPeersRes, _ er
 	return r, ht.ErrNotImplemented
 }
 
+// ListPoolHeldSandboxes implements list-pool-held-sandboxes operation.
+//
+// List every sandbox the control plane holds on this pool, the set the pool agent may not reap the
+// trees of.
+//
+// GET /api/pools/{poolId}/sandboxes
+func (UnimplementedHandler) ListPoolHeldSandboxes(ctx context.Context, params ListPoolHeldSandboxesParams) (r ListPoolHeldSandboxesRes, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ListPoolHostTrusts implements list-pool-host-trusts operation.
 //
 // List the live host trusts of every sandbox on the pool.

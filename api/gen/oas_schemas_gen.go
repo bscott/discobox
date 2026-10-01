@@ -3012,6 +3012,7 @@ func (*ErrorModelStatusCode) listHarnessConfigSecretBindingsRes()  {}
 func (*ErrorModelStatusCode) listHarnessConfigsRes()               {}
 func (*ErrorModelStatusCode) listJobsRes()                         {}
 func (*ErrorModelStatusCode) listPeersRes()                        {}
+func (*ErrorModelStatusCode) listPoolHeldSandboxesRes()            {}
 func (*ErrorModelStatusCode) listPoolHostTrustsRes()               {}
 func (*ErrorModelStatusCode) listPoolsRes()                        {}
 func (*ErrorModelStatusCode) listProjectsRes()                     {}
@@ -13997,6 +13998,37 @@ func (s *PoolHealth) UnmarshalText(data []byte) error {
 		return errors.Errorf("invalid value: %q", data)
 	}
 }
+
+// Ref: #/components/schemas/PoolHeldSandboxesBody
+type PoolHeldSandboxesBody struct {
+	// A URL to the JSON Schema for this object.
+	Schema OptURI `json:"$schema"`
+	// Every sandbox on this pool that still has a row, in any state, including archived, failed, and
+	// mid-delete.
+	SandboxIds []string `json:"sandboxIds"`
+}
+
+// GetSchema returns the value of Schema.
+func (s *PoolHeldSandboxesBody) GetSchema() OptURI {
+	return s.Schema
+}
+
+// GetSandboxIds returns the value of SandboxIds.
+func (s *PoolHeldSandboxesBody) GetSandboxIds() []string {
+	return s.SandboxIds
+}
+
+// SetSchema sets the value of Schema.
+func (s *PoolHeldSandboxesBody) SetSchema(val OptURI) {
+	s.Schema = val
+}
+
+// SetSandboxIds sets the value of SandboxIds.
+func (s *PoolHeldSandboxesBody) SetSandboxIds(val []string) {
+	s.SandboxIds = val
+}
+
+func (*PoolHeldSandboxesBody) listPoolHeldSandboxesRes() {}
 
 // One ask from a pool: which discobox is spending which approved use, and the request its proxy
 // observed. A pool does not say what the use authorizes. The control plane reads the sentence, the

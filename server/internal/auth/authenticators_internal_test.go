@@ -22,6 +22,8 @@ func TestPoolRuntimePathAllowlist(t *testing.T) {
 		{"polling one trust request", "/api/pools/pool-1/sandbox-trust-requests/treq_abc", true},
 		{"reading the pool's host trusts", "/api/pools/pool-1/sandbox-host-trusts", true},
 		{"a subroute below the pool's host trusts", "/api/pools/pool-1/sandbox-host-trusts/trust_abc", false},
+		{"reading the sandboxes the pool holds", "/api/pools/pool-1/sandboxes", true},
+		{"a subroute below the pool's sandboxes", "/api/pools/pool-1/sandboxes/sbx_abc", false},
 
 		{"an unlisted action", "/api/pools/pool-1/secrets", false},
 		{"a misspelled action", "/api/pools/pool-1/sandbox-credential", false},

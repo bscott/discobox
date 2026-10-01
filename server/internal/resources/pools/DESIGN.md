@@ -92,7 +92,10 @@ flowchart LR
   control plane through `SandboxStateReporter`, which owns sandbox rows),
   resource accounting (`ReportPoolResources`, ADR 0071), and (ADR 0030)
   `MintSandboxAgentStatusTokens`/`ReportSandboxAgentStatus` for the pool's
-  standing sandbox-agent status poller. Every call after registration
+  standing sandbox-agent status poller, and `ListPoolHeldSandboxes`, the set
+  the pool agent's volume reaper may not collect the trees of (ADR
+  26-10-01-876): every sandbox row on the pool in any state, one pool wide.
+  Every call after registration
   verifies the authenticated **pool principal** for that pool, and any
   sandbox ID named is acted on only if that pool hosts it (skipped here, or
   by the store for state/progress batches).

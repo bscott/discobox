@@ -179,6 +179,10 @@ var poolRuntimeActions = map[string]bool{
 	// The pool's resource report (ADR 0071, resource accounting). It addresses the pool itself, so
 	// it takes no trailing ID.
 	"resources": false,
+	// Every sandbox the control plane holds on the pool, which bounds what its
+	// volume reaper may collect (ADR 26-10-01-876). It lists, so it takes no
+	// trailing ID.
+	"sandboxes": false,
 	// The agent credentials broker (ADR 0031).
 	"sandbox-credentials":         false,
 	"sandbox-credential-requests": true, // .../{requestId} polls one request

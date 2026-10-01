@@ -216,6 +216,28 @@ func reportedMeta(status map[string]jx.Raw) (sandboxmeta.Meta, bool) {
 	return meta, true
 }
 
+// ListPoolHeldSandboxes answers the pool agent's volume reaper with every
+// sandbox the control plane holds on the pool. The reaper collects a tree only
+// once its sandbox has been outside this set for its retention window, so the
+// set is every row in any state — archived, failed, and mid-delete included —
+// and is exactly one pool wide, like the tree it is judged against
+// (ADR 26-10-01-876).
+func (s *Service) ListPoolHeldSandboxes(ctx context.Context, poolID string) ([]string, error) {
+	poolID = strings.TrimSpace(poolID)
+	if poolID == "" {
+		return nil, apperrors.NewStatusError(http.StatusBadRequest, "poolId is required")
+	}
+	principal, ok := auth.PrincipalFromContext(ctx)
+	if !ok || principal.Type != auth.PrincipalTypePool || principal.PoolID != poolID {
+		return nil, apperrors.NewStatusError(http.StatusForbidden, "pool agent is not authorized to list this pool's sandboxes")
+	}
+	pool, err := s.store.GetPoolByID(ctx, poolID)
+	if err != nil {
+		return nil, apperrors.NotFound(err, "pool not found")
+	}
+	return s.store.ListSandboxIDsForPool(ctx, pool.ProjectID, pool.ID)
+}
+
 // ReportPoolResources records what a pool and its sandboxes are consuming
 // (ADR 0071, resource accounting).
 //

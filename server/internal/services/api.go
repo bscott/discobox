@@ -361,6 +361,10 @@ type PoolService interface {
 	MintSandboxAgentStatusTokens(ctx context.Context, poolID string, input MintSandboxAgentStatusTokensBody) (*MintSandboxAgentStatusTokensResponseBody, error)
 	ReportSandboxAgentStatus(ctx context.Context, poolID string, input ReportSandboxAgentStatusBody) error
 	ReportPoolResources(ctx context.Context, poolID string, input ReportPoolResourcesBody) error
+	// ListPoolHeldSandboxes returns the ID of every sandbox row on the pool, in
+	// any state: the set whose trees the pool agent may not reap
+	// (ADR 26-10-01-876).
+	ListPoolHeldSandboxes(ctx context.Context, poolID string) ([]string, error)
 }
 
 // JobService exposes a project's pending reconcile work as jobs: each is a

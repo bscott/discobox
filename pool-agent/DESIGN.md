@@ -320,9 +320,11 @@ the strength of the response (ADR 0022 §§3, 5-6).
 - `create` clears the marker, which is the whole of what unarchiving needs here:
   the reuse-the-existing-tree path already restores the sandbox.
 
-The marker is what makes retained data legible as retained. On disk an archived
-sandbox and one whose container was lost out of band are the same shape, and
-only the marker separates "held by intent" from "garbage awaiting the reaper".
+The marker is what makes an archived tree legible as archived here: on disk an
+archived sandbox and one whose container was lost are the same shape, and only
+the archived one refuses an on-demand start. It is not what keeps the tree —
+both are sandboxes the control plane holds, and the volume reaper keeps every
+tree the control plane holds (below).
 
 ### The durable tree travels
 
@@ -377,28 +379,39 @@ The runtime rebuilds any container whose recorded spec fingerprint no longer
 matches the one the control plane sent, which covers image upgrades and every
 other spec change through one comparison (ADR 0017 §5). A container carrying no
 fingerprint label predates that label; it is compared against the pinned image
-digest instead, so a missing label never reads as "converged".
+digest instead, so a missing label never reads as "converged". The old
+container is removed only once the new image is on the host, so a re-pin whose
+image cannot be obtained leaves the sandbox the container it had.
 
 Separately, persisted per-sandbox proxy material supplies a periodic
 level-triggered sweep that reclaims the material of sandboxes that no longer
 have a container here. That is only about reclaiming disk; sandbox loss travels
 on the state channel.
 
-The runtime reaps its own dead sandboxes' persistent volume trees
-(`pools/{pool_id}/sandboxes/{sandbox_id}`) on the same backstop, keeping each for
-a 24h retention window after it is first seen dead (a tombstone starts the
-clock). That window is accident recovery — a container removed out of band or
-lost while the pool was down — and covers only what never runs through
-`delete`. Archived trees are skipped entirely: deliberate retention is a
-control-plane policy with a per-project length the agent does not know, enforced
-by an explicit `delete` when it expires (ADR 0022 §4).
+Sandbox durable trees (`pools/{pool_id}/sandboxes/{sandbox_id}`) are reaped
+against the control plane's answer, never against containers
+(`WatchSandboxVolumes`, ADR 26-10-01-876). The agent is not the authority on
+which sandboxes exist: a missing container is what a failed rebuild, a settled
+failure awaiting repair, and an archive all look like. Every ten minutes it
+lists its trees, then asks the control plane which sandboxes it holds on this
+pool (`GET /api/pools/{pool_id}/sandboxes`) — every row in any state, archived,
+failed and mid-delete included. A tree outside that set gets a
+`.discobox-unheld-at` marker, is reaped once that is 24h old, and has the
+marker cleared if it comes back into the set; a held tree is kept indefinitely.
+No answer reaps nothing, and an agent with no channel to the control plane runs
+no reaper. Deletion does not wait for this: `delete` removes the tree itself and
+confirms (ADR 0022 §3), so the reaper only collects trees with no row at all —
+an import that died before its row was written, a row removed without its
+delete reaching this pool. The 24h window is the margin against a wrong answer,
+and covers an import's tree restored before its row exists (ADR 0123 §3).
 
 All per-sandbox state is project- and pool-scoped by path — sandbox
 volume trees live under `projects/{project_id}/pools/{pool_id}/` and proxy
 material under `proxy/projects/{project_id}/pools/{pool_id}/` — so agents
 sharing a host daemon never reap each other's data. Both trees carry the same
 scoping because a reaper's scan must not be wider than the authority it is
-given (see `pool-sync` below); the shared per-host CA material and client
+given (see `pool-sync` below), and the held set is one pool wide for the same
+reason; the shared per-host CA material and client
 certificates stay outside them, keyed by globally unique sandbox ID.
 
 A standing poller (`startSandboxAgentStatusPoller`, `statuspoll.go`) checks

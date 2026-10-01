@@ -403,6 +403,7 @@ func (r *DockerSandboxRuntime) CreateSandbox(ctx context.Context, req *workerapi
 	// restarts a running sandbox into the new image and leaves a stopped one
 	// stopped (ADR 0021 §3).
 	replacedRunning := false
+	var replaced *Sandbox
 	if existing, err := r.GetSandbox(ctx, sandboxID); err == nil {
 		drifted, err := r.containerSpecDrifted(ctx, existing, req)
 		if err != nil {
@@ -427,9 +428,10 @@ func (r *DockerSandboxRuntime) CreateSandbox(ctx context.Context, req *workerapi
 			}
 			reason = "the project configuration its delivered source declares"
 		}
-		// Remove the container and fall through to build a new one; the
-		// sandbox's state lives in the pool-host binds prepared below, not in
-		// the container, so it survives.
+		// The container is replaced below, once the image the new one needs is
+		// in hand; the sandbox's state lives in the pool-host binds prepared
+		// below, not in the container, so it survives.
+		replaced = existing
 		replacedRunning = existing.Status == StatusRunning
 		slog.InfoContext(ctx, "replacing sandbox container",
 			"sandboxId", sandboxID,
@@ -437,18 +439,6 @@ func (r *DockerSandboxRuntime) CreateSandbox(ctx context.Context, req *workerapi
 			"imageDigest", strings.TrimSpace(optString(req.Config.ImageDigest)),
 			"specFingerprint", strings.TrimSpace(optString(req.Config.SpecFingerprint)),
 			"running", replacedRunning)
-		if replacedRunning {
-			// Stop it the way a stop would, so the sandbox-agent tears its execs
-			// down and flushes their logs instead of being killed outright.
-			r.PublishSandboxState(ctx, sandboxID, StateStopping)
-			timeout := sandboxStopTimeoutSeconds
-			if _, err := r.client.ContainerStop(ctx, existing.ID, client.ContainerStopOptions{Timeout: &timeout}); err != nil && !cerrdefs.IsNotFound(err) {
-				return nil, fmt.Errorf("stop sandbox container for a spec change: %w", err)
-			}
-		}
-		if _, err := r.client.ContainerRemove(ctx, existing.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
-			return nil, fmt.Errorf("remove sandbox container for a spec change: %w", err)
-		}
 	} else if !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
@@ -458,6 +448,23 @@ func (r *DockerSandboxRuntime) CreateSandbox(ctx context.Context, req *workerapi
 	imageName, err = r.resolveSandboxImage(ctx, sandboxID, imageName, strings.TrimSpace(optString(config.ImageDigest)))
 	if err != nil {
 		return nil, err
+	}
+	if replaced != nil {
+		// Only now, with the new image on the host: obtaining it is the step a
+		// re-pin fails at, and a sandbox that cannot get its new image keeps the
+		// container it had rather than being left with none (ADR 26-10-01-876 §4).
+		if replacedRunning {
+			// Stop it the way a stop would, so the sandbox-agent tears its execs
+			// down and flushes their logs instead of being killed outright.
+			r.PublishSandboxState(ctx, sandboxID, StateStopping)
+			timeout := sandboxStopTimeoutSeconds
+			if _, err := r.client.ContainerStop(ctx, replaced.ID, client.ContainerStopOptions{Timeout: &timeout}); err != nil && !cerrdefs.IsNotFound(err) {
+				return nil, fmt.Errorf("stop sandbox container for a spec change: %w", err)
+			}
+		}
+		if _, err := r.client.ContainerRemove(ctx, replaced.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
+			return nil, fmt.Errorf("remove sandbox container for a spec change: %w", err)
+		}
 	}
 	user := resolveSandboxUser(req)
 	r.PublishSandboxPhase(ctx, sandboxID, PhasePreparingVolumes)
@@ -1604,20 +1611,35 @@ const (
 	// happened while the pool was down are reported after the creation grace
 	// period, even when the Docker event stream remains healthy.
 	proxyMaterialBackstopInterval = time.Minute
-	// sandboxVolumeRetention is how long a dead sandbox's persistent volume tree
-	// (data/config/sources/secrets) is kept before reclamation, so its data survives an
-	// accidental or transient removal and a same-day recreate.
+	// sandboxVolumeRetention is how long a sandbox tree
+	// (data/config/sources/secrets) is kept once the control plane no longer
+	// holds its sandbox, and how long an orphaned pool's data subtree is kept.
 	//
-	// This is accident recovery only, and covers exactly the cases that never
-	// run through DeleteSandbox: a container removed out of band, or lost while
-	// the agent was down. Deliberate retention is archiving, whose window is a
-	// control-plane policy the agent does not know (ADR 0022 §4) — archived
-	// trees are skipped here, not timed out here.
+	// It is not how long a sandbox without a container survives: one the
+	// control plane holds keeps its tree indefinitely (ADR 26-10-01-876). The
+	// window is the margin against a wrong answer from the control plane — a
+	// restored database, a bad query — and covers an import whose tree is
+	// restored before its row exists.
 	sandboxVolumeRetention = 24 * time.Hour
-	// sandboxVolumeTombstone records, inside a sandbox's volume tree, when the
-	// sandbox was first observed dead. The tree is reaped once the tombstone
-	// predates sandboxVolumeRetention.
-	sandboxVolumeTombstone = ".discobox-orphaned-at"
+	// sandboxVolumeReapInterval paces the sandbox tree reaper. Each pass asks
+	// the control plane, and nothing it collects is younger than a day.
+	sandboxVolumeReapInterval = 10 * time.Minute
+	// sandboxVolumeHeldTimeout bounds one ask for the held set. A request that
+	// connects and never answers would otherwise stop the reaper for good, with
+	// nothing logged; timing out is a pass that reaps nothing, and the next one
+	// asks again.
+	sandboxVolumeHeldTimeout = 30 * time.Second
+	// sandboxVolumeUnheldMarker records, inside a sandbox's tree, when the tree
+	// was first seen outside the control plane's held set. The tree is reaped
+	// once it predates sandboxVolumeRetention.
+	sandboxVolumeUnheldMarker = ".discobox-unheld-at"
+	// legacySandboxVolumeTombstone is the clock the reaper kept when it judged a
+	// tree by its container alone. It is removed, never read: a clock started by
+	// container absence says nothing about whether the sandbox is held.
+	legacySandboxVolumeTombstone = ".discobox-orphaned-at"
+	// poolDataTombstone records, inside an orphaned pool's data subtree, when
+	// pool-sync first found the pool outside the known set.
+	poolDataTombstone = ".discobox-orphaned-at"
 )
 
 // ReconcileProxyMaterial prunes proxy material for sandboxes whose containers no
@@ -1700,26 +1722,32 @@ func (r *DockerSandboxRuntime) reconcileSandboxMaterial(ctx context.Context, log
 	}
 }
 
-// reconcileSandboxVolumes reaps the persistent volume trees
-// (pools/{poolID}/sandboxes/{sandboxID}/{data,config,sources}) of this pool's
-// dead sandboxes. It is scoped to this pool's own subtree and this pool's live
-// containers, so pools sharing a host never reap each other's data.
+// HeldSandboxes answers which sandboxes the control plane holds on this pool,
+// in any state. An error is no answer, and is never read as an empty set.
+type HeldSandboxes func(ctx context.Context) ([]string, error)
+
+// WatchSandboxVolumes reaps the durable trees
+// (pools/{poolID}/sandboxes/{sandboxID}) of sandboxes the control plane no
+// longer holds, on a slow interval (ADR 26-10-01-876).
 //
-// Each dead tree is kept for retention after it is first observed dead (a
-// tombstone starts the clock), so persistent data survives an accidental or
-// out-of-band removal and a same-day recreate. A tree whose sandbox is live
-// again has its tombstone cleared.
-func (r *DockerSandboxRuntime) reconcileSandboxVolumes(ctx context.Context, logger *slog.Logger, retention time.Duration) {
-	live, err := r.liveSandboxIDs(ctx)
-	if err != nil {
-		logger.Warn("list sandbox containers for volume reconcile", "error", err)
-		return
+// Whether a container exists plays no part. A sandbox the control plane holds
+// — failed and awaiting repair, archived, or on its way out — keeps its tree
+// however long it has had no container; deletion removes the tree itself,
+// through DeleteSandbox, and confirms it (ADR 0022 §3).
+func (r *DockerSandboxRuntime) WatchSandboxVolumes(ctx context.Context, logger *slog.Logger, held HeldSandboxes) {
+	if logger == nil {
+		logger = slog.Default()
 	}
-	liveSet := make(map[string]struct{}, len(live))
-	for _, id := range live {
-		liveSet[id] = struct{}{}
+	ticker := time.NewTicker(sandboxVolumeReapInterval)
+	defer ticker.Stop()
+	for {
+		reapUnheldSandboxVolumes(ctx, r.sandboxesRoot(), held, sandboxVolumeRetention, time.Now(), logger)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
-	reapDeadSandboxVolumes(r.sandboxesRoot(), liveSet, retention, time.Now(), logger)
 }
 
 // WatchImages reclaims unused Discobox images from this pool's Docker daemon on
@@ -1770,7 +1798,8 @@ func (r *DockerSandboxRuntime) reclaimImages(ctx context.Context, logger *slog.L
 // whose ID is not in knownPoolIDs (and is not this agent's own pool) has its
 // sandbox containers removed and its data/proxy subtrees reclaimed. Sandbox
 // containers are ephemeral and removed immediately; the persistent data subtree
-// is kept for the retention window (via a tombstone) like the sandbox reaper.
+// is kept for the retention window (via a tombstone), as an unheld sandbox tree
+// is.
 func (r *DockerSandboxRuntime) SyncKnownPools(ctx context.Context, knownPoolIDs []string) error {
 	logger := slog.Default()
 	known := make(map[string]struct{}, len(knownPoolIDs)+1)
@@ -1810,13 +1839,13 @@ func (r *DockerSandboxRuntime) SyncKnownPools(ctx context.Context, knownPoolIDs 
 
 // reapUnknownPools reclaims the data, cache, and proxy subtrees of pools not in the
 // known set. Data subtrees hold persistent sandbox data, so they get the same
-// tombstone-based retention as the sandbox reaper; cache and proxy material
+// retention as an unheld sandbox tree; cache and proxy material
 // are regenerable, so their subtrees are reaped once no retained data subtree
 // remains.
 func reapUnknownPools(dataPoolsRoot, cachePoolsRoot, proxyPoolsRoot string, known map[string]struct{}, retention time.Duration, now time.Time, logger *slog.Logger) {
 	for _, poolID := range unknownPoolDirs(dataPoolsRoot, known, logger) {
 		dir := filepath.Join(dataPoolsRoot, poolID)
-		tombstone := filepath.Join(dir, sandboxVolumeTombstone)
+		tombstone := filepath.Join(dir, poolDataTombstone)
 		diedAt, ok := readSandboxTombstone(tombstone)
 		if !ok {
 			writeSandboxTombstone(tombstone, now, logger)
@@ -1868,49 +1897,60 @@ func unknownPoolDirs(root string, known map[string]struct{}, logger *slog.Logger
 	return out
 }
 
-// reapDeadSandboxVolumes is the pool-scoped core of the volume reaper: root is
-// this pool's own sandboxes directory, liveSet is this pool's live containers,
-// so it only ever tombstones and reaps this pool's data. A dead tree is kept
-// for retention after it is first observed dead.
-func reapDeadSandboxVolumes(root string, liveSet map[string]struct{}, retention time.Duration, now time.Time, logger *slog.Logger) {
-	entries, err := os.ReadDir(root)
+// reapUnheldSandboxVolumes is one pass of the sandbox tree reaper. root is this
+// pool's own sandboxes directory and held answers for this pool alone, so the
+// set is exactly as wide as the tree it is judged against.
+//
+// The trees are listed before the control plane is asked. A sandbox's row is
+// written before any create reaches this pool, so every tree listed here whose
+// sandbox exists is in the answer that follows; an import restores its tree
+// before its row (ADR 0123 §3), and the retention window covers that.
+func reapUnheldSandboxVolumes(ctx context.Context, root string, held HeldSandboxes, retention time.Duration, now time.Time, logger *slog.Logger) {
+	trees, err := storedSandboxIDs(root)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			logger.Warn("scan sandbox volume root", "root", root, "error", err)
-		}
+		logger.Warn("scan sandbox volume root", "root", root, "error", err)
 		return
 	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		sandboxID := entry.Name()
+	if len(trees) == 0 {
+		return
+	}
+	heldCtx, cancel := context.WithTimeout(ctx, sandboxVolumeHeldTimeout)
+	ids, err := held(heldCtx)
+	cancel()
+	if err != nil {
+		logger.Warn("list the sandboxes the control plane holds; reaping no sandbox trees this pass", "error", err)
+		return
+	}
+	heldSet := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		heldSet[strings.TrimSpace(id)] = struct{}{}
+	}
+	for _, sandboxID := range trees {
 		dir := filepath.Join(root, sandboxID)
-		if sandboxIsArchived(dir) {
-			// Held by intent, not orphaned. The control plane decides when an
-			// archived tree expires, and purges it through DeleteSandbox.
+		_ = os.Remove(filepath.Join(dir, legacySandboxVolumeTombstone))
+		marker := filepath.Join(dir, sandboxVolumeUnheldMarker)
+		if _, ok := heldSet[sandboxID]; ok {
+			// Held, or held again: whatever clock an earlier answer started
+			// no longer applies.
+			_ = os.Remove(marker)
 			continue
 		}
-		tombstone := filepath.Join(dir, sandboxVolumeTombstone)
-		if _, ok := liveSet[sandboxID]; ok {
-			// The sandbox is alive (or came back): clear any stale tombstone.
-			_ = os.Remove(tombstone)
-			continue
-		}
-		diedAt, ok := readSandboxTombstone(tombstone)
+		unheldAt, ok := readSandboxTombstone(marker)
 		if !ok {
-			// First time seen dead: start the retention clock.
-			writeSandboxTombstone(tombstone, now, logger)
+			// Said out loud: this starts the only window anyone has to notice
+			// a control plane that has forgotten a sandbox it should hold.
+			logger.Warn("sandbox tree is not held by the control plane; reaping it after retention", "sandboxID", sandboxID, "retention", retention.String())
+			writeSandboxTombstone(marker, now, logger)
 			continue
 		}
-		if now.Sub(diedAt) < retention {
+		if now.Sub(unheldAt) < retention {
 			continue
 		}
 		if err := os.RemoveAll(dir); err != nil {
-			logger.Warn("reap dead sandbox volume", "sandboxID", sandboxID, "error", err)
+			logger.Warn("reap unheld sandbox volume", "sandboxID", sandboxID, "error", err)
 			continue
 		}
-		logger.Info("reaped dead sandbox volume", "sandboxID", sandboxID, "deadFor", now.Sub(diedAt).Truncate(time.Minute).String())
+		logger.Info("reaped unheld sandbox volume", "sandboxID", sandboxID, "unheldFor", now.Sub(unheldAt).Truncate(time.Minute).String())
 	}
 }
 
@@ -1959,7 +1999,6 @@ func (r *DockerSandboxRuntime) watchProxyMaterialEvents(ctx context.Context, log
 	// onward are buffered by the daemon and delivered on the stream below, so the
 	// reconcile and the replayed events together cover every deletion.
 	r.reconcileSandboxMaterial(ctx, logger, proxyMaterialGracePeriod)
-	r.reconcileSandboxVolumes(ctx, logger, sandboxVolumeRetention)
 
 	debounce := time.NewTimer(0)
 	if !debounce.Stop() {
@@ -1985,7 +2024,6 @@ func (r *DockerSandboxRuntime) watchProxyMaterialEvents(ctx context.Context, log
 			r.reconcileProxyMaterial(ctx, logger)
 		case <-backstop.C:
 			r.reconcileSandboxMaterial(ctx, logger, proxyMaterialGracePeriod)
-			r.reconcileSandboxVolumes(ctx, logger, sandboxVolumeRetention)
 		}
 	}
 }

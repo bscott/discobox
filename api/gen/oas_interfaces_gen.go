@@ -285,6 +285,10 @@ type ListPeersRes interface {
 	listPeersRes()
 }
 
+type ListPoolHeldSandboxesRes interface {
+	listPoolHeldSandboxesRes()
+}
+
 type ListPoolHostTrustsRes interface {
 	listPoolHostTrustsRes()
 }

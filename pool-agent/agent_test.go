@@ -268,6 +268,66 @@ func TestHTTPClientReportsSandboxStates(t *testing.T) {
 	}
 }
 
+// The held set is what the volume reaper judges every tree against, so the
+// client reads it with the pool's own assertion, and a body that does not carry
+// it is an error rather than a set with nothing in it: an empty set would
+// start the clock on every tree the pool has (ADR 26-10-01-876).
+func TestHTTPClientListsHeldSandboxes(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	publicKeyText, err := poolauth.EncodePublicKey(publicKey)
+	if err != nil {
+		t.Fatalf("encode public key: %v", err)
+	}
+	body := `{"sandboxIds":["sbx_failed","sbx_archived"]}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead && r.URL.Path == "/" {
+			return // the sandbox agent's port probe, inside a discobox; see REVIEW.md
+		}
+		if r.Method != http.MethodGet || r.URL.Path != "/api/pools/pool-1/sandboxes" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		_, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+		if !ok {
+			t.Errorf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		claims, err := poolauth.VerifyToken(publicKeyText, token)
+		if err != nil {
+			t.Errorf("verify token: %v", err)
+		} else if claims.ProjectID != "project-1" || claims.PoolID != "pool-1" {
+			t.Errorf("claims = %#v", claims)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+	client := poolagent.NewHTTPClient(server.URL, poolagent.WithHTTPClient(server.Client()))
+	req := poolagent.HeldSandboxesRequest{ProjectID: "project-1", PoolID: "pool-1", PrivateKey: privateKey}
+
+	ids, err := client.ListHeldSandboxes(context.Background(), req)
+	if err != nil {
+		t.Fatalf("list held sandboxes: %v", err)
+	}
+	if len(ids) != 2 || ids[0] != "sbx_failed" || ids[1] != "sbx_archived" {
+		t.Fatalf("ids = %v", ids)
+	}
+
+	body = `{}`
+	if ids, err := client.ListHeldSandboxes(context.Background(), req); err == nil {
+		t.Fatalf("a body without sandboxIds answered %v, want an error", ids)
+	}
+
+	body = `{"sandboxIds":[]}`
+	ids, err = client.ListHeldSandboxes(context.Background(), req)
+	if err != nil || ids == nil || len(ids) != 0 {
+		t.Fatalf("an empty set answered %v, %v; want an empty set", ids, err)
+	}
+}
+
 func TestPoolSandboxHandlersValidateIdentityAndOperateOnRuntime(t *testing.T) {
 	runtime := poolagent.NewMemorySandboxRuntime()
 	controlPlaneKey, signToken := workerAgentTestSigner(t)

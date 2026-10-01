@@ -81,3 +81,13 @@ Do not answer it with the power lock: that lock is also held by create,
 archive, delete, import and stop, so waiting on it (or failing a `TryLock`)
 stalls healthy traffic behind unrelated work, and re-reading the container
 after it adds a Docker round trip to every request.
+
+## A missing container is not a missing sandbox
+
+Never destroy a sandbox's durable tree because no container carries its ID. A
+failed rebuild, a settled failure waiting for its repair, and an archive all
+look like that, and the control plane holds every one of them. Which sandboxes
+exist is the control plane's to say: the volume reaper collects only trees
+outside the set it answers (`WatchSandboxVolumes`, ADR 26-10-01-876), and an
+unanswered ask is never an empty set. A new path that reclaims per-sandbox
+durable state asks the same question.

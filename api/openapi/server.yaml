@@ -5701,6 +5701,23 @@ components:
                 - token
                 - expiresAt
             type: object
+        PoolHeldSandboxesBody:
+            additionalProperties: false
+            properties:
+                $schema:
+                    description: A URL to the JSON Schema for this object.
+                    example: https://example.com/schemas/PoolHeldSandboxesBody.json
+                    format: uri
+                    readOnly: true
+                    type: string
+                sandboxIds:
+                    description: Every sandbox on this pool that still has a row, in any state, including archived, failed, and mid-delete
+                    items:
+                        type: string
+                    type: array
+            required:
+                - sandboxIds
+            type: object
         MintSandboxAgentStatusTokensResponseBody:
             additionalProperties: false
             properties:
@@ -6637,6 +6654,39 @@ paths:
                                 $ref: '#/components/schemas/ErrorModel'
                     description: Error
             summary: Mint short-lived, status-read-only sandbox-agent tokens for sandboxes this pool hosts
+            tags:
+                - Pools
+    /api/pools/{poolId}/sandboxes:
+        get:
+            operationId: list-pool-held-sandboxes
+            parameters:
+                - description: Pool ID
+                  in: path
+                  name: poolId
+                  required: true
+                  schema:
+                    description: Pool ID
+                    type: string
+                - description: Bearer pool agent assertion signed with the registered pool agent private key
+                  in: header
+                  name: Authorization
+                  schema:
+                    description: Bearer pool agent assertion signed with the registered pool agent private key
+                    type: string
+            responses:
+                200:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PoolHeldSandboxesBody'
+                    description: OK
+                default:
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                    description: Error
+            summary: List every sandbox the control plane holds on this pool, the set the pool agent may not reap the trees of
             tags:
                 - Pools
     /api/pools/{poolId}/sandbox-credentials:

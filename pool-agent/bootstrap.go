@@ -115,12 +115,16 @@ type StatusClient interface {
 	UpdatePoolStatus(ctx context.Context, req StatusRequest) error
 }
 
-// SandboxStateClient publishes observed sandbox states to the control plane.
-// It is the channel that makes power state knowable at all: operations answer
-// with acceptance only, and the transitions that matter most — a container
-// dying, a host rebooting — have no request to answer (ADR 0017 §10).
+// SandboxStateClient is the pool's channel to the control plane about which
+// sandboxes exist. Reporting observed states is what makes power state knowable
+// at all: operations answer with acceptance only, and the transitions that
+// matter most — a container dying, a host rebooting — have no request to answer
+// (ADR 0017 §10). Listing the held sandboxes is the other direction: the
+// control plane, not this pool, decides which sandboxes exist, and the volume
+// reaper collects only the trees it does not hold (ADR 26-10-01-876).
 type SandboxStateClient interface {
 	ReportSandboxStates(ctx context.Context, req SandboxStateRequest) error
+	ListHeldSandboxes(ctx context.Context, req HeldSandboxesRequest) ([]string, error)
 }
 
 // SandboxAgentStatusClient mints scoped sandbox-agent tokens and pushes
@@ -211,6 +215,15 @@ type SandboxStateRequest struct {
 	// Progress is always a delta and is unaffected by Complete, which describes
 	// States only.
 	Progress []SandboxProgress `json:"progress,omitempty"`
+}
+
+// HeldSandboxesRequest asks the control plane for every sandbox it holds on
+// this pool, in any state.
+type HeldSandboxesRequest struct {
+	ControlPlaneURL string
+	ProjectID       string
+	PoolID          string
+	PrivateKey      ed25519.PrivateKey
 }
 
 // MintSandboxAgentStatusTokensRequest asks the control plane for short-lived,
