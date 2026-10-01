@@ -58,13 +58,18 @@ fi
 
 # The role, mapped onto a model this image installed.
 #
-# "judge" sits in front of every credentialed command, so its latency is paid
-# on each one; it takes the small model, which answers a short allow/deny well
-# enough and fast enough not to stall the agent it is judging.
+# "judge" sits in front of every credentialed command and request, so its
+# latency is paid on each one — but so are its misreadings. It takes Sonnet.
+# Replaying refused requests through this script (2026-10-01, 150 runs), the
+# small model got 3 in 30 wrong however it was run — refusing a create it had
+# misread, and with thinking on once allowing a secret's deletion as part of
+# approving a request — and Sonnet got none wrong, for about 1 to 2.5 seconds
+# more an answer. A wrong refusal stops the work it was asked about; a wrong
+# allow is the failure the judge exists to prevent.
 #
-# The id rather than the `haiku` alias: the alias moves with the CLI, and the
-# model a security gate runs on should change when someone decides it changes,
-# not when an image is rebuilt. Bump it deliberately.
+# The id rather than an alias: an alias moves with the CLI, and the model a
+# security gate runs on should change when someone decides it changes, not
+# when an image is rebuilt. Bump it deliberately.
 #
 # The judge also answers without extended thinking, which Claude Code turns on
 # by default. Its verdict is a few dozen tokens, and thinking before it was
@@ -73,7 +78,7 @@ fi
 # neither the image's environment nor a caller decides how the gate thinks.
 case "$model" in
 judge)
-	model=claude-haiku-4-5
+	model=claude-sonnet-5-5
 	export MAX_THINKING_TOKENS=0
 	;;
 fast | "") model=haiku ;;
