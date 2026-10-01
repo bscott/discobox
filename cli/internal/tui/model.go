@@ -529,8 +529,21 @@ func (m *Model) oneShot() bool { return m.oneRun || m.attach != nil }
 // on their own, so a slow server delays the rows rather than the window. The
 // harnesses are read here rather than when their screen is opened because the
 // run options offer them as the harness to run.
+//
+// The terminal's size is asked for again here because the one the runtime
+// started with can already be wrong. Bubble Tea reads it, draws the first frame,
+// and only then starts listening for SIGWINCH, so a terminal that is still
+// settling as the window opens resizes into that gap unheard. The renderer then
+// draws a full-screen frame for rows that are not there: the alternate screen
+// scrolls, everything it draws in place afterwards lands that many rows off,
+// and only the cells that change get repainted. The composer's placeholder
+// glint was the visible casualty, left two rows under the prompt. The size is
+// read again from the event loop, which starts after the listener's goroutine
+// does, so all but a vanishing gap is covered: a size that changes after this
+// is heard the usual way. Closing that last gap is Bubble Tea's to do, by
+// listening before it first reads the size.
 func (m *Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{textarea.Blink, m.loadSession(), m.refresh(), m.loadResources(), m.loadCredentialRequests(), m.loadHarnesses(), m.tick(), m.startShimmer()}
+	cmds := []tea.Cmd{tea.RequestWindowSize, textarea.Blink, m.loadSession(), m.refresh(), m.loadResources(), m.loadCredentialRequests(), m.loadHarnesses(), m.tick(), m.startShimmer()}
 	// An attach opens on its workspace rather than on the prompt, from the row
 	// the command already has: waiting for the listing to come back would hold
 	// the attach behind a request it does not need. The listing is still read,
