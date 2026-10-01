@@ -672,35 +672,45 @@ an answer about the project that nobody has. Once one has, it stays put whether
 or not the next refresh is late — the one screen a new user reads must not blink
 at them every time a poll runs long.
 
-**The header can narrow the list to one server** (`server.go`,
-`sandboxList.server`). It is the folder filter's twin, drawn in front of it —
-left and right change it, Enter or a click opens the dropdown — and it is there
-only when `Session.Servers` has more than one. It is the top rung of the focus
-ladder, above the folder, so Down from it steps back to the folder (see "Focus
-is a ladder" below). It opens on `all servers` (unless the folder was left on
-one; see `view.go`), which leads the choices and is
-the listing §4 describes; the servers follow it, the primary first.
-
-**The header can narrow the list to one tag** (`tags.go`, `sandboxList.tag`),
-drawn after the folder once any discobox inside the server and folder filters
-carries one ([ADR 0136](../../../docs/adr/0136-a-sandboxs-meta-lives-in-the-sandbox-and-the-server-caches-it.md)):
-`all tags`, then each tag as the rows spell it (`#wip`, `#ticket=ENG-12`). A
-chosen tag stays among the choices after its last box drops it, like the folder
-the header is on, so the control never vanishes from under what it is showing.
-It narrows the list only; unlike the other two it says nothing about where a
-create goes.
+**The header's filter is one control** (`filter.go`). The list can be
+narrowed to one server (`server.go`, `sandboxList.server`), one folder
+(`folder.go`) and one tag (`tags.go`, `sandboxList.tag`), and the header
+carries all three as one line naming only what is narrowed — `server beta ·
+~/src/foo @ main · #wip ▾`, or `all discoboxes ▾` — since what is left open the
+list's own sections already name. Enter or a click opens one card
+(`filterPicker`, `dlgFilter`) with a group per filter: the servers when
+`Session.Servers` has more than one (`all servers` first, the primary next),
+the folders, and the tags once any discobox inside the other two carries one
+([ADR 0136](../../../docs/adr/0136-a-sandboxs-meta-lives-in-the-sandbox-and-the-server-caches-it.md)),
+as the rows spell them (`#wip`, `#ticket=ENG-12`). Space or a click marks a
+choice in its group; Enter marks the row under the cursor too and applies every
+mark at once (`applyFilter`). So ↓ Enter changes one filter, as any other list
+in the window takes its highlighted row, narrowing two is one trip rather than
+one dropdown each, and nothing the card shows moves the list under it until
+Enter. Esc applies nothing. Over the harnesses and secrets screens the primary
+is drawn marked under `all servers` (`filterPicker.shows`) without being
+written into the card's list, and a marked row marks nothing again, so an
+untouched Enter there moves nothing behind the screen. The card is drawn in a
+window over its rows that keeps the cursor on screen (`filterPicker.offset`):
+every server, folder and tag at once is taller than a short terminal. A
+chosen folder or tag stays among the choices after its last box leaves it, so
+the choice never vanishes from under what the list is showing. The tag narrows
+the list only; unlike the other two it says nothing about where a create goes.
 
 **The filters are one filter.** `sandboxList.inView` is the server, the
 folder and the tag together, and everything that counts discoboxes counts through it — the
 rows, the archived offer — so a filter added to one count cannot be forgotten
-in another. The dropdowns count the same way from the other side: the folder
-dropdown offers the folders on the server the header names and counts on it,
-and the server dropdown counts in the folder the header names, because the
-filter a choice leaves in place is part of what the choice will list.
+in another. The card counts the same way: it holds a copy of the list carrying
+the marks so far, and each choice's count is what the list would show with
+that choice marked beside the others. The folders offered are the ones on the
+server marked and the tags the ones inside both, re-read as marks change,
+because the filter a choice leaves in place is part of what the choice will
+list.
 
 **The server on screen is the server the prompt creates on.** The header filter
 and the run options' Server row are one control in both directions, the way the
-folder and the Source row are: `selectServer` → `optionSet.setServer`, and
+folder and the Source row are: `applyFilter` (and `cycleServer` on the
+harnesses and secrets screens) → `optionSet.setServer`, and
 `Model.followServer` back the other way when the row is cycled in the panel. So
 narrowing the list to a machine is also the way to send the next prompt there.
 `all servers` is no answer to which server, so a create from there goes to the
@@ -709,9 +719,9 @@ primary — `--server` unset, as §5 has it.
 **The harnesses and secrets screens are the header's server's**
 ([ADR 0131](../../../docs/adr/0131-the-launcher-answers-every-servers-credential-requests-and-names-the-server-its-config-screens-edit.md) §2,
 `Model.configServer`): the server the filter names, or the primary under `all
-servers`. The filter stays drawn over them and names it, offering the servers
-but not `all servers`, which nothing can be added to; ←→ on either screen
-moves it. It is the same control, so a server chosen there is the list's
+servers`. The filter stays drawn over them as `server <name>`, and its card
+there offers the servers alone, without `all servers`, which nothing can be
+added to; ←→ on either screen moves it (`cycleServer`). It is the same control, so a server chosen there is the list's
 after Esc, and opening one from `all servers` and leaving leaves it there.
 Since the configured server is always where the next create goes, one list of
 harnesses serves the screen, the run options and the questions a run asks
@@ -731,7 +741,7 @@ creating there.
 **The list is sectioned by every filter the header leaves open**
 (`sandboxList.grouped`, `sectionKey`): by server while it shows every server
 and there is more than one (`byServer`, from `Session.Servers`, the primary
-first), and by folder on `all folders` (`byFolder`, in the dropdown's order,
+first), and by folder on `all folders` (`byFolder`, in the card's order,
 the window's own first), since the rows carry no folder column. On both, a
 section is a folder and a server at once; a filter narrowed to one value drops
 out of the sections, because the header has said the name, so one server and
@@ -1722,7 +1732,7 @@ the last selection, which is what the middle button pastes everywhere else
 (`Model.primaryText` — X11's primary, not the clipboard).
 
 Every screen the window draws marks its own controls: the rows of all four
-lists (`markList`), the folder and server filters, the workspace header's git summary
+lists (`markList`), the header's filter, the workspace header's git summary
 (which opens discobox-review) and its links (the desktop and the forwarded web
 ports), the composer and the strip under it, the
 title band's two offers, a menu's rows and a card's, the run options and the
@@ -2253,7 +2263,7 @@ a repository URL. It is matched by the key the server stored on each row
 directory is. The header opens on the folder the directory's saved view names,
 or on `allFolders` (see "The header's filters are kept per folder"); the window's
 own folder (`Session.OriginKey`, what `discobox ls` lists here) leads the
-choices, with every folder something is filed in one press away. A folder of this machine's also holds its
+filter card's folders, with every folder something is filed in beside it. A folder of this machine's also holds its
 discoboxes with no source, which are filed under the machine alone
 (`Session.HostKey`) — `ls` sends both keys the same way — so that key is never
 offered as a folder of its own. The choices come from the listing itself, so the
@@ -2269,7 +2279,7 @@ nothing else on the row to tell them apart. So the row carries
 `OriginHostID`/`OriginHost` and the window carries `Session.HostID`, and a row
 whose origin host is not this one is qualified `from wilma (host_zzzz45)` in dim
 text after the name. Another machine's folder carries the same qualifier in the
-dropdown, since it would otherwise read exactly like this machine's.
+filter's card, since it would otherwise read exactly like this machine's.
 
 It is a qualifier on the name rather than a column of its own: what it answers
 is "why is this here", which is a question about the name it sits beside, and
@@ -2307,10 +2317,10 @@ reading.
 
 **The Source row is a selector, and it moves the header back** (`options.go`).
 It offers what the project has actually been cut from — `sandboxList.sources()`,
-off the same listing the folder dropdown is built from — plus `no source`, and
-takes the same two affordances the header does: left and right cycle in place,
-Enter opens the whole list, whose last row is the one entry that is not a source
-but the input field for a path, URL or `DIR@REF` the listing has never seen.
+off the same listing the filter's folders are built from — plus `no source`.
+Left and right cycle in place and Enter opens the whole list, whose last row is
+the one entry that is not a source but the input field for a path, URL or
+`DIR@REF` the listing has never seen.
 
 Sources and folders are not the same list. A folder is where a discobox is
 *filed* — a machine and a source — so one source cut on two machines is two
@@ -2425,24 +2435,18 @@ the thing the question exists to avoid. Both are `includeDirtyDialog`: the
 excluding answer leads and Esc means no, since the discobox is created either
 way.
 
-**Focus is a ladder, and its ends stop.** Prompt, discoboxes, folder filter,
-server filter, bottom to top, and the arrows climb it one rung at a time: Up off
-the top of the list reaches the folder, Up again the server; Down steps back
-the same way, and past the last row returns to the prompt. The tag filter is
-not a rung: it is beside the folder, not above it, so Tab reaches it and Up
-from it climbs to the server as Up from the folder does. The server rung is
-there only when there is more than one server, and without it the folder is the
-top. Neither end wraps — Down at the prompt stays in the prompt and Up at the
-top stays there, because a key that jumped from one end to the other would be
-moving the opposite way to the one it names. The server is above the folder
-although it is drawn to the left of it: it is the wider scope, and the one you
-change least.
+**Focus is a ladder, and its ends stop.** Prompt, discoboxes, filter, bottom
+to top, and the arrows climb it one rung at a time: Up off the top of the list
+reaches the filter; Down steps back the same way, and past the last row
+returns to the prompt. Neither end wraps — Down at the prompt stays in the
+prompt and Up at the filter stays there, because a key that jumped from one
+end to the other would be moving the opposite way to the one it names.
 
 Tab is the one key that does go round, in the order Up climbs: prompt →
-discoboxes → folder → tags (when shown) → server → prompt. Esc is the short way straight out to the
-prompt from any stop. With an empty list, leaving the prompt lands on the folder
-filter instead — that is exactly when it is the control you want, and refusing
-to move would leave no way to reach it. Down from there passes straight through
+discoboxes → filter → prompt. Esc is the short way straight out to the prompt
+from any stop. With an empty list, leaving the prompt lands on the filter
+instead — that is exactly when it is the control you want, and refusing to
+move would leave no way to reach it. Down from there passes straight through
 the empty list to the prompt: there is nothing to move through, and the empty
 list's own line says to type a prompt.
 
@@ -2536,9 +2540,10 @@ the newest one where the busy line goes.
 | --- | --- |
 | `data.go` | `Sandbox`, `Session`, `Harness`, `RunRequest`, `Verb`, `Interaction`, `DataSource` |
 | `harnesses.go` | the harnesses screen: the list, its actions, the config card, `F3` |
-| `folder.go` | the header's folder filter: the choices, the dropdown, and applying one |
-| `server.go` | the header's server filter: the choices, the dropdown, and the create that follows it |
-| `tags.go` | the header's tag filter: the choices, shown once anything is tagged, the dropdown, and applying one |
+| `filter.go` | the header's filter: the line naming what is narrowed, the card that marks a server, folder and tag, and applying them together |
+| `folder.go` | a folder: the origin key it files under, and what it holds |
+| `server.go` | the server the list shows and a create goes to, and the config screens' ←→ over it |
+| `tags.go` | the tags the list can be narrowed to, and how one reads |
 | `shimmer.go` | the opening glint over "discobox" in the placeholder |
 | `model.go` | the window: update, actions, run, layout, view, help |
 | `list.go` | the sandbox pane: filters, selection, visual range, row rendering |

@@ -359,7 +359,7 @@ func (o *optionSet) setFolder(folder string) {
 }
 
 // setSources takes the sources the project's discoboxes were cut from, off the
-// same listing the folder dropdown is built from. What was chosen survives a
+// same listing the header filter's folders are built from. What was chosen survives a
 // refresh, including a path typed by hand that no discobox has been cut from
 // yet.
 func (o *optionSet) setSources(known []Source) {
@@ -535,7 +535,7 @@ func (o *optionSet) typedSource() string {
 }
 
 // sourceChosenMsg carries the dropdown's answer back to the live model, for the
-// same reason folderChosenMsg does: the dialog closed over the model by value.
+// same reason filterChosenMsg does: the dialog closed over the model by value.
 // enter is the row that is not an answer but a request for the input field.
 type sourceChosenMsg struct {
 	source string
@@ -608,7 +608,7 @@ func (o *optionSet) sourceDetail(value string) string {
 		if o.folder == "" {
 			// Every folder at once is not a folder the window is showing, so
 			// the directory it happens to be running in is described as what
-			// it is — the same words the folder dropdown uses for it.
+			// it is — the same words the filter's card uses for it.
 			return "where this window is running"
 		}
 		return "the folder this window is showing"

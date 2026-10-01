@@ -169,7 +169,7 @@ func (l *sandboxList) rows() []Sandbox {
 			if fi != fj {
 				return fi < fj
 			}
-			// Folders the dropdown does not offer share a rank, and each is
+			// Folders the filter does not offer share a rank, and each is
 			// still a section of its own: kept apart by key, or their rows
 			// interleave and every change of key draws another header.
 			if ki != kj {
@@ -247,7 +247,7 @@ func (l *sandboxList) sectionOf(s Sandbox) sectionKey {
 	return k
 }
 
-// folderRanks is where each folder's rows go: the order the header's dropdown
+// folderRanks is where each folder's rows go: the order the header's filter
 // offers them in, the window's own first.
 func (l *sandboxList) folderRanks() map[string]int {
 	folders := l.folders()
@@ -258,7 +258,7 @@ func (l *sandboxList) folderRanks() map[string]int {
 	return ranks
 }
 
-// folderRank is a folder's place among ranks. A folder the dropdown does not
+// folderRank is a folder's place among ranks. A folder the filter does not
 // offer — this machine's discoboxes with no source, which are in every folder
 // of this machine's rather than one of their own — sorts after the ones it
 // does.
@@ -323,8 +323,8 @@ func (l *sandboxList) section(server string) int {
 // folder first, whether or not anything was cut from it yet, then every other
 // folder the project's discoboxes are filed in, newest first, then the one the
 // header is on if nothing is filed in it yet. The order does not follow the
-// selection, so left and right walk the same ring whichever folder they start
-// from. This machine's own key is never one of them: its discoboxes with no
+// selection, so the filter card's folders and the list's folder sections
+// (folderRanks) keep their places whichever folder is chosen. This machine's own key is never one of them: its discoboxes with no
 // source are in every folder of this machine's already.
 //
 // It is derived from the listing rather than asked for separately: the folders
@@ -340,8 +340,8 @@ func (l *sandboxList) folders() []folder {
 		out = append(out, f)
 	}
 	add(l.session.folder())
-	// The folders on the server the header names: the folder filter sits
-	// inside the server one, and a folder only another server has something in
+	// The folders on the server the header names: the folder sits inside
+	// the server, and a folder only another server has something in
 	// is a choice that lists nothing.
 	for _, s := range l.all {
 		if l.onServer(s) {
@@ -768,7 +768,7 @@ func (l *sandboxList) sectionTitle(s Sandbox) string {
 }
 
 // folderOf is the folder a row is filed in, named the way the header's
-// dropdown names it: the window's own folder by its source and branch.
+// filter names it: the window's own folder by its source and branch.
 func (l *sandboxList) folderOf(s Sandbox) folder {
 	if s.OriginKey != "" && s.OriginKey == l.session.OriginKey {
 		return l.session.folder()
@@ -866,7 +866,7 @@ func (l *sandboxList) row(st *styles, s Sandbox, i int, focused bool) string {
 
 	// Where the work sits in git — the reported position once the sandbox's
 	// agent has spoken, the spawn commit until then. Where it came from is not
-	// a column: it is the header's dropdown, and every row on screen has
+	// a column: it is the header's filter, and every row on screen has
 	// already been filtered to it — a column repeating the same value on every
 	// row is a column spent saying nothing.
 	//

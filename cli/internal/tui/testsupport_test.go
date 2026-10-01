@@ -1368,14 +1368,66 @@ func frameText(m *Model) string { return strings.Join(frame(m), "\n") }
 // set to the directory it is running in.
 func showAllFolders(t *testing.T, m *Model) {
 	t.Helper()
-	send(t, m, keyPress("tab"), keyPress("up"), keyPress("left"))
+	send(t, m, keyPress("tab"))
+	filterTo(t, m, allFolders)
 	if m.list.folder.key != "" {
 		t.Fatalf("folder filter is %q, want every folder", m.list.folder.label)
 	}
-	send(t, m, keyPress("down"))
+	if m.focus == focusFilter {
+		send(t, m, keyPress("down"))
+	}
 	if m.focus != focusList {
 		t.Fatalf("focus = %v, want the list", m.focus)
 	}
+}
+
+// filterTo opens the header's filter card and marks the choice reading each
+// label, then applies them, the way a person would: ↑ ↓ to the row, Space to
+// mark it, Enter to show what is marked (the cursor rests on the last mark). A label is matched on the first row
+// reading it, and "Group: label" names the group where two could read alike.
+func filterTo(t *testing.T, m *Model, labels ...string) {
+	t.Helper()
+	m.dialog = m.filterDialog()
+	for _, label := range labels {
+		markFilter(t, m, label)
+	}
+	send(t, m, keyPress("enter"))
+	if m.dialog != nil {
+		t.Fatalf("the filter card is still up after Enter")
+	}
+}
+
+// markFilter moves the open filter card's cursor to the row reading label and
+// marks it with Space.
+func markFilter(t *testing.T, m *Model, label string) {
+	t.Helper()
+	if m.dialog == nil || m.dialog.kind != dlgFilter {
+		t.Fatal("the filter card is not open")
+	}
+	group, want, grouped := strings.Cut(label, ": ")
+	if !grouped {
+		want = label
+	}
+	p := m.dialog.filter
+	at := -1
+	var seen []string
+	for i, row := range p.rows() {
+		seen = append(seen, row.group+": "+row.label)
+		if row.label == want && (!grouped || row.group == group) {
+			at = i
+			break
+		}
+	}
+	if at < 0 {
+		t.Fatalf("the filter card has no %q among %q", label, seen)
+	}
+	for p.cursor < at {
+		send(t, m, keyPress("down"))
+	}
+	for p.cursor > at {
+		send(t, m, keyPress("up"))
+	}
+	send(t, m, keyPress(" "))
 }
 
 func testSandboxes() []Sandbox {

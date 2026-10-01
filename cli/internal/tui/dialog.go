@@ -24,6 +24,9 @@ const (
 	// dlgStatus is a dialog nobody answers: it reports what is happening and
 	// takes itself down when that finishes. See statusDialog.
 	dlgStatus
+	// dlgFilter is the header's filter opened: every server, folder and tag
+	// on one card, marked and then applied together. See filterPicker.
+	dlgFilter
 )
 
 // dialog is the single modal layer. Everything that is not the list or the
@@ -74,6 +77,10 @@ type dialog struct {
 	// values: what it holds is typed by the rows themselves.
 	form   *form
 	submit func(f *form) tea.Cmd
+
+	// filter is the choices of a dlgFilter, which answers with what they
+	// have marked.
+	filter *filterPicker
 
 	// answerLabel is the question, drawn as a rule immediately above whatever
 	// answers it: the menu rows, the input line, or the y/n pair. It is the one
@@ -409,6 +416,9 @@ func (d *dialog) update(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 			return cmd, true
 		}
 		return d.form.update(msg), false
+
+	case dlgFilter:
+		return d.filter.update(msg)
 
 	case dlgInput:
 		if keyName(msg) == "enter" {
@@ -753,6 +763,10 @@ func (d *dialog) view(st *styles, z *zones, width, height int) string {
 		}
 		drawHints(formHints(d.form, line))
 
+	case dlgFilter:
+		b.WriteString(d.filter.view(st, z, strings.Count(b.String(), "\n")+dialogPadTop, inner, maxBody))
+		keys(says("↑↓ moves"), pressing("Space marks", " "), pressing("Enter picks it and shows", "enter"), pressing("Esc cancels", "esc"))
+
 	case dlgInput:
 		answer()
 		// The field is a field: a press in it puts the caret where the
@@ -901,7 +915,7 @@ func (d *dialog) viewItems(st *styles, z *zones, top, inner int) string {
 		keyCol = pressW + 2
 	}
 	// The label column fits the longest label rather than a fixed width:
-	// action names are a word, but the folder dropdown's are paths, and a
+	// action names are a word, but the Source row's list is paths, and a
 	// path cut off at fourteen cells is not a path you can choose between.
 	labelW := 14
 	for _, it := range d.items {

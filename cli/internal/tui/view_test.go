@@ -74,8 +74,7 @@ func TestChangingAFilterIsSaved(t *testing.T) {
 	ds.freshFolder = true
 	m := newTestModel(t, ds)
 
-	// Right off "all folders" wraps to the first folder, the window's own.
-	send(t, m, keyPress("tab"), keyPress("up"), keyPress("right"))
+	filterTo(t, m, m.session.folder().label)
 	if m.list.folder.key != testKey("/src/disco2") {
 		t.Fatalf("folder = %q, want the window's own", m.list.folder.label)
 	}
@@ -89,7 +88,7 @@ func TestChangingAFilterIsSaved(t *testing.T) {
 	}
 
 	// Back to every folder is a change too, and closing the window saves it.
-	send(t, m, keyPress("left"))
+	filterTo(t, m, allFolders)
 	send(t, m, keyPress("ctrl+c"))
 	if len(ds.views) != 2 || ds.views[1].view != (ListView{}) {
 		t.Fatalf("views = %+v, want the default saved on the way out", ds.views)
@@ -123,7 +122,7 @@ func TestTheCommandLineNarrowsAFreshFolder(t *testing.T) {
 
 	// Moving off it is a change, and back to everything is saved as the
 	// default the store drops.
-	send(t, m, keyPress("tab"), keyPress("up"), keyPress("left"))
+	filterTo(t, m, allFolders)
 	send(t, m, tickMsg{})
 	if len(ds.views) != 1 || ds.views[0].view.FolderKey != "" || ds.views[0].view.Server != "alpha" {
 		t.Fatalf("views = %+v, want every folder on alpha saved", ds.views)

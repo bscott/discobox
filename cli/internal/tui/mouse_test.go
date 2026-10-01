@@ -220,8 +220,8 @@ func TestPressingAStatusHintActsOnTheList(t *testing.T) {
 	}
 }
 
-// The folder filter is a dropdown, and a dropdown opens when it is clicked.
-func TestPressingTheFolderFilterOpensIt(t *testing.T) {
+// The filter opens when it is clicked, and a press on a choice marks it.
+func TestPressingTheFilterOpensIt(t *testing.T) {
 	t.Parallel()
 	m := newTestModel(t, newFakeSource(testSandboxes()...))
 	slowClock(m)
@@ -229,11 +229,25 @@ func TestPressingTheFolderFilterOpensIt(t *testing.T) {
 	x, y := at(t, m, m.session.Directory)
 	tap(t, m, x, y)
 
-	if m.dialog == nil {
-		t.Fatalf("pressing the folder filter should open the dropdown")
+	if m.dialog == nil || m.dialog.kind != dlgFilter {
+		t.Fatalf("pressing the filter should open its card")
 	}
-	if m.focus != focusFolder {
+	if m.focus != focusFilter {
 		t.Fatalf("focus = %v, want the filter", m.focus)
+	}
+
+	// A press marks the choice without applying it; Enter applies.
+	x, y = at(t, m, allFolders)
+	tap(t, m, x, y)
+	if m.dialog == nil || m.dialog.filter.list.folder.key != "" {
+		t.Fatal("pressing a choice should mark it and leave the card up")
+	}
+	if m.list.folder.key == "" {
+		t.Fatal("a marked choice should not move the list before Enter")
+	}
+	send(t, m, keyPress("enter"))
+	if m.list.folder.key != "" {
+		t.Fatalf("folder = %q, want every folder", m.list.folder.label)
 	}
 }
 

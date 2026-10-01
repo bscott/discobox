@@ -830,7 +830,7 @@ func toTUISandbox(sb apimodel.Sandbox, hostID string) tui.Sandbox {
 		Message:    sandboxMessage(sb),
 		Created:    sb.CreatedAt,
 	}
-	// Where the discobox is filed: what the header's folder filter matches it
+	// Where the discobox is filed: what the header filter's folder matches it
 	// against (ADR 0111). Read, not derived, so the window never files a row
 	// somewhere the server did not.
 	row.OriginKey = strings.TrimSpace(sb.OriginKey.Or(""))

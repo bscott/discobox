@@ -424,8 +424,8 @@ func TestTheWindowOpensOnEveryServer(t *testing.T) {
 		t.Fatalf("rows = %+v, want both servers'", rows)
 	}
 	out := plainFrame(m)
-	if !strings.Contains(out, allServers) {
-		t.Fatalf("the header does not say it is showing every server:\n%s", out)
+	if strings.Contains(headerLine(m), "server ") {
+		t.Fatalf("the header names a server while it is showing every one: %q", headerLine(m))
 	}
 	// Every server on screen is more than one to tell apart, so the rows are
 	// sectioned under the server each is on.
@@ -433,9 +433,9 @@ func TestTheWindowOpensOnEveryServer(t *testing.T) {
 		t.Fatalf("the list is not sectioned by server:\n%s", out)
 	}
 
-	// And narrowing to one is a press: the section bands go, because the
-	// header now says the name a band over every row would repeat.
-	send(t, m, keyPress("tab"), keyPress("up"), keyPress("up"), keyPress("right"))
+	// And narrowing to one is a choice on the card: the section bands go,
+	// because the header now says the name a band over every row would repeat.
+	filterTo(t, m, "alpha")
 	if m.list.server != "alpha" {
 		t.Fatalf("the list is showing %q, want alpha", m.list.server)
 	}
@@ -460,14 +460,24 @@ func TestTheHeaderServerIsWhereThePromptRuns(t *testing.T) {
 	ds.session.Servers = []string{"alpha", "beta"}
 	m := newTestModel(t, ds)
 
-	// Up out of the list reaches the folder, and Up again the server; right
-	// walks off "all servers" onto the servers themselves, in the order the
-	// session names them.
-	send(t, m, keyPress("tab"), keyPress("up"), keyPress("up"))
-	if m.focus != focusServer {
-		t.Fatalf("focus = %v, want the server filter", m.focus)
+	// Up out of the list reaches the filter; its card offers "all servers"
+	// and then the servers themselves, in the order the session names them.
+	send(t, m, keyPress("tab"), keyPress("up"))
+	if m.focus != focusFilter {
+		t.Fatalf("focus = %v, want the filter", m.focus)
 	}
-	send(t, m, keyPress("right"), keyPress("right"))
+	send(t, m, keyPress("enter"))
+	var servers []string
+	for _, row := range m.dialog.filter.rows() {
+		if row.group == "Server" {
+			servers = append(servers, row.label)
+		}
+	}
+	if !slices.Equal(servers, []string{allServers, "alpha", "beta"}) {
+		t.Fatalf("servers = %q, want every server, then alpha and beta", servers)
+	}
+	markFilter(t, m, "beta")
+	send(t, m, keyPress("enter"))
 	if m.list.server != "beta" {
 		t.Fatalf("the list is showing %q, want beta", m.list.server)
 	}
@@ -494,7 +504,8 @@ func TestEveryServerStillCreatesOnThePrimary(t *testing.T) {
 
 	// Out to beta and back, so this is the choice being made rather than the
 	// window never having been touched.
-	send(t, m, keyPress("tab"), keyPress("up"), keyPress("up"), keyPress("left"), keyPress("right"))
+	filterTo(t, m, "beta")
+	filterTo(t, m, allServers)
 	if m.list.server != "" {
 		t.Fatalf("the list is showing %q, want every server", m.list.server)
 	}
@@ -550,72 +561,47 @@ func TestTheNotAnsweringSectionFollowsTheFilter(t *testing.T) {
 	}
 }
 
-// Tab goes round the window in the order Up climbs it: the prompt, the
-// discoboxes, the folder they were cut from, the server they are on, and back
-// to the prompt.
-func TestTabWalksBothHeaderFilters(t *testing.T) {
+// The filter is one stop however many servers there are: Tab goes round the
+// prompt, the discoboxes and the filter, and Up from the list reaches it and
+// stays there.
+func TestManyServersAreStillOneFilter(t *testing.T) {
 	t.Parallel()
 	ds := newFakeSource(onServer("alpha", testSandboxes())...)
 	ds.session.Servers = []string{"alpha", "beta"}
 	m := newTestModel(t, ds)
 
-	for _, want := range []focusArea{focusList, focusFolder, focusServer, focusPrompt} {
+	for _, want := range []focusArea{focusList, focusFilter, focusPrompt} {
 		send(t, m, keyPress("tab"))
 		if m.focus != want {
 			t.Fatalf("Tab reached %v, want %v", m.focus, want)
 		}
 	}
-}
-
-// Up climbs the same ladder Tab walks — discoboxes, folder, server — and stops
-// at the top; Down comes back down it one rung at a time, to the prompt.
-func TestUpAndDownClimbBothHeaderFilters(t *testing.T) {
-	t.Parallel()
-	ds := newFakeSource(onServer("alpha", testSandboxes())...)
-	ds.session.Servers = []string{"alpha", "beta"}
-	m := newTestModel(t, ds)
-
 	send(t, m, keyPress("tab"))
 	m.list.moveTo(0)
-	for _, want := range []focusArea{focusFolder, focusServer, focusServer} {
+	for _, want := range []focusArea{focusFilter, focusFilter} {
 		send(t, m, keyPress("up"))
 		if m.focus != want {
 			t.Fatalf("Up reached %v, want %v", m.focus, want)
 		}
 	}
-	// Down past the last row is the prompt, so the walk down ends there.
-	for _, want := range []focusArea{focusFolder, focusList} {
-		send(t, m, keyPress("down"))
-		if m.focus != want {
-			t.Fatalf("Down reached %v, want %v", m.focus, want)
-		}
-	}
-	m.list.moveTo(len(m.list.rows()) - 1)
 	send(t, m, keyPress("down"))
-	if m.focus != focusPrompt {
-		t.Fatalf("Down off the last row reached %v, want the prompt", m.focus)
+	if m.focus != focusList {
+		t.Fatalf("Down reached %v, want the list", m.focus)
 	}
 }
 
-// With one server there is nothing to pick, so the header has no filter to
-// reach and Tab goes round the window it always went round.
-func TestOneServerLeavesTheHeaderAsItWas(t *testing.T) {
+// With one server there is nothing to pick, so the card offers no servers and
+// the header names none.
+func TestOneServerOffersNoServers(t *testing.T) {
 	t.Parallel()
 	m := newTestModel(t, newFakeSource(testSandboxes()...))
-
-	for _, want := range []focusArea{focusList, focusFolder, focusPrompt} {
-		send(t, m, keyPress("tab"))
-		if m.focus != want {
-			t.Fatalf("Tab reached %v, want %v", m.focus, want)
+	for _, row := range m.filterDialog().filter.rows() {
+		if row.group == "Server" {
+			t.Fatalf("the card offers server %q with one server", row.label)
 		}
 	}
-	// And the folder is the top of the ladder, with no server above it.
-	send(t, m, keyPress("tab"), keyPress("up"), keyPress("up"))
-	if m.focus != focusFolder {
-		t.Fatalf("Up past the folder reached %v, want it to stay on the folder", m.focus)
-	}
 	if strings.Contains(plainFrame(m), allServers) {
-		t.Fatalf("the header offers a server filter with one server:\n%s", plainFrame(m))
+		t.Fatalf("the window offers a server filter with one server:\n%s", plainFrame(m))
 	}
 }
 
@@ -628,8 +614,8 @@ func onServer(server string, boxes []Sandbox) []Sandbox {
 	return boxes
 }
 
-// A server that did not answer is said where the window shows it: in the
-// dropdown, beside its name, and as its own section when the list is narrowed
+// A server that did not answer is said where the window shows it: on the
+// filter's card, beside its name, and as its own section when the list is narrowed
 // to it — while narrowed to another server nothing says it at all.
 func TestANarrowedServerThatIsNotAnsweringSaysSo(t *testing.T) {
 	t.Parallel()
@@ -638,19 +624,19 @@ func TestANarrowedServerThatIsNotAnsweringSaysSo(t *testing.T) {
 	ds.unreachable = []string{"beta"}
 	m := newTestModel(t, ds)
 
-	send(t, m, keyPress("tab"), keyPress("up"), keyPress("up"), keyPress("enter"))
+	send(t, m, keyPress("tab"), keyPress("up"), keyPress("enter"))
 	if got := dialogText(m); !strings.Contains(got, "not answering") {
-		t.Fatalf("the server dropdown does not say beta is not answering:\n%s", got)
+		t.Fatalf("the filter card does not say beta is not answering:\n%s", got)
 	}
 	send(t, m, keyPress("esc"))
 
 	// all servers → alpha: alpha's rows, and not a word about beta.
-	send(t, m, keyPress("right"))
+	filterTo(t, m, "alpha")
 	if out := plainFrame(m); strings.Contains(out, "not answering") {
 		t.Fatalf("narrowed to alpha, the list says beta is not answering:\n%s", out)
 	}
 	// alpha → beta: no rows, and the section saying why.
-	send(t, m, keyPress("right"))
+	filterTo(t, m, "beta")
 	if out := plainFrame(m); !strings.Contains(out, "not answering") {
 		t.Fatalf("narrowed to beta, the list does not say it is not answering:\n%s", out)
 	}
@@ -665,16 +651,16 @@ func TestTheConfigScreensAreTheHeadersServer(t *testing.T) {
 		ds := newFakeSource(onServer("alpha", testSandboxes())...)
 		ds.session.Servers = []string{"alpha", "beta"}
 		m := newTestModel(t, ds)
-		send(t, m, keyPress("tab"), keyPress("up"), keyPress("up"), keyPress("left"))
+		filterTo(t, m, "beta")
 		if m.list.server != "beta" {
 			t.Fatalf("the list is showing %q, want beta", m.list.server)
 		}
-		send(t, m, keyPress("esc"), keyPress(key))
+		send(t, m, keyPress(key))
 
 		if header := frame(m)[1]; !strings.Contains(header, "server beta") {
 			t.Fatalf("%s: the screen does not say it is beta's: %q", key, header)
 		}
-		if _, ok := m.zones.find(hitServer); !ok {
+		if _, ok := m.zones.find(hitFilter); !ok {
 			t.Fatalf("%s: the server the screen names is not marked", key)
 		}
 		want := "Harnesses@beta"
@@ -834,10 +820,10 @@ func TestTheArchivedOfferCountsTheServerOnScreen(t *testing.T) {
 	}
 }
 
-// The folder filter sits inside the server one: its choices and its counts are
-// the server's, so a folder only another server has something in is not a
-// choice that then lists nothing.
-func TestTheFolderDropdownIsTheServersFolders(t *testing.T) {
+// The folders sit inside the server: the card offers and counts the folders
+// on the server marked, as it is marked, so a folder only another server has
+// something in is not a choice that then lists nothing.
+func TestTheCardsFoldersAreTheMarkedServers(t *testing.T) {
 	t.Parallel()
 	boxes := testSandboxes()
 	for i := range boxes {
@@ -851,32 +837,37 @@ func TestTheFolderDropdownIsTheServersFolders(t *testing.T) {
 	ds.session.Servers = []string{"alpha", "beta"}
 	m := newTestModel(t, ds)
 
-	has := func() bool {
-		for _, f := range m.folderChoices() {
-			if f.key == testKey("/src/obot") {
-				return true
+	send(t, m, keyPress("tab"), keyPress("up"), keyPress("enter"))
+	folder := func(label string) (filterRow, bool) {
+		for _, row := range m.dialog.filter.rows() {
+			if row.group == "Folder" && row.label == label {
+				return row, true
 			}
 		}
-		return false
+		return filterRow{}, false
 	}
-	if !has() {
+	if _, ok := folder("/src/obot"); !ok {
 		t.Fatal("every server: the folders do not include beta's /src/obot")
 	}
-	send(t, m, keyPress("tab"), keyPress("up"), keyPress("up"), keyPress("right"))
-	if m.list.server != "alpha" {
-		t.Fatalf("the list is showing %q, want alpha", m.list.server)
+	markFilter(t, m, "alpha")
+	if _, ok := folder("/src/obot"); ok {
+		t.Fatal("alpha marked: the folders offer /src/obot, which only beta has")
 	}
-	if has() {
-		t.Fatal("narrowed to alpha: the folders offer /src/obot, which only beta has")
+	if m.list.server != "" {
+		t.Fatalf("the list moved to %q before Enter", m.list.server)
 	}
 	onAlpha := 0
 	for _, s := range boxes {
-		if s.Server == "alpha" {
+		if s.Server == "alpha" && s.State != StateArchived {
 			onAlpha++
 		}
 	}
-	if got, want := m.folderDetail(everyFolder), plural(onAlpha, "box", "boxes")+" on alpha"; got != want {
-		t.Fatalf("all folders detail = %q, want %q", got, want)
+	if row, _ := folder(allFolders); row.detail != plural(onAlpha, "box", "boxes") {
+		t.Fatalf("all folders detail = %q, want %d boxes, counted on alpha", row.detail, onAlpha)
+	}
+	send(t, m, keyPress("enter"))
+	if m.list.server != "alpha" {
+		t.Fatalf("the list is showing %q, want alpha", m.list.server)
 	}
 }
 
@@ -889,18 +880,17 @@ func TestTheMachineLineIsOnlyOverThePrimary(t *testing.T) {
 	ds.setResources(Resources{Known: true, CPUVCPUs: 4.2, CPUCapacity: 24})
 	m := newTestModel(t, ds)
 
-	send(t, m, keyPress("tab"), keyPress("up"), keyPress("up"))
 	for _, step := range []struct {
-		key    string
+		choice string
 		server string
 		shown  bool
 	}{
 		{"", "", true},
-		{"right", "alpha", true},
-		{"right", "beta", false},
+		{"alpha", "alpha", true},
+		{"beta", "beta", false},
 	} {
-		if step.key != "" {
-			send(t, m, keyPress(step.key))
+		if step.choice != "" {
+			filterTo(t, m, step.choice)
 		}
 		if m.list.server != step.server {
 			t.Fatalf("the list is showing %q, want %q", m.list.server, step.server)
@@ -922,7 +912,7 @@ func TestEveryServerAndFolderIsASectionEach(t *testing.T) {
 		{ID: "sbx_4", Name: "four", Server: "beta", State: StateRunning, OriginKey: testKey("/src/disco2"), Source: "/src/disco2"},
 	})
 	out := l.view(newStyles(false), &zones{}, true)
-	// The window's own folder leads, the way the dropdown offers it, and each
+	// The window's own folder leads, the way the filter offers it, and each
 	// folder's servers follow in the session's order.
 	order := []string{"/src/disco2 on alpha", "three", "/src/disco2 on beta", "four", "/src/obot on alpha", "two", "/src/obot on beta", "one"}
 	last := -1
@@ -962,7 +952,7 @@ func TestEveryServerAndFolderIsASectionEach(t *testing.T) {
 	}
 }
 
-// Folders the dropdown does not offer — this machine's sourceless discoboxes,
+// Folders the filter does not offer — this machine's sourceless discoboxes,
 // and rows with no key at all — are each one section, however their rows
 // arrived interleaved.
 func TestUnofferedFoldersAreOneSectionEach(t *testing.T) {

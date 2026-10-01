@@ -248,8 +248,8 @@ type Sandbox struct {
 
 	// OriginKey is where the discobox is filed on the client that created it
 	// (ADR 0111): that host and where its source came from, or the host alone
-	// when it has none. It is not a column on the row — it is what the header's
-	// folder filter matches, so every row on screen already shares it.
+	// when it has none. It is not a column on the row — it is what the header
+	// filter's folder matches, so every row on screen already shares it.
 	OriginKey string
 
 	// OriginHostID identifies the machine the sandbox was created on, and

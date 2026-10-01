@@ -1691,8 +1691,8 @@ func (m *Model) viewPaneHeader(w int) string {
 		}
 		return padANSI(rendered, w)
 	}
-	folder := m.viewFolder(false)
-	full := m.viewHeaderBrand() + folder
+	filter := m.viewFilter(false)
+	full := m.viewHeaderBrand() + filter
 
 	// The keys are measured as plain text and drawn only once the row has
 	// settled which of its edges it can afford: styling costs no cells, so the
@@ -1716,7 +1716,7 @@ func (m *Model) viewPaneHeader(w int) string {
 		concessions = append(concessions, [2]string{full, ""})
 		keys = ""
 	}
-	concessions = append(concessions, [2]string{folder, keys}, [2]string{"", keys})
+	concessions = append(concessions, [2]string{filter, keys}, [2]string{"", keys})
 
 	// The keys, wherever this row ends up putting them, are buttons for
 	// themselves as they are on every other screen. A row that gave them up to

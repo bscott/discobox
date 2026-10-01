@@ -334,29 +334,25 @@ func (m *Model) press(what hit, clicks int) (tea.Cmd, bool) {
 		}
 		return nil, true
 
-	case hitFolder:
-		// A dropdown opens when it is clicked. Reaching it and opening it are
+	case hitFilter:
+		// The filter opens when it is clicked. Reaching it and opening it are
 		// two keys, because a keyboard has to get there first; a pointer is
-		// already there.
-		m.prompt.Blur()
-		m.focus = focusFolder
-		m.dialog = m.folderDialog()
-		return nil, true
-
-	case hitTags:
-		m.prompt.Blur()
-		m.focus = focusTags
-		m.dialog = m.tagDialog()
-		return nil, true
-
-	case hitServer:
-		// Over the harnesses and secrets screens the keys stay theirs, so the
-		// focus does not move to a control those screens do not route keys to.
+		// already there. Over the harnesses and secrets screens the keys stay
+		// theirs, so the focus does not move to a control those screens do
+		// not route keys to.
 		if !m.onConfigScreen() {
 			m.prompt.Blur()
-			m.focus = focusServer
+			m.focus = focusFilter
 		}
-		m.dialog = m.serverDialog()
+		m.dialog = m.filterDialog()
+		return nil, true
+
+	case hitFilterRow:
+		// A press marks the choice, as Space does; Enter is still what applies
+		// the card, so several can be marked before the list moves.
+		if d := m.dialog; d != nil && d.kind == dlgFilter {
+			d.filter.pick(what.idx)
+		}
 		return nil, true
 
 	case hitGit:
@@ -697,6 +693,10 @@ func (m *Model) wheelAt(ev tea.MouseWheelMsg) tea.Cmd {
 	case hitFormRow:
 		if d := m.dialog; d != nil && d.kind == dlgForm {
 			d.form.move(-sign(lines))
+		}
+	case hitFilterRow:
+		if d := m.dialog; d != nil && d.kind == dlgFilter {
+			d.filter.move(-sign(lines))
 		}
 	case hitDialogItem:
 		if d := m.dialog; d != nil {

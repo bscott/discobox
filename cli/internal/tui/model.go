@@ -35,17 +35,10 @@ const (
 	// begin describing a new sandbox: typing is the default mode.
 	focusPrompt focusArea = iota
 	focusList
-	// The folder filter and the server filter, in the header. They sit above
-	// the list on screen, and focus climbs to them in that order: Up off the
-	// top of the list reaches the folder, and Up again the server — the wider
-	// of the two scopes, and so the top of the ladder. There is no server
-	// filter with only one server to list, and then the folder is the top.
-	focusFolder
-	focusServer
-	// The tag filter, drawn after the folder once any discobox carries a tag.
-	// It is beside the folder rather than above it, so Up climbs past it: Tab
-	// is what reaches it, folder then tags then server.
-	focusTags
+	// The filter, in the header: one line saying what the list is narrowed
+	// to, which Enter opens as a card (filter.go). It sits above the list on
+	// screen, so Up off the top of the list reaches it, and it is the top.
+	focusFilter
 	// A sandbox's terminal, drawn in place of everything else. While it has
 	// focus every key belongs to the sandbox except the detach prefix.
 	focusPane
@@ -850,7 +843,7 @@ func (m *Model) update(msg tea.Msg) tea.Cmd {
 		// them: the two reads land independently and either can be the later.
 		m.list.setPending(m.requests)
 		// What the project has been cut from is read off the same listing the
-		// folder dropdown is, for the same reason: the sources worth offering
+		// filter's folders are, for the same reason: the sources worth offering
 		// are exactly the ones something is already sitting in.
 		m.opts.setSources(m.list.sources())
 		m.layout()
@@ -1026,14 +1019,8 @@ func (m *Model) update(msg tea.Msg) tea.Cmd {
 	case toolsMsg:
 		return m.toolsResolved(msg)
 
-	case folderChosenMsg:
-		return m.selectFolder(msg.folder)
-
-	case serverChosenMsg:
-		return m.selectServer(msg.server)
-
-	case tagChosenMsg:
-		return m.selectTag(msg.tag)
+	case filterChosenMsg:
+		return m.applyFilter(msg.server, msg.folder, msg.tag)
 
 	case sourceChosenMsg:
 		if msg.enter {
@@ -1505,12 +1492,8 @@ func (m *Model) updateKey(msg tea.KeyPressMsg) tea.Cmd {
 		return m.updatePane(msg)
 	case focusList:
 		return m.updateList(msg)
-	case focusServer:
-		return m.updateServer(msg)
-	case focusFolder:
-		return m.updateFolder(msg)
-	case focusTags:
-		return m.updateTags(msg)
+	case focusFilter:
+		return m.updateFilter(msg)
 	default:
 		return m.updatePrompt(msg)
 	}
@@ -1684,11 +1667,11 @@ func (m *Model) updateList(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		m.list.move(1)
 	case "up", "k":
-		// Off the top is the folder filter, which is drawn above the list; off
+		// Off the top is the filter, which is drawn above the list; off
 		// the bottom is the prompt, which is drawn below it. Neither edge is a
 		// dead stop, and both lead where the eye is already going.
 		if m.list.cursor == 0 && !m.list.visual {
-			m.focus = focusFolder
+			m.focus = focusFilter
 			return nil
 		}
 		m.list.move(-1)
@@ -1722,9 +1705,9 @@ func (m *Model) updateList(msg tea.KeyPressMsg) tea.Cmd {
 			return status("visual select canceled")
 		}
 		// Tab goes round the window in the order Up climbs it: the prompt, the
-		// discoboxes, the folder they were cut from, the server they are on,
-		// and back to the prompt. Esc is the way straight out.
-		m.focus = focusFolder
+		// discoboxes, the filter over them, and back to the prompt. Esc is the
+		// way straight out.
+		m.focus = focusFilter
 		return nil
 	case "shift+tab":
 		m.optionsOpen = true
@@ -1797,7 +1780,7 @@ func (m *Model) setSubmitting(on bool) {
 }
 
 // leavePrompt moves focus up out of the composer: to the sandboxes, or to the
-// folder filter when there are none.
+// filter when there are none.
 //
 // An empty list is exactly when the filter is the thing you want — the folder
 // you are standing in has nothing in it, and the sandboxes are somewhere else —
@@ -1805,7 +1788,7 @@ func (m *Model) setSubmitting(on bool) {
 func (m *Model) leavePrompt(landing listLanding) {
 	m.prompt.Blur()
 	if len(m.list.rows()) == 0 {
-		m.focus = focusFolder
+		m.focus = focusFilter
 		return
 	}
 	m.focus = focusList
@@ -1838,7 +1821,7 @@ const (
 // followSource points the list at the folder the chosen source files its
 // discoboxes under, so what is listed is what the next Enter will join. The
 // header and the Source row are one control in both directions: the header
-// moves the source (selectFolder), and the source moves the header here.
+// moves the source (applyFilter), and the source moves the header here.
 func (m *Model) followSource() tea.Cmd {
 	if f, ok := m.opts.followSource(); ok && f.key != m.list.folder.key {
 		m.list.folder = f
@@ -1879,10 +1862,9 @@ func (m *Model) updateOptions(msg tea.KeyPressMsg) tea.Cmd {
 		}
 	case "enter":
 		if m.opts.cursor == optSource {
-			// The whole list, the way the header's folder filter opens its
-			// own: left and right are for the two or three you switch between,
-			// and everything else — including a path the listing has never
-			// seen — is behind Enter.
+			// The whole list: left and right are for the two or three you
+			// switch between, and everything else — including a path the
+			// listing has never seen — is behind Enter.
 			m.dialog = m.opts.sourceDialog(false)
 			return nil
 		}
@@ -3156,41 +3138,27 @@ func (m *Model) viewHeader(width int) string {
 }
 
 // viewHeaderLeft is where you are: the project when it is not the usual one,
-// the server the window is listing, and the folder inside it — widest scope
-// first, which is the order the eye reads them in. Focus climbs them the other
-// way round, folder then server (see focusFolder), because Up off the list
-// reaches the one you change most before the one you change least.
+// and what the list is narrowed to — the server, the folder and the tag, widest
+// scope first, which is the order the eye reads them in.
+//
+// Over every screen that shares this header. The harnesses and secrets screens
+// are one server's, and this is where they say which (ADR 0131 §2): the server
+// the list is narrowed to, or the primary while it shows every server.
 func (m *Model) viewHeaderLeft() string {
 	out := m.viewHeaderBrand()
-	// Each filter is a dropdown, and a dropdown opens when it is clicked. Each
-	// is measured before it is shaded because styling costs no cells: the width
-	// the mark takes is the width either way, so the mark and the shading come
-	// off one walk rather than two passes over the same arithmetic.
-	mark := func(kind hitKind, draw func(hovered bool) string) {
-		field := draw(false)
-		x, width := lipgloss.Width(out), lipgloss.Width(field)
-		m.zones.mark(hit{kind: kind}, x, 0, width, 1)
-		if m.zones.hovering(x, 0, width, 1) {
-			field = draw(true)
-		}
-		out += field
+	// The filter opens when it is clicked. It is measured before it is shaded
+	// because styling costs no cells: the width the mark takes is the width
+	// either way, so the mark and the shading come off one walk.
+	field := m.viewFilter(false)
+	if field == "" {
+		return out
 	}
-	// Over every screen that shares this header. The harnesses and secrets
-	// screens are one server's, and this is where they say which (ADR 0131
-	// §2): the server the list is narrowed to, or the primary while it shows
-	// every server.
-	if m.manyServers() {
-		mark(hitServer, m.viewServer)
-		out += m.st.headerLabel.Render("  ")
+	x, width := lipgloss.Width(out), lipgloss.Width(field)
+	m.zones.mark(hit{kind: hitFilter}, x, 0, width, 1)
+	if m.zones.hovering(x, 0, width, 1) {
+		field = m.viewFilter(true)
 	}
-	mark(hitFolder, m.viewFolder)
-	// The narrowest of the three, so last, and only once there is a tag to
-	// narrow to.
-	if m.showsTagFilter() {
-		out += m.st.headerLabel.Render("  ")
-		mark(hitTags, m.viewTags)
-	}
-	return out
+	return out + field
 }
 
 // viewHeaderBrand is the program's own name, and the project it is pointed at
@@ -3281,36 +3249,6 @@ func (m *Model) windowTitle() string {
 		return title
 	}
 	return displayName(p.sandbox)
-}
-
-// viewServer draws the server filter, the way viewFolder draws the folder
-// beside it: the name with a caret after it, and the arrows in place of the
-// caret while the keyboard is on it.
-func (m *Model) viewServer(hovered bool) string {
-	return m.viewHeaderFilter(m.serverLabel(), m.focus == focusServer, hovered)
-}
-
-// viewFolder draws the folder filter: a path with a caret after it, which is
-// what says it can be opened. Focused it wears the arrows that say left and
-// right change it, the same way the run options panel marks its own rows.
-func (m *Model) viewFolder(hovered bool) string {
-	return m.viewHeaderFilter(m.folderLabel(), m.focus == focusFolder, hovered)
-}
-
-// viewHeaderFilter is how both of the header's filters are drawn, since they
-// are the same control twice over and a second copy of the arithmetic is a
-// second thing to keep in line.
-func (m *Model) viewHeaderFilter(label string, focused, hovered bool) string {
-	if focused {
-		// The keyboard is already on it and it wears its own marks; the
-		// pointer resting there has nothing left to say.
-		return m.st.key.Render("‹ ") + m.st.cursorName.Render(label) + m.st.key.Render(" ›")
-	}
-	style := m.st.headerLabel
-	if hovered {
-		style = m.st.hover
-	}
-	return style.Render(label + " ▾")
 }
 
 // viewPrompt draws the composer the way Claude Code draws its own: a rule
@@ -3588,42 +3526,12 @@ func (m *Model) hints() []hint {
 	switch m.focus {
 	case focusPane:
 		return m.paneHints()
-	case focusServer:
+	case focusFilter:
 		return []hint{
-			says("←→ change server"),
-			pressing("Enter lists them all", "enter"),
-			pressing("↓ folder", "down"),
+			pressing("Enter changes the filter", "enter"),
+			pressing("↓ boxes", "down"),
 			pressing("Tab or Esc prompt", "esc"),
 		}
-	case focusTags:
-		hints := []hint{
-			says("←→ change tag"),
-			pressing("Enter lists them all", "enter"),
-			pressing("↓ boxes", "down"),
-		}
-		if m.manyServers() {
-			return append(hints, pressing("↑ or Tab server", "up"), pressing("Esc prompt", "esc"))
-		}
-		return append(hints, pressing("Tab or Esc prompt", "esc"))
-	case focusFolder:
-		hints := []hint{
-			says("←→ change folder"),
-			pressing("Enter lists them all", "enter"),
-			pressing("↓ boxes", "down"),
-		}
-		if m.showsTagFilter() {
-			hints = append(hints, pressing("Tab tags", "tab"))
-			if m.manyServers() {
-				return append(hints, pressing("↑ server", "up"), pressing("Esc prompt", "esc"))
-			}
-			return append(hints, pressing("Esc prompt", "esc"))
-		}
-		// The server is the rung above, when there is one; Tab goes there too
-		// on its way round, so the prompt is Esc's alone.
-		if m.manyServers() {
-			return append(hints, pressing("↑ or Tab server", "up"), pressing("Esc prompt", "esc"))
-		}
-		return append(hints, pressing("Tab or Esc prompt", "esc"))
 	case focusList:
 		if m.list.visual {
 			lo, hi := m.list.visualRange()
@@ -3654,7 +3562,7 @@ func (m *Model) hints() []hint {
 		} else if m.list.archivedCount() > 0 {
 			out = append(out, keyed("A", "A", "show archived"))
 		}
-		return append(out, pressing("↑ or Tab folder", "tab"), pressing("Esc prompt", "esc"))
+		return append(out, pressing("↑ or Tab filter", "tab"), pressing("Esc prompt", "esc"))
 	default:
 		// ↑ is only a way out of an empty prompt; with text in it, it walks
 		// the text and Tab is the way to the list.
@@ -3823,8 +3731,8 @@ func (m *Model) helpText() string {
 	leader := m.leader()
 	return strings.Join([]string{
 		"The window opens in the prompt. Tab cycles through the prompt, the",
-		"discobox list, and the filters above it — the folder, then the server",
-		"when there is more than one — and ↑ climbs them in the same order.",
+		"discobox list, and the filter above it, and ↑ climbs them in the same",
+		"order.",
 		"",
 		"  This help scrolls. / searches it, Enter keeps the matches, n and N",
 		"  walk them, c copies the whole of it to the clipboard, and Esc",
@@ -3893,7 +3801,7 @@ func (m *Model) helpText() string {
 		"    V              draw a range: ↑ ↓ extend it, Space selects the",
 		"                   whole of it, V or Esc cancels",
 		"    c              clear the selection",
-		"    Tab            to the folder filter",
+		"    Tab            to the filter",
 		"    Esc            back to the prompt, and so does ↓ past the end",
 		"",
 		"    Enter  attach          s  shell",
@@ -3951,13 +3859,26 @@ func (m *Model) helpText() string {
 		"  from, not counting pulled upstream work.",
 		"",
 		"───────────────────────────────────────────────────────────────",
-		"The folder filter",
+		"The filter",
 		"",
-		"  The header names the folder whose discoboxes are listed: the",
-		"  directory or repository URL they were cut from. The window's own",
-		"  folder lists this machine's discoboxes with no source too. On",
-		"  `all folders` the list is in a section per folder — per folder",
-		"  and server, as `folder on server`, while it shows every server.",
+		"  The header says what the list is narrowed to: the server, when",
+		"  there is more than one, the folder — the directory or repository",
+		"  URL the discoboxes were cut from — and the tag, once anything is",
+		"  tagged. It names only what is narrowed; `all discoboxes` is",
+		"  everything. The window's own folder lists this machine's",
+		"  discoboxes with no source too. Whatever is left open, the list is",
+		"  in a section per value: per folder, per server, or per",
+		"  `folder on server`.",
+		"",
+		"  The server and folder on screen are where the prompt creates: a",
+		"  run goes where you are looking, and `all servers` creates on the",
+		"  primary — the server `--server`, DISCOBOX_SERVER or the local",
+		"  default points at. The run options' Server and Source rows are the",
+		"  same choices from the other side: changing them moves the list",
+		"  too. The harnesses and secrets screens are that server's, or the",
+		"  primary's while every server is showing; ← → there moves it. A",
+		"  credential request is marked wherever its discobox is, and",
+		"  answered on its server.",
 		"",
 		"  A directory you have never narrowed opens on every server, folder",
 		"  and tag — or on the server --server named and the folder -C named,",
@@ -3965,45 +3886,12 @@ func (m *Model) helpText() string {
 		"  opened in that directory opens where you left them.",
 		"",
 		"    ↑              reach it, from the top of the discobox list",
-		"    ← →            change it without opening anything",
-		"    Enter          open the list of folders, with what is in each",
+		"    Enter          open it: every server, folder and tag, with how",
+		"                   many discoboxes each would list",
 		"    ↓              back down into the discoboxes",
 		"",
-		"───────────────────────────────────────────────────────────────",
-		"The tag filter",
-		"",
-		"  Once any discobox carries a tag, the header offers one after the",
-		"  folder: `all tags`, or one tag, which lists only the discoboxes",
-		"  carrying it. A tag reads as the row draws it, #wip or",
-		"  #ticket=ENG-12. Tags are written in the discobox, in",
-		"  ~/.discobox/meta.json, or with the API.",
-		"",
-		"    Tab            reach it, from the folder filter",
-		"    ← →            change it without opening anything",
-		"    Enter          open the list of tags, with how many carry each",
-		"    ↓              back down into the discoboxes",
-		"",
-		"───────────────────────────────────────────────────────────────",
-		"The server filter",
-		"",
-		"  With more than one server registered, the header names the one",
-		"  whose discoboxes are listed, in front of the folder. It is the",
-		"  same control twice over: the server on screen is the server the",
-		"  prompt creates on, so a run goes where you are looking. It starts",
-		"  on `all servers`, which is every one of them at once in a section",
-		"  each, and creates on the primary — the server `--server`,",
-		"  DISCOBOX_SERVER or the local default points at.",
-		"",
-		"    ↑ or Tab       reach it, from the folder filter",
-		"    ← →            change it without opening anything",
-		"    Enter          open the list of servers, with what is on each",
-		"    ↓              back down to the folder filter",
-		"",
-		"  The run options' Server row is the same choice from the other",
-		"  side: changing it moves the list too. The harnesses and secrets",
-		"  screens are that server's too, or the primary's while every",
-		"  server is showing; ← → there moves it. A credential request is",
-		"  marked wherever its discobox is, and answered on its server.",
+		"  On the card, ↑ ↓ move, Space marks a choice in its group, and",
+		"  Enter picks the one under the cursor and shows everything marked.",
 		"",
 		"───────────────────────────────────────────────────────────────",
 		"The workspace screen",
