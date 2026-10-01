@@ -1,6 +1,6 @@
 # 26-09-30-782 — A discobox answers its own discoboxes' requests, within what it may delegate
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-09-30
 - **Supersedes in part**: [0140](0140-a-discobox-reaches-the-discobox-api-through-its-pool-with-a-fixed-role.md)
   §4's grants pre-assigned or approved by a sandbox "with any project secret",
@@ -56,14 +56,18 @@ by grant, and a create with a grant outside those bounds creates nothing.
 The server scopes the sandbox role's secret-request routes — list, get,
 approve, deny — to requests whose discobox the caller created
 (`createdBySandboxId`), as it already scopes source delivery (26-09-24-630 §2).
-Other requests are not visible to it. A person answers every request, as
-today, and a request for `ai.discobox.sandbox` is still only a person's to
-approve.
+The discobox that created the requester is the request's owner; other requests
+are not visible to it, and a request no discobox filed, or whose discobox is
+gone, is no discobox's to answer. A person answers every request, as today, and
+a request for `ai.discobox.sandbox` is still only a person's to approve.
 
 ### 3. Approving is bounded by the approver's delegation grants
 
-The server mints the grant only within a live delegation grant
-(`purpose: delegate`) the approving discobox holds:
+A discobox never approves a request to delegate (`purpose: delegate`): handing
+on the power to hand on stays a person's. Any other request it may approve,
+and the server mints the grant only when at least one live delegation grant
+(`purpose: delegate`) the approving discobox holds bounds it — one is enough,
+and which one is recorded:
 
 - **the same credential** — the delegation grant's secret, or the well-known
   credential it names; the approver does not choose among project secrets, so
@@ -71,11 +75,18 @@ The server mints the grant only within a live delegation grant
 - **a host within** the delegation grant's host;
 - **an expiry no later** than the delegation grant's; with no lifetime given,
   the lifetime the request asked for, capped there;
-- **uses within** the delegation grant's uses. Whether one sentence is within
-  another is a reading, not a comparison, so the server asks the project's
-  judge (838 §1–2) as a delegation job: the delegation grant's uses and the
-  uses being approved, both authorization, no request evidence. Anything but
-  an explicit yes refuses the approval.
+- **uses within** the delegation grant's uses. The uses being approved are the
+  ones the approver narrowed them to, when it did (`--use`), and otherwise the
+  ones the request asked for; they are what is checked and what is minted.
+  Whether one sentence is within another is a reading, not a comparison, so
+  the server asks the project's judge (838 §1–2) as a delegation job: the
+  delegation grant's uses and the uses being approved, both authorization, no
+  request evidence. Anything but an explicit yes refuses the approval — and so
+  does a project with no judge to ask, or a judge that cannot be reached: the
+  request waits for a person.
+
+The verdict is recorded with the delegation grant it was asked about, so every
+grant a discobox mints can be traced to the delegation that allowed it.
 
 A grant made this way stays independent once made (0140's rejection of
 cascading lifetimes stands); its expiry already ends no later than the
