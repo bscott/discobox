@@ -10,7 +10,7 @@
 // decode refuses, and asking to be shown a body that cannot show anything more
 // refuses too.
 //
-//	discobox-judge-eval [-wrapper CMD] [-runs N] [-parallel N] [-case GLOB] [-json FILE] CASES_DIR
+//	discobox-judge-eval [-wrapper CMD] [-runs N] [-parallel N] [-case GLOB] [-json FILE] [-logs DIR] CASES_DIR
 //
 // The wrapper is any harness's discobox-prompt — harness/claude-code/prompt.sh,
 // harness/codex-cli/prompt.sh — run with this environment, so its CLI and its
@@ -97,6 +97,7 @@ func main() {
 	only := flag.String("case", "*", "only cases whose name matches this glob")
 	report := flag.String("json", "", "write every run as JSON to this file")
 	timeout := flag.Duration("timeout", judge.Timeout, "how long one ask may take")
+	logs := flag.String("logs", "", "keep what the wrapper writes on stderr, one file per run, in this directory")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "usage: %s [flags] CASES_DIR\n", filepath.Base(os.Args[0]))
 		flag.PrintDefaults()
@@ -117,7 +118,13 @@ func main() {
 		os.Exit(2)
 	}
 
-	results := ask(context.Background(), command, cases, *runs, *parallel, *timeout)
+	if *logs != "" {
+		if err := os.MkdirAll(*logs, 0o700); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+	}
+	results := ask(context.Background(), command, cases, *runs, *parallel, *timeout, *logs)
 	failed := summarize(os.Stdout, cases, results)
 	if *report != "" {
 		data, err := json.MarshalIndent(results, "", "  ")
@@ -183,8 +190,11 @@ func loadCases(dir, glob string) ([]Case, error) {
 }
 
 // ask runs every case runs times, parallel at once, and returns each answer.
-func ask(ctx context.Context, command []string, cases []Case, runs, parallel int, timeout time.Duration) []Run {
-	type work struct{ c Case }
+func ask(ctx context.Context, command []string, cases []Case, runs, parallel int, timeout time.Duration, logs string) []Run {
+	type work struct {
+		c Case
+		n int
+	}
 	jobs := make(chan work)
 	var mu sync.Mutex
 	var results []Run
@@ -194,7 +204,11 @@ func ask(ctx context.Context, command []string, cases []Case, runs, parallel int
 		go func() {
 			defer wg.Done()
 			for w := range jobs {
-				run := askOnce(ctx, command, w.c, timeout)
+				log := ""
+				if logs != "" {
+					log = filepath.Join(logs, fmt.Sprintf("%s.%d.log", w.c.Name, w.n))
+				}
+				run := askOnce(ctx, command, w.c, timeout, log)
 				mu.Lock()
 				results = append(results, run)
 				mu.Unlock()
@@ -202,8 +216,8 @@ func ask(ctx context.Context, command []string, cases []Case, runs, parallel int
 		}()
 	}
 	for _, c := range cases {
-		for range runs {
-			jobs <- work{c}
+		for n := range runs {
+			jobs <- work{c, n + 1}
 		}
 	}
 	close(jobs)
@@ -212,7 +226,7 @@ func ask(ctx context.Context, command []string, cases []Case, runs, parallel int
 }
 
 // askOnce invokes the wrapper as the judge runtime does and scores its answer.
-func askOnce(ctx context.Context, command []string, c Case, timeout time.Duration) Run {
+func askOnce(ctx context.Context, command []string, c Case, timeout time.Duration, log string) Run {
 	run := Run{Case: c.Name}
 	prompt, err := judge.Prompt(c.Job)
 	if err != nil {
@@ -234,6 +248,11 @@ func askOnce(ctx context.Context, command []string, c Case, timeout time.Duratio
 	out, err := cmd.Output()
 	run.Elapsed = time.Since(start)
 	run.Answer = strings.TrimSpace(string(out))
+	if log != "" {
+		if werr := os.WriteFile(log, []byte(stderr.String()), 0o600); werr != nil {
+			fmt.Fprintln(os.Stderr, werr)
+		}
+	}
 	if err != nil {
 		run.Outcome = OutcomeInvalid
 		run.Error = err.Error()
