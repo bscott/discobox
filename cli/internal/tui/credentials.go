@@ -280,13 +280,15 @@ func (m *Model) askAboutGate(req CredentialRequest, secrets []Secret, known well
 	})
 	// What approving hands over is the whole point of asking, and the request
 	// card cannot say it: an ordinary grant is one credential, and this one is
-	// the power to give every credential onward (ADR 0140, Consequences).
+	// the power to hand credentials onward (ADR 0140, Consequences) — on a
+	// create, and by answering its own discoboxes' requests within what it is
+	// separately delegated (ADR 26-09-30-782).
 	d.sections = append(credentialAsk(req, m.secrets.now()), section{
 		label: "what approving gives it",
 		lines: []line{
 			{text: known.Description, tone: toneDim},
 			{text: "it may give any secret in this project to the discoboxes it creates", tone: toneAlert},
-			{text: "and answer any credential request here, for as long as the grant lives", tone: toneAlert},
+			{text: "and answer its discoboxes' credential requests, within what you separately delegate to it", tone: toneAlert},
 		},
 	})
 	d.answerLabel = "let it in?"
@@ -303,11 +305,9 @@ const lifetimeCustom = "custom"
 // askLifetime is the second step of every approval: how long the grant lives.
 //
 // It is a step of its own, and a required one, because it is the half of an
-// approval nobody thinks to look for. Leaving the lifetime out of the call
-// asks the server for the credential's own ceiling — a ceiling most
-// credentials do not have — so a window that did would hand out permanent
-// credentials without ever saying the word. A card that has to be answered is
-// one that gets read. It opens on the lifetime the agent asked for, or on
+// approval nobody thinks to look for: a window that left it out would hand
+// out whatever the server defaults to without anyone having read it. A card
+// that has to be answered is one that gets read. It opens on the lifetime the agent asked for, or on
 // agentcreds.DefaultGrantTTL, an hour, when it asked for nothing in particular.
 //
 // back is the dialog before this one, which Esc returns to: the request card,

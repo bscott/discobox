@@ -253,7 +253,10 @@ func (s *ApprovalRequestKind) UnmarshalText(data []byte) error {
 type ApproveSecretRequestBody struct {
 	// A URL to the JSON Schema for this object.
 	Schema OptURI `json:"$schema"`
-	// Grant duration in seconds; overrides the secret's default.
+	// Grant duration in seconds; 0 grants one that never expires. Omitted, the grant lasts what the
+	// request asked for, else an hour, within the secret's limit; for a discobox approver, also within
+	// the delegation grant it approves under, and a named duration that outlasts that delegation is
+	// refused.
 	GrantTTLSeconds OptInt64 `json:"grantTTLSeconds"`
 	// Host the minted grant is limited to. Defaults to the host the request named. Approving a
 	// protocol-originated request with no host at all is rejected; a wildcard grant stays an explicit
@@ -266,9 +269,11 @@ type ApproveSecretRequestBody struct {
 	// Applied only if the approval goes through, in the same write, so a refused approval leaves the
 	// secret as it was. Refused for a gate.
 	SecretHost OptString `json:"secretHost"`
-	// Secret ID selected by the approver. Required unless the request names a well-known credential
-	// whose secret is already marked; naming one for it the first time marks it as the one that answers
-	// every later request for that ID.
+	// Secret ID selected by the approver. A person must name one unless the request names a well-known
+	// credential whose secret is already marked; naming one for it the first time marks it as the one
+	// that answers every later request for that ID. A discobox approver answers with the secret of a
+	// delegation grant it holds, and names one, by its full ID, only to choose among the secrets it was
+	// delegated.
 	SecretId OptString `json:"secretId"`
 	// Sets the answering secret's grant limit, in seconds, as part of the approval; 0 allows grants that
 	// never expire. Applied only if the approval goes through, in the same write.

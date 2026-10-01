@@ -240,8 +240,8 @@ discobox-access request --json <<'EOF'
     {"description": "discobox new -d --include-dirty=false -p <any prompt>, run in <this directory>: create a discobox with any prompt and no grants or secrets, including the polling, source push and complete-source-push that discobox new makes for the discobox it just created"},
     {"description": "discobox admin box ls and discobox admin box get <discobox-id>, to watch the discoboxes I created"},
     {"description": "discobox secret request ls, to see what the discoboxes I created are asking for"},
-    {"description": "discobox secret request approve <request-id> --grant-ttl <duration>, for a request from a discobox I created"},
-    {"description": "discobox secret request deny <request-id>, for a request from a discobox I created"}
+    {"description": "discobox secret request approve <request-id> [--secret-id <secret-id>] [--use <use>]: approve a pending credential request (the server lets me answer only my own discoboxes' requests, within the delegation grants I hold)"},
+    {"description": "discobox secret request deny <request-id>: deny a pending credential request"}
   ],
   "grantTTLSeconds": 28800,
   "wait": true
@@ -252,8 +252,14 @@ EOF
 Then, for each credential your workers will need, ask to delegate it
 (`"purpose": "delegate"`, in §2), with uses saying what you will hand it on
 for — "read-only GitHub access to issues in org/repo, for the discoboxes I
-create" — so a person sees what you mean to hand on before you hand on any of
-it.
+create" — and a lifetime as long as the orchestration. Without one you approve
+nothing: the server hands on only what a delegation grant you hold covers —
+that credential, to its host, for no longer than it lasts — so a person sees
+what you mean to hand on before you hand on any of it.
+
+Word the approve and deny uses as above: what the call does, with no condition
+on whose request it is. Only the server can tell whose a request is, and it
+enforces that; a condition in the use is one the judge cannot check.
 
 Word the create use as broadly as above: **any prompt**. A use that quotes the
 prompt, or names which work it is for, is read against the prompt of every
@@ -283,19 +289,26 @@ discobox-access run --use <id> -- discobox new -d --include-dirty=false \
 
 ```bash
 discobox-access run --use <id> -- discobox secret request ls -o json
-discobox-access run --use <id> -- discobox secret request approve <request-id> --grant-ttl 2h
+discobox-access run --use <id> -- discobox secret request approve <request-id>
 discobox-access run --use <id> -- discobox secret request deny <request-id>
 ```
 
-- **Answer only requests from discoboxes you created**: each request's
-  `sandboxId` is one of yours. Leave everyone else's for a person.
-- Read its `uses` and `justification`. Approve what the worker's task needs
-  and what you were approved to delegate; deny the rest, and do not widen it.
-- Approve with the **full request ID**, and `--grant-ttl` set to what the
-  request asked for (`grantTTLSeconds`). For a well-known credential, leave
-  out `--secret-id`: the credential names its secret. `approve` is then one
-  call to the API. Given a short ID, a secret's name, or no lifetime, it first
-  reads other things, and each read is judged on its own against your use.
+- **You see and answer only your own discoboxes' requests.** The listing holds
+  nothing else, and the server refuses any other.
+- Read each request's `uses` and `justification`. Approve what the worker's
+  task needs and what you were delegated; deny the rest. `--use` narrows the
+  uses to fewer or tighter ones; never widen them.
+- **Approve with the full request ID and nothing else.** The server answers
+  with the secret of the delegation grant you hold, for what the worker asked,
+  fitted within your delegation's remaining time — `approve` is then one call.
+  Do not pass `--grant-ttl`: a lifetime you name that outlasts your
+  delegation is refused rather than fitted. Pass `--secret-id`, by the full ID
+  the refusal lists, only when the server says you were delegated more than
+  one secret that fits; a name, or a short ID, would list the project's
+  secrets, which you may not.
+- A request to delegate, one that names no uses, and anything your delegation
+  grants do not cover are refused: those wait for a person. So does every
+  request when you hold no delegation grant.
 
 You cannot give a discobox `ai.discobox.sandbox`: a person grants that, when
 the new discobox asks for it itself. What you approve is recorded as given by

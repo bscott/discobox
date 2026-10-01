@@ -234,3 +234,32 @@ func TestADiscoboxNeverApprovesADelegationOrAnUnnamedUse(t *testing.T) {
 	_, err = approveAsLead(svc, reactive, services.ApproveSecretRequestBody{SecretId: serverapi.NewOptString(secret.ID)})
 	requireStatus(t, err, http.StatusForbidden)
 }
+
+// An approval is made under the delegation that lets the grant last longest,
+// not the newest: a short-lived delegation granted last does not cut short a
+// grant an older one that never lapses allows. Named or not, the lifetime is
+// held to that one delegation.
+func TestADiscoboxApprovesUnderItsLongestLivedDelegation(t *testing.T) {
+	ctx := testPrincipalContext()
+	svc, st := newAgentCredentialService(t)
+	secret := createBoundSecret(ctx, t, svc, "github", "", 86400)
+	delegate(t, st, secret, "github.com", 0)
+	time.Sleep(10 * time.Millisecond) // granted after it, so newest first
+	delegate(t, st, secret, "github.com", 5*time.Minute)
+
+	asked := workerRequest(t, svc, func(b *services.CreateSandboxCredentialRequestBody) {
+		b.GrantTTLSeconds = serverapi.NewOptInt64(7200)
+	})
+	approved, err := approveAsLead(svc, asked, services.ApproveSecretRequestBody{})
+	if err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	grant, _ := st.GetSecretGrant(ctx, "project-1", approved.GrantID)
+	if grant == nil || grant.ExpiresAt == nil || time.Until(*grant.ExpiresAt) < 2*time.Hour-time.Minute {
+		t.Fatalf("grant = %+v, want the two hours the lasting delegation allows", grant)
+	}
+
+	if _, err := approveAsLead(svc, workerRequest(t, svc, nil), services.ApproveSecretRequestBody{GrantTTLSeconds: serverapi.NewOptInt64(3600)}); err != nil {
+		t.Fatalf("approve an hour named: %v", err)
+	}
+}

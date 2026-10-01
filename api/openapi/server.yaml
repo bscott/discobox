@@ -4430,7 +4430,7 @@ components:
                     readOnly: true
                     type: string
                 grantTTLSeconds:
-                    description: Grant duration in seconds; overrides the secret's default
+                    description: Grant duration in seconds; 0 grants one that never expires. Omitted, the grant lasts what the request asked for, else an hour, within the secret's limit; for a discobox approver, also within the delegation grant it approves under, and a named duration that outlasts that delegation is refused.
                     format: int64
                     type: integer
                 host:
@@ -4447,7 +4447,7 @@ components:
                     description: Rebinds the answering secret to this host as part of the approval; empty releases its binding. Applied only if the approval goes through, in the same write, so a refused approval leaves the secret as it was. Refused for a gate.
                     type: string
                 secretId:
-                    description: Secret ID selected by the approver. Required unless the request names a well-known credential whose secret is already marked; naming one for it the first time marks it as the one that answers every later request for that ID.
+                    description: Secret ID selected by the approver. A person must name one unless the request names a well-known credential whose secret is already marked; naming one for it the first time marks it as the one that answers every later request for that ID. A discobox approver answers with the secret of a delegation grant it holds, and names one, by its full ID, only to choose among the secrets it was delegated.
                     type: string
                 secretMaxGrantTTLSeconds:
                     description: Sets the answering secret's grant limit, in seconds, as part of the approval; 0 allows grants that never expire. Applied only if the approval goes through, in the same write.

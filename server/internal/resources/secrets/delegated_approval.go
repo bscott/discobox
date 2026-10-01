@@ -18,7 +18,10 @@ import (
 // what it was delegated (ADR 26-09-30-782 §3). These are the facts of that
 // bound — which credential, where it may go, for how long — held against the
 // live delegation grants the approver holds. At least one must hold all of
-// them; one is enough.
+// them, and the approval is made under that one: it is chosen once, checked
+// again by its ID in the approval's transaction, and is the grant every later
+// question about the approval — whether its uses fall within the delegation's,
+// what the verdict records — is asked of.
 
 // refuseDelegatedApproval says why a discobox may not approve this request at
 // all, whatever it was delegated, or nothing when it may try.
@@ -37,28 +40,34 @@ func refuseDelegatedApproval(req *model.SecretRequest) error {
 	return nil
 }
 
-// delegatedSecret is the secret a discobox answers a request with: the secret
-// of a live delegation grant it holds that fits the request — the well-known
-// credential it asked for, the secret the approver named, and a host that
-// covers the one asked for. The approver does not choose among the project's
-// secrets, only among what it was delegated; when that is more than one
-// secret, it names which.
-func (s *Service) delegatedSecret(ctx context.Context, projectID, approverID string, req *model.SecretRequest, chosenID, host string) (*model.Secret, error) {
+// delegationFor chooses the delegation grant a discobox approves a request
+// under, and the secret it answers with: the secret of a live delegation it
+// holds that fits the request — the well-known credential it asked for, the
+// secret the approver named, and a host that covers the one asked for. The
+// approver does not choose among the project's secrets, only among what it was
+// delegated; when that is more than one secret, it names which.
+//
+// Of that secret's delegations it takes the one that lets the grant last
+// longest: the lifetime the approver named must fit within it, and one it did
+// not name is fitted to it later (delegatedTTL). ttl is the lifetime named, and
+// is read only when named.
+func (s *Service) delegationFor(ctx context.Context, projectID, approverID string, req *model.SecretRequest, chosenID, host string, ttl int64, named bool) (*model.SecretGrant, *model.Secret, error) {
 	delegations, err := s.store.ListLiveDelegationGrants(ctx, projectID, approverID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(delegations) == 0 {
-		return nil, apperrors.NewStatusError(http.StatusForbidden,
+		return nil, nil, apperrors.NewStatusError(http.StatusForbidden,
 			"this discobox holds no delegation grant, so it hands nothing on; ask a person for one with `discobox-access request --delegate`, or leave the request for a person")
 	}
 	var chosen *model.Secret
 	if chosenID != "" {
 		if chosen, err = s.store.GetSecret(ctx, projectID, chosenID); err != nil {
-			return nil, apperrors.NotFound(err, "secret not found")
+			return nil, nil, apperrors.NotFound(err, "secret not found")
 		}
 	}
 	fits := map[string]*model.Secret{}
+	bySecret := map[string][]*model.SecretGrant{}
 	for i := range delegations {
 		delegation := &delegations[i]
 		if !hostscope.Covers(delegation.Host, host) {
@@ -67,14 +76,17 @@ func (s *Service) delegatedSecret(ctx context.Context, projectID, approverID str
 		if chosen != nil && delegation.SecretID != chosen.ID {
 			continue
 		}
-		secret, err := s.store.GetSecret(ctx, projectID, delegation.SecretID)
-		if err != nil {
-			continue
+		secret, ok := fits[delegation.SecretID]
+		if !ok {
+			if secret, err = s.store.GetSecret(ctx, projectID, delegation.SecretID); err != nil {
+				continue
+			}
 		}
 		if req.WellKnownID != "" && secret.WellKnownID != req.WellKnownID {
 			continue
 		}
 		fits[secret.ID] = secret
+		bySecret[secret.ID] = append(bySecret[secret.ID], delegation)
 	}
 	switch len(fits) {
 	case 0:
@@ -82,59 +94,88 @@ func (s *Service) delegatedSecret(ctx context.Context, projectID, approverID str
 		if req.WellKnownID != "" {
 			what = req.WellKnownID
 		}
-		return nil, apperrors.NewStatusError(http.StatusForbidden, fmt.Sprintf(
+		return nil, nil, apperrors.NewStatusError(http.StatusForbidden, fmt.Sprintf(
 			"no delegation grant this discobox holds hands on %s to %s; leave the request for a person", what, host))
 	case 1:
-		for _, secret := range fits {
-			return secret, nil
+	default:
+		// IDs, whole: from inside a discobox --secret-id takes nothing else,
+		// since resolving a name would list the project's secrets.
+		ids := make([]string, 0, len(fits))
+		for id := range fits {
+			ids = append(ids, id)
 		}
+		sort.Strings(ids)
+		return nil, nil, apperrors.NewStatusError(http.StatusBadRequest, fmt.Sprintf(
+			"this discobox was delegated more than one secret that fits; name which by its full ID with --secret-id: %s", strings.Join(ids, ", ")))
 	}
-	names := make([]string, 0, len(fits))
-	for _, secret := range fits {
-		names = append(names, secret.Name+" ("+secret.ID+")")
+	var secret *model.Secret
+	for _, only := range fits {
+		secret = only
 	}
-	sort.Strings(names)
-	return nil, apperrors.NewStatusError(http.StatusBadRequest, fmt.Sprintf(
-		"this discobox was delegated more than one secret that fits; name which with --secret-id: %s", strings.Join(names, ", ")))
+	delegation := longestLived(bySecret[secret.ID])
+	if named && !outlastedBy(delegation, ttl, time.Now().UTC()) {
+		return nil, nil, outlastsDelegation()
+	}
+	return delegation, secret, nil
 }
 
-// delegatedTTL is the lifetime of a grant a discobox mints under a delegation
-// grant it holds: one live grant of the same secret, covering the host, whose
-// expiry the grant does not outlast. A lifetime nobody named is fitted to the
-// delegation's remaining time; one the approver named must fit or is refused.
-// It reads within the approval's transaction, so a delegation revoked or lapsed
-// since the secret was chosen is not one this grant is made under.
-func delegatedTTL(ctx context.Context, txStore *store.Store, projectID, approverID, secretID, host string, ttl int64, named bool) (int64, error) {
-	delegations, err := txStore.ListLiveDelegationGrants(ctx, projectID, approverID)
+// delegatedTTL checks, in the approval's transaction, that the delegation the
+// approval was chosen under still bounds it — still the approver's, still
+// live, still of this secret and covering the host — and returns the grant's
+// lifetime within it: a lifetime nobody named is fitted to the delegation's
+// remaining time, and one the approver named must fit or is refused. A
+// delegation revoked or lapsed since it was chosen is not one this grant is
+// made under, whatever else the approver holds.
+func delegatedTTL(ctx context.Context, txStore *store.Store, projectID, approverID string, chosen *model.SecretGrant, secretID, host string, ttl int64, named bool) (int64, error) {
+	gone := apperrors.NewStatusError(http.StatusForbidden,
+		"the delegation grant this approval was made under is gone or no longer covers it; approve again, or leave the request for a person")
+	delegation, err := txStore.GetSecretGrant(ctx, projectID, chosen.ID)
 	if err != nil {
-		return 0, err
+		return 0, gone
 	}
 	now := time.Now().UTC()
-	outlives := false
-	for i := range delegations {
-		delegation := &delegations[i]
-		if delegation.SecretID != secretID || !hostscope.Covers(delegation.Host, host) {
-			continue
-		}
-		if delegation.ExpiresAt == nil {
-			return ttl, nil
-		}
-		remaining := int64(delegation.ExpiresAt.Sub(now) / time.Second)
-		if remaining <= 0 {
-			continue
-		}
-		if !named {
-			return min(ttl, remaining), nil
-		}
-		if ttl > 0 && ttl <= remaining {
-			return ttl, nil
-		}
-		outlives = true
+	if delegation.Purpose != model.SecretGrantPurposeDelegate || delegation.Scope != model.SecretGrantScopeSandbox ||
+		delegation.ScopeKey != approverID || delegation.SecretID != secretID || !hostscope.Covers(delegation.Host, host) ||
+		(delegation.ExpiresAt != nil && !delegation.ExpiresAt.After(now)) {
+		return 0, gone
 	}
-	if outlives {
-		return 0, apperrors.NewStatusError(http.StatusForbidden,
-			"a grant this discobox hands on may not outlast the delegation grant it is made under; grant it for less")
+	if delegation.ExpiresAt == nil {
+		return ttl, nil
 	}
-	return 0, apperrors.NewStatusError(http.StatusForbidden,
-		"the delegation grant this discobox held for this credential is gone or no longer covers it; leave the request for a person")
+	remaining := int64(delegation.ExpiresAt.Sub(now) / time.Second)
+	if !named {
+		return min(ttl, remaining), nil
+	}
+	if !outlastedBy(delegation, ttl, now) {
+		return 0, outlastsDelegation()
+	}
+	return ttl, nil
+}
+
+// longestLived is the delegation that lets a grant last longest: one that never
+// lapses, else the one that lapses last.
+func longestLived(delegations []*model.SecretGrant) *model.SecretGrant {
+	best := delegations[0]
+	for _, delegation := range delegations[1:] {
+		switch {
+		case best.ExpiresAt == nil:
+		case delegation.ExpiresAt == nil || delegation.ExpiresAt.After(*best.ExpiresAt):
+			best = delegation
+		}
+	}
+	return best
+}
+
+// outlastedBy reports whether a grant of ttl seconds — zero is forever — ends
+// no later than the delegation it is made under.
+func outlastedBy(delegation *model.SecretGrant, ttl int64, now time.Time) bool {
+	if delegation.ExpiresAt == nil {
+		return true
+	}
+	return ttl > 0 && !now.Add(time.Duration(ttl)*time.Second).After(*delegation.ExpiresAt)
+}
+
+func outlastsDelegation() error {
+	return apperrors.NewStatusError(http.StatusForbidden,
+		"a grant this discobox hands on may not outlast the delegation grant it is made under; leave the lifetime out to fit it, or grant it for less")
 }

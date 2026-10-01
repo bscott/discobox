@@ -359,11 +359,15 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 	host := normalizeHost(input.Host.Or(req.Host))
 	secretID := strings.TrimSpace(input.SecretId.Or(""))
 	var secret *model.Secret
+	// The delegation a discobox's approval is made under: chosen here, held to
+	// again in the transaction, and what the approval is traced to.
+	var delegation *model.SecretGrant
 	if approverIsSandbox {
 		if err := refuseDelegatedApproval(req); err != nil {
 			return nil, err
 		}
-		if secret, err = s.delegatedSecret(ctx, projectID, principal.SandboxID, req, secretID, host); err != nil {
+		named, namedTTL := input.GrantTTLSeconds.IsSet(), input.GrantTTLSeconds.Or(0)
+		if delegation, secret, err = s.delegationFor(ctx, projectID, principal.SandboxID, req, secretID, host, namedTTL, named); err != nil {
 			return nil, err
 		}
 	} else if req.WellKnownID != "" {
@@ -500,8 +504,14 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 		if !named {
 			ttl = defaultApprovalTTL(req, secret)
 		}
+		// A discobox's grant is always made under a delegation: it is refused
+		// rather than minted unbounded if none was chosen.
 		if approverIsSandbox {
-			if ttl, err = delegatedTTL(ctx, txStore, projectID, principal.SandboxID, secret.ID, host, ttl, named); err != nil {
+			if delegation == nil {
+				return apperrors.NewStatusError(http.StatusForbidden,
+					"a discobox hands on only what a delegation grant it holds covers, and this approval was made under none")
+			}
+			if ttl, err = delegatedTTL(ctx, txStore, projectID, principal.SandboxID, delegation, secret.ID, host, ttl, named); err != nil {
 				return err
 			}
 		}
@@ -541,6 +551,11 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 	// Failing to write it does not fail the approval, which has already
 	// happened: the grant is live and the agent holds its credential. The next
 	// approval asks which secret answers the ID and marks it then.
+	if delegation != nil {
+		slog.InfoContext(ctx, "a discobox approved a request under its delegation",
+			"projectId", projectID, "requestId", req.ID, "grantId", req.GrantID,
+			"approver", principal.SandboxID, "delegationGrantId", delegation.ID)
+	}
 	if req.WellKnownID != "" {
 		if err := s.store.MarkSecretWellKnown(ctx, projectID, secret.ID, req.WellKnownID); err != nil {
 			slog.WarnContext(ctx, "failed to mark the secret fulfilling a well-known credential",

@@ -214,11 +214,14 @@ and a discobox that needs both holds two grants.
   requests answers it with the secret of a live delegation grant it holds
   (`ListLiveDelegationGrants`), not by choosing among the project's: one that
   covers the host asked for, of the secret marked for a well-known credential,
-  and — when it was delegated more than one that fits — the one it names. In
-  the approval's transaction the delegations are read again, and at least one
-  of that secret must still cover the host and outlast the grant: a lifetime
-  nobody named is fitted to its remaining time, and one the approver named
-  must fit or is refused. A request that names no uses is a person's, since a
+  and — when it was delegated more than one that fits — the one it names, by
+  its full ID. Of that secret's delegations the approval is made under one,
+  the one that lets the grant last longest (`delegationFor`), and that one is
+  read again by its ID in the approval's transaction (`delegatedTTL`): still
+  live and covering the host, with a lifetime nobody named fitted to its
+  remaining time and one the approver named refused if it does not fit. It is
+  the delegation the approval is traced to, and the one any later question
+  about the approval is asked of. A request that names no uses is a person's, since a
   grant without uses authorizes everything sent to its host.
 
 ## The agent credentials broker
