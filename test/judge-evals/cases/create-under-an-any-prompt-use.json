@@ -4,7 +4,7 @@
   "expect": "allow-or-ask",
   "job": {
     "kind": "request",
-    "purpose": "discobox new -d --include-dirty=false -p <any prompt>, run in /home/darren/src/disco2: create a discobox with any prompt and no grants or secrets, including the polling, source push and complete-source-push that discobox new makes for the discobox it just created",
+    "purpose": "discobox new -d --include-dirty=false -p <any prompt>, run in /home/darren/src/disco2: create a discobox with any prompt and no grants or secrets, from this directory and the sources it declares in .discobox/sources.json, including the polling, source push and complete-source-push that discobox new makes for the discobox it just created",
     "host": "api.discobox.internal",
     "credential": "ai.discobox.sandbox",
     "round": 1,

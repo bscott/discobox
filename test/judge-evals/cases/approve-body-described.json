@@ -4,7 +4,7 @@
   "expect": "allow-or-ask",
   "job": {
     "kind": "request",
-    "purpose": "discobox secret request approve <request-id> --grant-ttl <duration>, for a request from a discobox I created",
+    "purpose": "discobox secret request approve <request-id> [--secret-id <secret-id>] [--use <use>]: approve a pending credential request (the server lets me answer only my own discoboxes' requests, within the delegation grants I hold)",
     "host": "api.discobox.internal",
     "credential": "ai.discobox.sandbox",
     "round": 1,

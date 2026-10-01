@@ -237,7 +237,7 @@ discobox-access request --json <<'EOF'
   "id": "ai.discobox.sandbox",
   "justification": "the task asks me to split the work across worker discoboxes; I create them with no credentials and answer what they ask for",
   "uses": [
-    {"description": "discobox new -d --include-dirty=false -p <any prompt>, run in <this directory>: create a discobox with any prompt and no grants or secrets, including the polling, source push and complete-source-push that discobox new makes for the discobox it just created"},
+    {"description": "discobox new -d --include-dirty=false -p <any prompt>, run in <this directory>: create a discobox with any prompt and no grants or secrets, from this directory and the sources it declares in .discobox/sources.json, including the polling, source push and complete-source-push that discobox new makes for the discobox it just created"},
     {"description": "discobox admin box ls and discobox admin box get <discobox-id>, to watch the discoboxes I created"},
     {"description": "discobox secret request ls, to see what the discoboxes I created are asking for"},
     {"description": "discobox secret ls, to see the secrets I was delegated"},
