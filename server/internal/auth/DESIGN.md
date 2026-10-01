@@ -85,7 +85,8 @@ Current authorizers:
 
 - `SandboxRoleAuthorizer` answers every request a sandbox principal makes, and
   only those: it allows the routes of the sandbox role (`sandboxRole`: discobox
-  create, list, and get; secret requests list, get, approve, and deny) in the sandbox's own project, resolving `default` to it, and refuses
+  create, list, and get; secret requests list, get, approve, and deny; secrets
+  list) in the sandbox's own project, resolving `default` to it, and refuses
   everything else — including the any-authenticated routes below, which is
   why it runs first. It is decided by the route; no grant or use text is
   read ([ADR 0140](../../../docs/adr/0140-a-discobox-reaches-the-discobox-api-through-its-pool-with-a-fixed-role.md)
@@ -97,8 +98,9 @@ Current authorizers:
   §2); and a secret request's get, approve, and deny only when a discobox the
   caller created filed it — the request's owner. A request filed by no
   discobox, or by one that is gone, has no owner and is a person's to answer.
-  The request listing cannot be decided by its route, so the secrets service
-  filters it to the caller's owned requests
+  The request and secret listings cannot be decided by their routes, so the
+  secrets service filters them: to the caller's owned requests, and to the
+  secrets of its live delegation grants
   ([ADR 26-09-30-782](../../../docs/adr/26-09-30-782-a-discobox-answers-its-own-discoboxes-requests-within-what-it-may-delegate.md)
   §2). `ActingUserID` is the user such a call acts as: the sandbox's
   creator.

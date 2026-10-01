@@ -98,15 +98,15 @@ func (s *Service) delegationFor(ctx context.Context, projectID, approverID strin
 			"no delegation grant this discobox holds hands on %s to %s; leave the request for a person", what, host))
 	case 1:
 	default:
-		// IDs, whole: from inside a discobox --secret-id takes nothing else,
-		// since resolving a name would list the project's secrets.
-		ids := make([]string, 0, len(fits))
-		for id := range fits {
-			ids = append(ids, id)
+		// By name or ID: a discobox's listing holds the secrets it was
+		// delegated, so either resolves.
+		names := make([]string, 0, len(fits))
+		for _, secret := range fits {
+			names = append(names, secret.Name+" ("+secret.ID+")")
 		}
-		sort.Strings(ids)
+		sort.Strings(names)
 		return nil, nil, apperrors.NewStatusError(http.StatusBadRequest, fmt.Sprintf(
-			"this discobox was delegated more than one secret that fits; name which by its full ID with --secret-id: %s", strings.Join(ids, ", ")))
+			"this discobox was delegated more than one secret that fits; name which with --secret-id: %s", strings.Join(names, ", ")))
 	}
 	var secret *model.Secret
 	for _, only := range fits {

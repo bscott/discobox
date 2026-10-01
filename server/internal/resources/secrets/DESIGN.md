@@ -212,10 +212,10 @@ and a discobox that needs both holds two grants.
   ([ADR 26-09-30-782](../../../../docs/adr/26-09-30-782-a-discobox-answers-its-own-discoboxes-requests-within-what-it-may-delegate.md)
   §3, `delegated_approval.go`). A discobox approving one of its discoboxes'
   requests answers it with the secret of a live delegation grant it holds
-  (`ListLiveDelegationGrants`), not by choosing among the project's: one that
+  (`ListLiveDelegationGrants`), not by choosing among the project's — its
+  `ListSecrets` holds only those (`store.DelegatedTo`): one that
   covers the host asked for, of the secret marked for a well-known credential,
-  and — when it was delegated more than one that fits — the one it names, by
-  its full ID. Of that secret's delegations the approval is made under one,
+  and — when it was delegated more than one that fits — the one it names. Of that secret's delegations the approval is made under one,
   the one that lets the grant last longest (`delegationFor`), and that one is
   read again by its ID in the approval's transaction (`delegatedTTL`): still
   live and covering the host, with a lifetime nobody named fitted to its

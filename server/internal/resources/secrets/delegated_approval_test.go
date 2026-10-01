@@ -263,3 +263,30 @@ func TestADiscoboxApprovesUnderItsLongestLivedDelegation(t *testing.T) {
 		t.Fatalf("approve an hour named: %v", err)
 	}
 }
+
+// A discobox listing secrets sees only those it holds a live delegation grant
+// of — what it may hand on, and so may name — and a person sees every one
+// (ADR 26-09-30-782 §3).
+func TestADiscoboxListsOnlyTheSecretsItWasDelegated(t *testing.T) {
+	ctx := testPrincipalContext()
+	svc, st := newAgentCredentialService(t)
+	delegated := createBoundSecret(ctx, t, svc, "github", "", 86400)
+	lapsed := createBoundSecret(ctx, t, svc, "gitlab", "", 86400)
+	createBoundSecret(ctx, t, svc, "npm", "", 86400)
+	delegate(t, st, delegated, "github.com", time.Hour)
+	grant := delegate(t, st, lapsed, "gitlab.com", time.Hour)
+	expired := time.Now().UTC().Add(-time.Minute)
+	grant.ExpiresAt = &expired
+	if err := st.UpdateSecretGrant(ctx, grant); err != nil {
+		t.Fatalf("lapse delegation: %v", err)
+	}
+
+	listed, err := svc.ListSecrets(asLead(), "project-1")
+	if err != nil || len(listed) != 1 || listed[0].ID != delegated.ID {
+		t.Fatalf("listed as the lead = %+v, %v; want only the secret it holds a live delegation of", listed, err)
+	}
+	all, err := svc.ListSecrets(ctx, "project-1")
+	if err != nil || len(all) != 3 {
+		t.Fatalf("listed as a person = %d, %v; want every secret", len(all), err)
+	}
+}

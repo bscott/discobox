@@ -50,7 +50,13 @@ func (s *Service) ListSecrets(ctx context.Context, projectID string) ([]model.Se
 	if _, err := s.store.GetProject(ctx, projectID); err != nil {
 		return nil, apperrors.NotFound(err, "project not found")
 	}
-	secrets, err := s.store.ListSecrets(ctx, projectID)
+	// A discobox sees only the secrets it was delegated: the ones it may hand
+	// on, and so the only ones it may name (ADR 26-09-30-782 §3).
+	var options []store.SecretListOption
+	if principal, ok := auth.PrincipalFromContext(ctx); ok && principal.Type == auth.PrincipalTypeSandbox {
+		options = append(options, store.DelegatedTo(principal.SandboxID))
+	}
+	secrets, err := s.store.ListSecrets(ctx, projectID, options...)
 	if err != nil {
 		return nil, err
 	}

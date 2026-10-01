@@ -51,12 +51,10 @@ func TestASandboxHoldsOnlyTheSandboxRole(t *testing.T) {
 		{http.MethodGet, project + "/sandboxes", http.StatusOK},
 		{http.MethodGet, "/projects/default/sandboxes", http.StatusOK},
 		{http.MethodGet, project + "/sandboxes/" + routeTestSandboxID, http.StatusOK},
+		{http.MethodGet, project + "/secrets", http.StatusOK},
 		{http.MethodGet, project + "/secret-requests", http.StatusOK},
 
 		{http.MethodDelete, project + "/sandboxes/" + routeTestSandboxID, http.StatusForbidden},
-		// A discobox answers with what it was delegated rather than choosing
-		// among the project's secrets (ADR 26-09-30-782 §3).
-		{http.MethodGet, project + "/secrets", http.StatusForbidden},
 		{http.MethodPost, project + "/secrets", http.StatusForbidden},
 		{http.MethodGet, project + "/secret-grants", http.StatusForbidden},
 		{http.MethodGet, project + "/pools", http.StatusForbidden},

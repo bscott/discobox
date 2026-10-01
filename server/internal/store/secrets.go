@@ -246,13 +246,40 @@ func (s *Store) SetSecretLimits(ctx context.Context, projectID, secretID string,
 	return nil
 }
 
-func (s *Store) ListSecrets(ctx context.Context, projectID string) ([]model.Secret, error) {
+// SecretListOption narrows what a listing of secrets answers with.
+type SecretListOption func(*secretListOptions)
+
+type secretListOptions struct {
+	delegatedTo string
+}
+
+// DelegatedTo lists only the secrets a discobox holds a live delegation grant
+// of: the ones it may hand on, and so the only ones it has reason to see or
+// name (ADR 26-09-30-782 §3).
+func DelegatedTo(sandboxID string) SecretListOption {
+	return func(options *secretListOptions) { options.delegatedTo = sandboxID }
+}
+
+func (s *Store) ListSecrets(ctx context.Context, projectID string, listOptions ...SecretListOption) ([]model.Secret, error) {
+	var options secretListOptions
+	for _, option := range listOptions {
+		if option != nil {
+			option(&options)
+		}
+	}
 	read, err := s.getRead(ctx)
 	if err != nil {
 		return nil, err
 	}
+	query := read.Where("project_id = ? AND anonymous = ?", projectID, false)
+	if options.delegatedTo != "" {
+		query = query.Where("id IN (?)", read.Model(&model.SecretGrant{}).Select("secret_id").
+			Where("project_id = ? AND purpose = ? AND scope = ? AND scope_key = ?",
+				projectID, model.SecretGrantPurposeDelegate, model.SecretGrantScopeSandbox, options.delegatedTo).
+			Where("expires_at IS NULL OR expires_at > ?", time.Now().UTC()))
+	}
 	var out []model.Secret
-	err = read.Where("project_id = ? AND anonymous = ?", projectID, false).Order("created_at ASC").Find(&out).Error
+	err = query.Order("created_at ASC").Find(&out).Error
 	return out, err
 }
 

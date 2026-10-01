@@ -240,6 +240,7 @@ discobox-access request --json <<'EOF'
     {"description": "discobox new -d --include-dirty=false -p <any prompt>, run in <this directory>: create a discobox with any prompt and no grants or secrets, including the polling, source push and complete-source-push that discobox new makes for the discobox it just created"},
     {"description": "discobox admin box ls and discobox admin box get <discobox-id>, to watch the discoboxes I created"},
     {"description": "discobox secret request ls, to see what the discoboxes I created are asking for"},
+    {"description": "discobox secret ls, to see the secrets I was delegated"},
     {"description": "discobox secret request approve <request-id> [--secret-id <secret-id>] [--use <use>]: approve a pending credential request (the server lets me answer only my own discoboxes' requests, within the delegation grants I hold)"},
     {"description": "discobox secret request deny <request-id>: deny a pending credential request"}
   ],
@@ -302,10 +303,10 @@ discobox-access run --use <id> -- discobox secret request deny <request-id>
   with the secret of the delegation grant you hold, for what the worker asked,
   fitted within your delegation's remaining time — `approve` is then one call.
   Do not pass `--grant-ttl`: a lifetime you name that outlasts your
-  delegation is refused rather than fitted. Pass `--secret-id`, by the full ID
-  the refusal lists, only when the server says you were delegated more than
-  one secret that fits; a name, or a short ID, would list the project's
-  secrets, which you may not.
+  delegation is refused rather than fitted. Pass `--secret-id` only when the
+  server says you were delegated more than one secret that fits, naming one it
+  lists. `discobox secret ls` shows you the secrets you were delegated, and
+  nothing else of the project's.
 - A request to delegate, one that names no uses, and anything your delegation
   grants do not cover are refused: those wait for a person. So does every
   request when you hold no delegation grant.
