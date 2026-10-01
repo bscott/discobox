@@ -42,8 +42,10 @@ value of a token the project holds. It is never approved; see
 [below](#a-token-may-expire-and-suggest-its-renewal).
 
 The lifetime an agent asks for (`SecretRequest.GrantTTL`) is recorded, never
-enforced: it is what the window and `secret request approve` start from, and
-approval still takes whatever lifetime it is sent. It is not checked against a
+enforced: it is what the window opens on and what an approval that names no
+lifetime grants (`defaultApprovalTTL`: the ask, else `agentcreds.DefaultGrantTTL`,
+an hour, fitted within the secret's limit), so approving reads nothing first; an
+approval that names one still takes whatever lifetime it is sent. It is not checked against a
 secret's limit at the ask, because which secret answers is the approval's
 choice. Zero is no ask, not forever.
 
@@ -445,8 +447,10 @@ A secret with no host is unconstrained by this, and the grant is what scopes it.
 ## A secret's grant limit is a ceiling, not a default
 
 `Secret.MaxGrantTTL` is the longest a grant on that credential may live, and the
-lifetime a grant takes when nobody names one. Both jobs, one number: the value a
-person reads on the row is the value that binds.
+lifetime a standing grant takes when nobody names one. Both jobs, one number: the
+value a person reads on the row is the value that binds. An approval that names
+no lifetime is fitted within it rather than given it: it grants what the agent
+asked for, else an hour.
 
 `guardGrantTTL` enforces it beside `guardGrantHost`, in `mintGrantAs`, for the
 same reason: the lifetime arrives from an approval, a pre-approval, or the

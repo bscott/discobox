@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/discobox-ai/discobox/agentcreds"
 	"github.com/discobox-ai/discobox/cli/internal/lifetime"
 
 	tea "charm.land/bubbletea/v2"
@@ -87,7 +88,7 @@ func (m *Model) askTrustLifetime(a trustAnswer, back func() tea.Cmd) tea.Cmd {
 		next.ttl = time.Duration(seconds) * time.Second
 		return m.finishTrustApproval(next)
 	})
-	opens := strconv.FormatInt(lifetime.Seconds(lifetime.Default), 10)
+	opens := strconv.FormatInt(lifetime.Seconds(agentcreds.DefaultGrantTTL), 10)
 	if asked > 0 && asked <= lifetime.Month {
 		opens = strconv.FormatInt(lifetime.Seconds(asked), 10)
 	}

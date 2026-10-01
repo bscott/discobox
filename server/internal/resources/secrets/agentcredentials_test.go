@@ -993,3 +993,43 @@ func TestADiscoboxListsOnlyItsOwnDiscoboxesRequests(t *testing.T) {
 		t.Fatalf("listed as a person = %d, %v; want both", len(all), err)
 	}
 }
+
+// An approval that names no lifetime grants what the agent asked for, else an
+// hour — what the window opens on — and never past the secret's limit, so
+// approving needs nothing read first (ADR 26-09-30-782 §4).
+func TestAnApprovalNamingNoLifetimeGrantsWhatWasAsked(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		asked, limit int64
+		want         time.Duration
+	}{
+		{"what was asked", 7200, 86400, 2 * time.Hour},
+		{"an hour when nothing was asked", 0, 86400, time.Hour},
+		{"within the secret's limit", 7200, 600, 10 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := testPrincipalContext()
+			svc, st := newAgentCredentialService(t)
+			secret := createBoundSecret(ctx, t, svc, "github", "", tc.limit)
+			req, err := svc.CreateSandboxCredentialRequest(ctx, testPoolID, services.CreateSandboxCredentialRequestBody{
+				SandboxId: testSandboxID, Name: "github", EnvVar: "GITHUB_TOKEN", Host: "api.github.com",
+				Uses:            []apimodel.SecretUse{{Description: "open a pull request"}},
+				GrantTTLSeconds: serverapi.NewOptInt64(tc.asked),
+			})
+			if err != nil {
+				t.Fatalf("create request: %v", err)
+			}
+			approved, err := svc.ApproveSecretRequest(ctx, "project-1", req.ID, services.ApproveSecretRequestBody{SecretId: serverapi.NewOptString(secret.ID)})
+			if err != nil {
+				t.Fatalf("approve: %v", err)
+			}
+			grant, err := st.GetSecretGrant(ctx, "project-1", approved.GrantID)
+			if err != nil || grant.ExpiresAt == nil {
+				t.Fatalf("grant = %+v, %v; want one that expires", grant, err)
+			}
+			if got := time.Until(*grant.ExpiresAt); got > tc.want || got < tc.want-time.Minute {
+				t.Fatalf("expires in %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

@@ -122,6 +122,35 @@ type RequestedUse struct {
 // to be asked again.
 const MaxGrantTTLSeconds = 30 * 24 * 60 * 60
 
+// DefaultGrantTTL is what an approval lasts when nobody said otherwise: the
+// approver named no lifetime, and the agent asked for nothing in particular.
+// The server answers an approval that names none with it, the window opens on
+// it, and the CLI says it, so the same act mints the same grant wherever it is
+// made.
+//
+// An hour: the shortest answer still long enough to finish the task the
+// credential was asked for, and the one that costs nothing to be wrong about —
+// a grant that outlives its task is a credential nobody remembers handing out.
+const DefaultGrantTTL = time.Hour
+
+// AskedGrantTTL is the lifetime an agent asked for, as RequestBody carries it.
+// Zero is "asked for nothing in particular", which is what an ask outside what
+// an agent may ask for (MaxGrantTTLSeconds) also becomes.
+//
+// Out of range is treated as no ask rather than clamped into one. The number
+// arrives from inside a sandbox, and the value of an ask is that a person is
+// shown what the agent said it needed; a number nobody could have meant is not
+// that, and quietly rewriting it to thirty days would put words in the agent's
+// mouth. The range check is also what keeps the multiplication below from
+// overflowing, which would land a huge ask back near zero — indistinguishable
+// from forever once rounded to whole seconds.
+func AskedGrantTTL(seconds int64) time.Duration {
+	if seconds <= 0 || seconds > MaxGrantTTLSeconds {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 // What a request asks the credential for. A grant is one or the other, never
 // both, so a person approving one agrees to one thing.
 const (

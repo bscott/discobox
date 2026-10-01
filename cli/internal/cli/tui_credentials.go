@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/discobox-ai/discobox/agentcreds"
 	apiclientgen "github.com/discobox-ai/discobox/api/gen"
 	apimodel "github.com/discobox-ai/discobox/api/model"
-	"github.com/discobox-ai/discobox/cli/internal/lifetime"
 	"github.com/discobox-ai/discobox/cli/internal/refreshcmd"
 	"github.com/discobox-ai/discobox/cli/internal/tui"
 	"github.com/discobox-ai/discobox/internal/hostid"
@@ -186,7 +186,7 @@ func toTUICredentialRequest(r apimodel.SecretRequest) tui.CredentialRequest {
 		Host:          strings.TrimSpace(r.Host.Or("")),
 		Type:          string(r.Type),
 		Justification: strings.TrimSpace(r.Justification.Or("")),
-		GrantTTL:      lifetime.FromRequest(r.GrantTTLSeconds.Or(0)),
+		GrantTTL:      agentcreds.AskedGrantTTL(r.GrantTTLSeconds.Or(0)),
 		Delegate:      r.Purpose.Or("") == apiclientgen.SecretRequestPurposeDelegate,
 		WellKnownID:   strings.TrimSpace(r.WellKnownId.Or("")),
 		Created:       r.CreatedAt,
@@ -224,7 +224,7 @@ func toTUITrustRequest(r apimodel.HostTrustRequest) tui.CredentialRequest {
 		SandboxID:     r.SandboxId,
 		Host:          r.Host,
 		Justification: strings.TrimSpace(r.Justification.Or("")),
-		GrantTTL:      lifetime.FromRequest(r.GrantTTLSeconds.Or(0)),
+		GrantTTL:      agentcreds.AskedGrantTTL(r.GrantTTLSeconds.Or(0)),
 		Created:       r.CreatedAt,
 		Trust:         ask,
 	}

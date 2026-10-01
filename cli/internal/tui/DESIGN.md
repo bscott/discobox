@@ -346,17 +346,18 @@ typed one — with the cursor on the lifetime the agent asked for
 on **1 hour**, so Enter is the default answer. An ask that is not a preset is
 added in its place among them (`lifetimeChoices`) and marked as the agent's. It
 is a step rather than a field on the request card because it is the half of an
-approval nobody thinks to look for: leaving it out of the call asks the server
-for the credential's own ceiling — a ceiling most credentials do not have — so
-a window that did not ask would hand out permanent credentials without ever
-saying the word. A card that has to be answered is one that gets read.
+approval nobody thinks to look for: a window that did not ask would hand out
+whatever the server defaults to without anyone having read it. A card that has
+to be answered is one that gets read.
 `Approval.TTLSeconds` is always sent, zero included, and zero means forever
 rather than "whatever the secret allows". The hour is
-`lifetime.Default`, and `discobox secret request approve` sends the same
-lifetime — the agent's ask, else the hour — when `--grant-ttl` is left out, so
-approving a request mints the same grant from either side. An agent cannot ask
+`agentcreds.DefaultGrantTTL`, and the server grants the same lifetime — the
+agent's ask, else the hour, within the secret's limit — to an approval that
+names none, which is what `discobox secret request approve` sends when
+`--grant-ttl` is left out, so approving a request mints the same grant from
+either side. An agent cannot ask
 for forever, nor for longer than thirty days (`agentcreds.MaxGrantTTLSeconds`,
-enforced at the ask and again in `lifetime.FromRequest`), so the default is
+enforced at the ask and again in `agentcreds.AskedGrantTTL`), so the default is
 never a grant that does not lapse. An ask that is not a whole positive number of
 seconds is no row at all (`lifetimeChoices`) and the step opens on the hour:
 a row's identity is its second count, and one that shared forever's count would

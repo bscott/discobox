@@ -14,6 +14,7 @@ import (
 	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 
+	"github.com/discobox-ai/discobox/agentcreds"
 	apigen "github.com/discobox-ai/discobox/api/gen"
 	"github.com/discobox-ai/discobox/hostscope"
 	"github.com/discobox-ai/discobox/secretformat"
@@ -479,12 +480,14 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 		if err := txStore.SetSecretLimits(ctx, projectID, secret.ID, bindTo, limit); err != nil {
 			return secretCollision(err, secret)
 		}
-		// The secret's limit is also the lifetime nobody has to choose; an
-		// explicit value is checked against it in mintGrantAs, along with
-		// every other path that mints one.
-		ttl := secret.MaxGrantTTL
-		if v, ok := input.GrantTTLSeconds.Get(); ok {
-			ttl = v
+		// An approval that names no lifetime grants what the agent asked for,
+		// else agentcreds.DefaultGrantTTL — what the window opens on — within
+		// the secret's limit, so approving needs nothing read first (ADR
+		// 26-09-30-782 §4). An explicit value is checked against the limit in
+		// mintGrantAs, along with every other path that mints one.
+		ttl, ok := input.GrantTTLSeconds.Get()
+		if !ok {
+			ttl = defaultApprovalTTL(req, secret)
 		}
 		grant, err := tx.mintGrantAs(ctx, projectID, secret, scope, scopeKey, host, req.EnvName, ttl, approvedUses, purpose)
 		if err != nil {
@@ -835,6 +838,21 @@ func guardGrantTTL(secret *model.Secret, ttlSeconds int64) error {
 	return apperrors.NewStatusError(http.StatusBadRequest, fmt.Sprintf(
 		"a grant on secret %s may live at most %s, and %s was asked for; grant it for less, or raise the limit with `discobox secret update %s --max-grant-ttl %d`",
 		secret.ID, formatTTL(limit), formatTTL(ttlSeconds), secret.ID, ttlSeconds))
+}
+
+// defaultApprovalTTL is the lifetime of an approval that names none: what the
+// request asked for, else agentcreds.DefaultGrantTTL, and never past the
+// secret's limit — a default is an answer nobody chose, so it is fitted to the
+// limit rather than refused by it.
+func defaultApprovalTTL(req *model.SecretRequest, secret *model.Secret) int64 {
+	ttl := int64(agentcreds.AskedGrantTTL(req.GrantTTL) / time.Second)
+	if ttl == 0 {
+		ttl = int64(agentcreds.DefaultGrantTTL / time.Second)
+	}
+	if secret.MaxGrantTTL > 0 && ttl > secret.MaxGrantTTL {
+		ttl = secret.MaxGrantTTL
+	}
+	return ttl
 }
 
 // formatTTL says a lifetime the way a person reads one, so a refusal compares

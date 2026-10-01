@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/discobox-ai/discobox/agentcreds"
 	"github.com/discobox-ai/discobox/cli/internal/lifetime"
 	"github.com/discobox-ai/discobox/cli/internal/refreshcmd"
 	"github.com/discobox-ai/discobox/hostscope"
@@ -307,7 +308,7 @@ const lifetimeCustom = "custom"
 // credentials do not have — so a window that did would hand out permanent
 // credentials without ever saying the word. A card that has to be answered is
 // one that gets read. It opens on the lifetime the agent asked for, or on
-// lifetime.Default, an hour, when it asked for nothing in particular.
+// agentcreds.DefaultGrantTTL, an hour, when it asked for nothing in particular.
 //
 // back is the dialog before this one, which Esc returns to: the request card,
 // or the binding question when the secret chosen raised one.
@@ -330,7 +331,7 @@ func (m *Model) askLifetime(a approval, back func() tea.Cmd) tea.Cmd {
 	items = append(items, action{key: lifetimeCustom, label: "custom…", detail: "type one: 90m, 3d, 6mo", enabled: true})
 
 	again := func() tea.Cmd { return m.askLifetime(a, back) }
-	opensOn := lifetime.Default
+	opensOn := agentcreds.DefaultGrantTTL
 	if asked > 0 {
 		opensOn = asked
 	}
@@ -374,7 +375,7 @@ func (m *Model) askLifetime(a approval, back func() tea.Cmd) tea.Cmd {
 // cannot be a row: it would collide with the row whose count it shares —
 // forever's, for anything under a second — and the card would open on that
 // instead of on what was asked for. Such an ask is dropped here and the step
-// opens on lifetime.Default, the same as an ask nobody made.
+// opens on agentcreds.DefaultGrantTTL, the same as an ask nobody made.
 func lifetimeChoices(asked time.Duration) []time.Duration {
 	if asked <= 0 || asked%time.Second != 0 || slices.Contains(lifetime.Presets, asked) {
 		return lifetime.Presets

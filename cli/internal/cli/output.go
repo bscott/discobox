@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/discobox-ai/discobox/agentcreds"
 	apiclientgen "github.com/discobox-ai/discobox/api/gen"
 	apimodel "github.com/discobox-ai/discobox/api/model"
 	"github.com/discobox-ai/discobox/cli/internal/lifetime"
@@ -725,7 +726,7 @@ func (a *App) writeSecretRequest(cmd *cobra.Command, request *apimodel.SecretReq
 			fmt.Fprintf(tw, "%s\t%s\n", label, use.Description)
 		}
 	}
-	if asked := lifetime.FromRequest(request.GrantTTLSeconds.Or(0)); asked > 0 {
+	if asked := agentcreds.AskedGrantTTL(request.GrantTTLSeconds.Or(0)); asked > 0 {
 		fmt.Fprintf(tw, "WANTED FOR\t%s\n", lifetime.Label(asked))
 	}
 	if purpose, ok := request.Purpose.Get(); ok {
