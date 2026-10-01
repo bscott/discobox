@@ -1,6 +1,6 @@
 # 26-10-01-397 — A discobox reads and types into the terminals of the discoboxes it creates
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-10-01
 - **Supersedes**: [0140](0140-a-discobox-reaches-the-discobox-api-through-its-pool-with-a-fixed-role.md)'s
   deferral of "terminal screen, input, and wait … for a lead that drives its
