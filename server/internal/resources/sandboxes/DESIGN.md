@@ -582,7 +582,9 @@ launch.
 `ensure` also rebinds the sandbox's assignments to its harness config's current
 bindings (`rebindSandboxSecretRows`) before building the create options. That
 catches a binding change the live fan-out (`RebindHarnessConfigSecrets`) missed
-while the sandbox was down.
+while the sandbox was down. Both repoint only injected assignments: an agent
+credential's binding may share a variable with one, and it keeps the secret it
+was granted.
 
 ## The Sandbox's Own Address
 

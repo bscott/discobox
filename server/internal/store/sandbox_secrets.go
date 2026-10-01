@@ -155,7 +155,26 @@ func (s *Store) ListLiveAgentCredentials(ctx context.Context, projectID, sandbox
 // ErrAgentVariableHeld, naming the grant to revoke. A rebind mints a
 // fresh sentinel, so one minted under the old secret never resolves to the new
 // one.
+//
+// A variable with no binding has no row to lock, so two first binds of it can
+// race to create one, and on a database that does not serialize writers the
+// loser hits the unique index. It binds again once, finding the winner's row
+// and deciding by the rule above, and a second collision is a 409 rather than
+// a driver's constraint text.
 func (s *Store) BindAgentSecret(ctx context.Context, projectID, sandboxID, envName string, secret *model.Secret) (*model.SandboxSecret, error) {
+	binding, err := s.bindAgentSecretOnce(ctx, projectID, sandboxID, envName, secret)
+	if !isUniqueViolation(err) {
+		return binding, err
+	}
+	binding, err = s.bindAgentSecretOnce(ctx, projectID, sandboxID, envName, secret)
+	if isUniqueViolation(err) {
+		return nil, apperrors.NewStatusError(http.StatusConflict,
+			fmt.Sprintf("the agent credential in %s changed concurrently; try again", envName))
+	}
+	return binding, err
+}
+
+func (s *Store) bindAgentSecretOnce(ctx context.Context, projectID, sandboxID, envName string, secret *model.Secret) (*model.SandboxSecret, error) {
 	var out *model.SandboxSecret
 	// One transaction, holding the binding's row while the grants are read: an
 	// approval of the bound secret commits its grant either before this reads
@@ -209,6 +228,13 @@ func (s *Store) BindAgentSecret(ctx context.Context, projectID, sandboxID, envNa
 		return nil, err
 	}
 	return out, nil
+}
+
+// isUniqueViolation reports whether err is a unique index refusing a write, in
+// either driver's wording: SQLite's "UNIQUE constraint failed" and Postgres's
+// "violates unique constraint".
+func isUniqueViolation(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "unique constraint")
 }
 
 // NewAgentBinding is an agent credential's binding, built but not stored: a

@@ -231,7 +231,8 @@ revoke; the lazy binding passes the contested grant over instead, so one
 variable two grants name does not fail every credential the discobox has. The
 check and the rebind share a transaction holding the binding's row, so an
 approval of the bound secret committing alongside cannot be rebound out from
-under. A discobox being created has nothing bound yet, and its bindings are
+under. A first bind has no row to lock, so one that loses the race to create
+it binds once more, finding the winner's row, and a second collision is a 409. A discobox being created has nothing bound yet, and its bindings are
 built with `store.NewAgentBinding` and stored with it. A standing grant of the
 same secret does not hold it: it authorizes the injected sentinel, never this
 one. A rebind mints a fresh sentinel, so an activation minted under the old

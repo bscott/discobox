@@ -476,7 +476,11 @@ func rebindSandboxSecretRows(ctx context.Context, st *store.Store, projectID str
 	if len(bindings) == 0 {
 		return false, nil
 	}
-	assignments, err := st.ListSandboxSecrets(ctx, projectID, sandboxModel.ID)
+	// Only the injected assignments are the harness's. An agent credential's
+	// binding may share a variable with one (the env-name index includes
+	// AgentRequested), and repointing it at the harness's secret would hand
+	// the agent a credential nobody granted it.
+	assignments, err := st.ListInjectedSandboxSecrets(ctx, projectID, sandboxModel.ID)
 	if err != nil {
 		return false, err
 	}
