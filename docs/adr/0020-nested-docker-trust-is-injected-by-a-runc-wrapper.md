@@ -1,6 +1,7 @@
 # 0020 — Nested Docker trust is injected by a runc wrapper, not an NRI plugin
 
-- **Status**: Accepted
+- **Status**: Accepted (§4's "never overrides" superseded for a value naming the loopback forwarder by
+  [26-10-01-425](26-10-01-425-a-forwarded-loopback-proxy-is-retargeted-not-preserved.md))
 - **Date**: 2026-08-01
 - **Supersedes**: [0015](0015-nested-docker-builds-trust-the-mitm-proxy-via-nri.md)
 
