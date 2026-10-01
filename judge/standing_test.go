@@ -9,6 +9,35 @@ import (
 )
 
 // An allow may carry the route it stands for, and only an allow may: beside a
+// A judge saying an allow does not stand — "standing": null, or a route for no
+// time — has decided what it decided, without a standing route. A model given
+// the schema writes both instead of leaving the key out, and reading either as
+// no verdict at all would turn an allow into a refusal. Dropping a standing
+// route only narrows; it never makes an answer an allow.
+func TestDecodeReadsAnAllowThatDoesNotStandAsOne(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, output string
+		allow        bool
+	}{
+		{"null beside an allow", `{"allow":true,"reason":"ok","standing":null}`, true},
+		{"no time beside an allow", `{"allow":true,"reason":"ok","standing":{"route":"POST /graphql","seconds":0}}`, true},
+		{"null beside a refusal", `{"allow":false,"reason":"no","standing":null}`, false},
+		{"no time beside a refusal", `{"allow":false,"reason":"no","standing":{"route":"GET /a","seconds":0}}`, false},
+	} {
+		answer, err := judge.Decode([]byte(tc.output))
+		if err != nil {
+			t.Fatalf("%s: Decode() error = %v", tc.name, err)
+		}
+		if answer.Allow != tc.allow || answer.Standing != nil || !answer.Decided() {
+			t.Fatalf("%s: answer = %+v, want allow %v standing for nothing", tc.name, answer, tc.allow)
+		}
+	}
+	if answer, err := judge.Decode([]byte(`{"need":{"body":true},"reason":"show me","standing":null}`)); err != nil || answer.Decided() {
+		t.Fatalf("an ask with no standing = %+v, %v; want the ask", answer, err)
+	}
+}
+
 // refusal or an ask, a standing route is permission nobody gave.
 func TestDecodeReadsAStandingAllowAndNothingLikeOne(t *testing.T) {
 	t.Parallel()
@@ -25,7 +54,8 @@ func TestDecodeReadsAStandingAllowAndNothingLikeOne(t *testing.T) {
 		{"with no decision", `{"reason":"hm","standing":{"route":"GET /a","seconds":60}}`},
 		{"with no route", `{"allow":true,"reason":"ok","standing":{"seconds":60}}`},
 		{"with no seconds", `{"allow":true,"reason":"ok","standing":{"route":"GET /a"}}`},
-		{"for no time", `{"allow":true,"reason":"ok","standing":{"route":"GET /a","seconds":0}}`},
+		{"for less than no time", `{"allow":true,"reason":"ok","standing":{"route":"GET /a","seconds":-1}}`},
+		{"for no time, with a route that does not parse", `{"allow":true,"reason":"ok","standing":{"route":"/a","seconds":0}}`},
 		{"for a fraction", `{"allow":true,"reason":"ok","standing":{"route":"GET /a","seconds":1.5}}`},
 		{"with a field nobody defined", `{"allow":true,"reason":"ok","standing":{"route":"GET /a","seconds":60,"host":"evil.example"}}`},
 		{"with the route said twice", `{"allow":true,"reason":"ok","standing":{"route":"GET /a","Route":"DELETE /a","seconds":60}}`},

@@ -194,7 +194,13 @@ func readNeed(decoder *json.Decoder) (*Need, error) {
 // route must parse here: a standing route Discobox cannot read is a verdict
 // it cannot read, and whether a readable one stands is Job.Admits's to say.
 func readStanding(decoder *json.Decoder) (*Standing, error) {
-	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+	token, err := decoder.Token()
+	if err == nil && token == nil {
+		// "standing": null is a judge saying the allow does not stand, as
+		// leaving the key out is.
+		return nil, nil
+	}
+	if err != nil || token != json.Delim('{') {
 		return nil, errors.New("a standing allow names a route and how long")
 	}
 	var (
@@ -223,7 +229,7 @@ func readStanding(decoder *json.Decoder) (*Standing, error) {
 			if err != nil {
 				return nil, err
 			}
-			if value <= 0 {
+			if value < 0 {
 				return nil, errors.New("a standing allow stands for some seconds")
 			}
 			standing.Seconds, seconds = value, true
@@ -236,6 +242,11 @@ func readStanding(decoder *json.Decoder) (*Standing, error) {
 	}
 	if !route || !seconds {
 		return nil, errors.New("a standing allow names a route and how long")
+	}
+	if standing.Seconds == 0 {
+		// Standing for no time is not standing. The allow is read without
+		// it: dropping a standing allow only narrows what was allowed.
+		return nil, nil
 	}
 	return &standing, nil
 }

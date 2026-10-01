@@ -32,7 +32,10 @@ them.
 as permission nobody gave: prose around the object, a second object, a key said
 twice at any depth (`encoding/json` would take the last), a field nobody
 defined, an answer that both decides and asks, and an answer with no reason.
-A failure to decode is not an allow, and callers treat it as a refusal.
+A failure to decode is not an allow, and callers treat it as a refusal. A
+standing route of `null` or of no time is read as none rather than refused: a
+model writes both for "this does not stand", and dropping a standing route only
+narrows what was decided.
 
 **A body is described in one shape; its bytes are asked for, not sent**
 (ADR 26-09-26-240). A request job describes its body — media type, length,
