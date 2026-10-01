@@ -247,7 +247,14 @@ func (s *Service) ListSecretRequests(ctx context.Context, projectID, status stri
 	if _, err := s.store.GetProject(ctx, projectID); err != nil {
 		return nil, apperrors.NotFound(err, "project not found")
 	}
-	requests, err := s.store.ListSecretRequests(ctx, projectID, status)
+	// A discobox sees only the requests it owns: those filed by a discobox it
+	// created (ADR 26-09-30-782 §2). The sandbox role answers whether it may
+	// reach one by its ID; a listing it filters here.
+	var options []store.SecretRequestListOption
+	if principal, ok := auth.PrincipalFromContext(ctx); ok && principal.Type == auth.PrincipalTypeSandbox {
+		options = append(options, store.OwnedBy(principal.SandboxID))
+	}
+	requests, err := s.store.ListSecretRequests(ctx, projectID, status, options...)
 	if err != nil {
 		return nil, err
 	}

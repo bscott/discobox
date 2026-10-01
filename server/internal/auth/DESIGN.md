@@ -90,11 +90,17 @@ Current authorizers:
   everything else — including the any-authenticated routes below, which is
   why it runs first. It is decided by the route; no grant or use text is
   read ([ADR 0140](../../../docs/adr/0140-a-discobox-reaches-the-discobox-api-through-its-pool-with-a-fixed-role.md)
-  §§4–5). Source delivery — the push into a discobox's `git-origins` and
-  `complete-source-push` — is the one exception, and only on a discobox the
-  caller created: the route is `created`, and the authorizer loads the target
-  and compares its recorded `CreatedBySandboxID` to the caller
+  §§4–5). Some routes also ask what they name to belong to the caller (the
+  route's `owner`): source delivery — the push into a discobox's `git-origins`
+  and `complete-source-push` — only into a discobox the caller created, by its
+  recorded `CreatedBySandboxID`
   ([ADR 26-09-24-630](../../../docs/adr/26-09-24-630-a-discobox-delivers-the-source-of-the-discoboxes-it-creates.md)
+  §2); and a secret request's get, approve, and deny only when a discobox the
+  caller created filed it — the request's owner. A request filed by no
+  discobox, or by one that is gone, has no owner and is a person's to answer.
+  The request listing cannot be decided by its route, so the secrets service
+  filters it to the caller's owned requests
+  ([ADR 26-09-30-782](../../../docs/adr/26-09-30-782-a-discobox-answers-its-own-discoboxes-requests-within-what-it-may-delegate.md)
   §2). `ActingUserID` is the user such a call acts as: the sandbox's
   creator.
 - `ProjectAuthorizer` authorizes `/projects/{projectId}/...` and

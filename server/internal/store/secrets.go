@@ -609,9 +609,30 @@ func (s *Store) GetSecretRequest(ctx context.Context, projectID, requestID strin
 	return firstByID[model.SecretRequest](read.Where("project_id = ?", projectID), "id", requestID)
 }
 
+// SecretRequestListOption narrows what a listing of secret requests answers
+// with.
+type SecretRequestListOption func(*secretRequestListOptions)
+
+type secretRequestListOptions struct {
+	owner string
+}
+
+// OwnedBy lists only the requests a discobox owns: those filed by a discobox
+// it created (ADR 26-09-30-782 §2). A request no discobox filed, or whose
+// discobox is gone, has no owner and is never listed.
+func OwnedBy(sandboxID string) SecretRequestListOption {
+	return func(options *secretRequestListOptions) { options.owner = sandboxID }
+}
+
 // ListSecretRequests returns a project's secret requests, optionally filtered to
 // a single status.
-func (s *Store) ListSecretRequests(ctx context.Context, projectID, status string) ([]model.SecretRequest, error) {
+func (s *Store) ListSecretRequests(ctx context.Context, projectID, status string, listOptions ...SecretRequestListOption) ([]model.SecretRequest, error) {
+	var options secretRequestListOptions
+	for _, option := range listOptions {
+		if option != nil {
+			option(&options)
+		}
+	}
 	read, err := s.getRead(ctx)
 	if err != nil {
 		return nil, err
@@ -619,6 +640,10 @@ func (s *Store) ListSecretRequests(ctx context.Context, projectID, status string
 	query := read.Where("project_id = ?", projectID)
 	if status = strings.TrimSpace(status); status != "" {
 		query = query.Where("status = ?", status)
+	}
+	if options.owner != "" {
+		query = query.Where("sandbox_id IN (?)", read.Model(&model.Sandbox{}).Select("id").
+			Where("project_id = ? AND created_by_sandbox_id = ?", projectID, options.owner))
 	}
 	var out []model.SecretRequest
 	err = query.Order("created_at ASC").Find(&out).Error

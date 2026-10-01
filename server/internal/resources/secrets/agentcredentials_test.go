@@ -963,3 +963,33 @@ func TestATrustNamesNoUseOfAnotherDiscoboxOrOnceItLapses(t *testing.T) {
 		t.Fatal("ApprovedUse() named a use of a trust that has lapsed")
 	}
 }
+
+// A discobox listing requests sees only those filed by discoboxes it created;
+// a person sees every one (ADR 26-09-30-782 §2).
+func TestADiscoboxListsOnlyItsOwnDiscoboxesRequests(t *testing.T) {
+	ctx := testPrincipalContext()
+	svc, st := newAgentCredentialService(t)
+	lead := "sbx-lead"
+	if err := st.CreateSandbox(ctx, &model.Sandbox{ID: "sbx-worker", ProjectID: "project-1", Name: "worker", PoolID: testPoolID, CreatedBySandboxID: &lead}); err != nil {
+		t.Fatalf("create worker: %v", err)
+	}
+	for id, sandbox := range map[string]string{"sreq-worker": "sbx-worker", "sreq-other": testSandboxID} {
+		if err := st.CreateSecretRequest(ctx, &model.SecretRequest{
+			ID: id, ProjectID: "project-1", SandboxID: sandbox, RequestedBy: "agent:" + sandbox,
+			Type: "token", Status: model.SecretRequestStatusPending,
+		}); err != nil {
+			t.Fatalf("create request %s: %v", id, err)
+		}
+	}
+	asLead := auth.WithPrincipal(context.Background(), auth.Principal{
+		Type: auth.PrincipalTypeSandbox, SandboxID: lead, ProjectID: "project-1", UserID: "user-1",
+	})
+	owned, err := svc.ListSecretRequests(asLead, "project-1", "")
+	if err != nil || len(owned) != 1 || owned[0].ID != "sreq-worker" {
+		t.Fatalf("listed as the lead = %+v, %v; want only its worker's request", owned, err)
+	}
+	all, err := svc.ListSecretRequests(ctx, "project-1", "")
+	if err != nil || len(all) != 2 {
+		t.Fatalf("listed as a person = %d, %v; want both", len(all), err)
+	}
+}

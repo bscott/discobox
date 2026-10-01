@@ -81,7 +81,10 @@ binding, and the request marked approved share one transaction. A refusal
 anywhere, such as a variable a live grant still delivers from another secret or
 a request answered concurrently, leaves none of them behind. A gate's host cannot change, as in `UpdateSecret`.
 A discobox answering the inbox approves with the secret as it is, because its
-role changes no secret.
+role changes no secret. It sees and answers only the requests it owns — filed by
+a discobox it created: the sandbox role decides that for one request by its ID,
+and `ListSecretRequests` filters the listing with `store.OwnedBy`
+([ADR 26-09-30-782](../../../../docs/adr/26-09-30-782-a-discobox-answers-its-own-discoboxes-requests-within-what-it-may-delegate.md) §2).
 
 ## Two ways to reach the agent credentials shape
 
