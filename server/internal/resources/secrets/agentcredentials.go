@@ -11,7 +11,6 @@ import (
 	"github.com/discobox-ai/discobox/agentcreds"
 	apimodel "github.com/discobox-ai/discobox/api/model"
 	"github.com/discobox-ai/discobox/hostscope"
-	"github.com/discobox-ai/discobox/secretformat"
 	"github.com/discobox-ai/discobox/server/internal/apperrors"
 	"github.com/discobox-ai/discobox/server/internal/model"
 	"github.com/discobox-ai/discobox/server/internal/services"
@@ -38,20 +37,7 @@ func (s *Service) ListSandboxCredentials(ctx context.Context, poolID, sandboxID 
 	}
 	// The same scopes a resolve is matched against: what this discobox is, what
 	// harness it runs, and the project it belongs to.
-	return s.store.ListLiveAgentCredentials(ctx, sandbox.ProjectID, sandbox.ID, agentGrantScopes(sandbox))
-}
-
-// agentGrantScopes is what a discobox's agent may be granted through: itself,
-// the harness config it runs, and its project.
-func agentGrantScopes(sandbox *model.Sandbox) []store.GrantScope {
-	scopes := []store.GrantScope{{Scope: model.SecretGrantScopeSandbox, ScopeKey: sandbox.ID}}
-	if sandbox.HarnessConfigID != nil && strings.TrimSpace(*sandbox.HarnessConfigID) != "" {
-		scopes = append(scopes, store.GrantScope{
-			Scope:    model.SecretGrantScopeHarnessConfig,
-			ScopeKey: strings.TrimSpace(*sandbox.HarnessConfigID),
-		})
-	}
-	return append(scopes, store.GrantScope{Scope: model.SecretGrantScopeProject, ScopeKey: sandbox.ProjectID})
+	return s.store.ListLiveAgentCredentials(ctx, sandbox.ProjectID, sandbox.ID, store.SandboxGrantScopes(sandbox))
 }
 
 // CreateSandboxCredentialRequest records an agent's ask as a pending
@@ -255,7 +241,7 @@ func (s *Service) findGrantForUse(ctx context.Context, sandbox *model.Sandbox, u
 	if useID == "" {
 		return "", false
 	}
-	credentials, err := s.store.ListLiveAgentCredentials(ctx, sandbox.ProjectID, sandbox.ID, agentGrantScopes(sandbox))
+	credentials, err := s.store.ListLiveAgentCredentials(ctx, sandbox.ProjectID, sandbox.ID, store.SandboxGrantScopes(sandbox))
 	if err != nil {
 		return "", false
 	}
@@ -267,64 +253,6 @@ func (s *Service) findGrantForUse(ctx context.Context, sandbox *model.Sandbox, u
 		}
 	}
 	return "", false
-}
-
-// bindAgentCredential gives the sandbox its stable binding for an approved
-// credential, creating it if the sandbox has none yet.
-//
-// The binding is deliberately not the harness-secret shape. It is marked
-// AgentRequested, so it is never written into the sandbox environment or
-// secrets.json and never registered with the proxy; the only value that reaches
-// the sandbox is an ephemeral sentinel the pool agent mints per use and
-// translates back to this one (ADR 0031 §4).
-//
-// A repeat approval for the same environment variable reuses the binding, so a
-// sentinel an earlier activation was minted from stays resolvable.
-func (s *Service) bindAgentCredential(ctx context.Context, req *model.SecretRequest, secret *model.Secret) error {
-	return s.bindAgentSecret(ctx, req.ProjectID, req.SandboxID, req.EnvName, secret)
-}
-
-// bindAgentSecret is the binding itself, without a request in front of it: the
-// same shape whether an agent asked for the credential or somebody granted it
-// ahead of time.
-func (s *Service) bindAgentSecret(ctx context.Context, projectID, sandboxID, envName string, secret *model.Secret) error {
-	existing, err := s.store.FindAgentSandboxSecret(ctx, projectID, sandboxID, envName)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return err
-	}
-	if existing != nil {
-		if existing.SecretID == secret.ID {
-			return nil
-		}
-		// One environment variable, one credential. Rebinding it would leave any
-		// live activation resolving to a different secret, and silently changing
-		// which credential an agent's next command carries is exactly the
-		// surprise this flow exists to prevent.
-		return apperrors.NewStatusError(http.StatusConflict,
-			fmt.Sprintf("sandbox already has an agent credential bound to %s from a different secret; revoke that grant first", envName))
-	}
-	binding, err := newAgentBinding(ctx, s.store, projectID, sandboxID, envName, secret)
-	if err != nil {
-		return err
-	}
-	return s.store.CreateSandboxSecret(ctx, binding)
-}
-
-// newAgentBinding is an agent credential's binding: the stable sentinel the
-// pool translates a use's ephemeral one to, never injected into the sandbox.
-func newAgentBinding(ctx context.Context, st *store.Store, projectID, sandboxID, envName string, secret *model.Secret) (*model.SandboxSecret, error) {
-	sentinel, err := secretformat.MintSentinel(st.SentinelFormat(ctx, secret))
-	if err != nil {
-		return nil, err
-	}
-	return &model.SandboxSecret{
-		ProjectID:      projectID,
-		SandboxID:      sandboxID,
-		SecretID:       secret.ID,
-		EnvName:        envName,
-		Sentinel:       sentinel,
-		AgentRequested: true,
-	}, nil
 }
 
 // requestedUses validates and normalizes the uses an agent asked for. Supplied
@@ -442,7 +370,7 @@ func (s *Service) ApprovedUse(ctx context.Context, poolID, sandboxID, useID, hos
 	if err != nil {
 		return services.ApprovedUse{}, err
 	}
-	credentials, err := s.store.ListLiveAgentCredentials(ctx, sandbox.ProjectID, sandbox.ID, agentGrantScopes(sandbox))
+	credentials, err := s.store.ListLiveAgentCredentials(ctx, sandbox.ProjectID, sandbox.ID, store.SandboxGrantScopes(sandbox))
 	if err != nil {
 		return services.ApprovedUse{}, err
 	}

@@ -78,8 +78,8 @@ secret is re-read inside the transaction, the change is applied to it, and the
 grant is checked against the result. Only the fields sent are written, so a
 concurrent edit to the other one stands. The change, the grant, the agent
 binding, and the request marked approved share one transaction. A refusal
-anywhere, such as a variable already bound or a request answered concurrently,
-leaves none of them behind. A gate's host cannot change, as in `UpdateSecret`.
+anywhere, such as a variable a live grant still delivers from another secret or
+a request answered concurrently, leaves none of them behind. A gate's host cannot change, as in `UpdateSecret`.
 A discobox answering the inbox approves with the secret as it is, because its
 role changes no secret.
 
@@ -217,6 +217,29 @@ agent's ephemeral sentinels have a stable one to translate back to. The store
 enforces this rather than each caller — `ListInjectedSandboxSecrets` is what
 every injection path uses, and `ListSandboxSecrets` returns everything for the
 few callers that need the full picture.
+
+**A binding outlives its grant, and holds its variable only while a grant
+delivers it.** Revoking or lapsing a grant leaves the binding (it goes with the
+discobox), and a binding with no live grant gives the discobox nothing: a resolve
+hands a value out only under one. So `store.BindAgentSecret`, which every path
+that binds an existing discobox goes through — approval, a sandbox-scoped
+`CreateSecretGrant`, and the lazy binding in `ListLiveAgentCredentials` — rebinds
+a variable held by another secret when no live use grant at any scope covering
+the discobox (`store.SandboxGrantScopes`) names that secret for that variable.
+While one does, it refuses with a 409 naming that grant, which is the one to
+revoke; the lazy binding passes the contested grant over instead, so one
+variable two grants name does not fail every credential the discobox has. The
+check and the rebind share a transaction holding the binding's row, so an
+approval of the bound secret committing alongside cannot be rebound out from
+under. A discobox being created has nothing bound yet, and its bindings are
+built with `store.NewAgentBinding` and stored with it. A standing grant of the
+same secret does not hold it: it authorizes the injected sentinel, never this
+one. A rebind mints a fresh sentinel, so an activation minted under the old
+secret resolves to nothing rather than to the new one. Revocation does not
+reach into the pool agent's proxy: a cached value is re-resolved in the
+background on its first use past the proxy's refresh interval (30s) and is
+never held past its activation (5m) or the proxy's cache ceiling, so a revoked
+grant's value outlives it by that interval, not until its old expiry.
 
 The entry points:
 

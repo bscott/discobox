@@ -81,7 +81,7 @@ func PrepareSandboxGrants(ctx context.Context, st *store.Store, projectID, sandb
 
 		switch previous, bound := boundTo[envName]; {
 		case !bound:
-			binding, err := newAgentBinding(ctx, st, projectID, sandboxID, envName, secret)
+			binding, err := st.NewAgentBinding(ctx, projectID, sandboxID, envName, secret)
 			if err != nil {
 				return SandboxGrants{}, err
 			}

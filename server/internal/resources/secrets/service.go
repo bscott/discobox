@@ -486,7 +486,11 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 		// A delegation grant binds nothing: there is nothing for its holder
 		// to take.
 		if req.FromProtocol() && grant.MayUse() {
-			if err := tx.bindAgentCredential(ctx, req, secret); err != nil {
+			// The binding is deliberately not the harness-secret shape: it is
+			// never written into the sandbox, and the only value that reaches
+			// it is an ephemeral sentinel the pool agent mints per use and
+			// translates back to this one (ADR 0031 §4).
+			if _, err := txStore.BindAgentSecret(ctx, req.ProjectID, req.SandboxID, req.EnvName, secret); err != nil {
 				return err
 			}
 		}
@@ -567,13 +571,7 @@ func (s *Service) ResolveSandboxSecret(ctx context.Context, poolID, sandboxID, s
 	}
 	host = normalizeHost(host)
 
-	scopes := []store.GrantScope{
-		{Scope: model.SecretGrantScopeSandbox, ScopeKey: sandbox.ID},
-		{Scope: model.SecretGrantScopeProject, ScopeKey: assignment.ProjectID},
-	}
-	if sandbox.HarnessConfigID != nil && strings.TrimSpace(*sandbox.HarnessConfigID) != "" {
-		scopes = append(scopes, store.GrantScope{Scope: model.SecretGrantScopeHarnessConfig, ScopeKey: strings.TrimSpace(*sandbox.HarnessConfigID)})
-	}
+	scopes := store.SandboxGrantScopes(sandbox)
 	// The binding is checked where the credential is handed out, not only where
 	// a grant is minted. A secret bound to a host may be used for that host and
 	// the hosts beneath it and nowhere else — which has to hold for grants that
@@ -720,7 +718,7 @@ func (s *Service) CreateSecretGrant(ctx context.Context, projectID string, input
 	// boxes it covers may not exist yet. A delegation grant binds nothing:
 	// there is nothing for its holder to take.
 	if len(uses) > 0 && scope == model.SecretGrantScopeSandbox && grant.MayUse() {
-		if err := s.bindAgentSecret(ctx, projectID, scopeKey, envVar, secret); err != nil {
+		if _, err := s.store.BindAgentSecret(ctx, projectID, scopeKey, envVar, secret); err != nil {
 			// Leave no live authorization behind for a binding that never
 			// happened, exactly as approving one does.
 			_ = s.store.DeleteSecretGrant(ctx, projectID, grant.ID)

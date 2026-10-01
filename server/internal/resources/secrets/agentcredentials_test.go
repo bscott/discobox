@@ -691,7 +691,7 @@ func TestARefusedApprovalLeavesTheSecretAsItWas(t *testing.T) {
 		SecretHost:               serverapi.NewOptString("github.com"),
 		SecretMaxGrantTTLSeconds: serverapi.NewOptInt64(7200),
 	})
-	if err == nil || !strings.Contains(err.Error(), "different secret") {
+	if err == nil || !strings.Contains(err.Error(), "another secret") {
 		t.Fatalf("approve = %v, want the binding conflict", err)
 	}
 	stored, err := st.GetSecret(ctx, "project-1", secret.ID)

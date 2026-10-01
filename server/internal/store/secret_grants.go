@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -16,6 +17,19 @@ import (
 type GrantScope struct {
 	Scope    string
 	ScopeKey string
+}
+
+// SandboxGrantScopes is every scope a grant may cover a discobox through:
+// itself, the harness config it runs, and its project, narrowest first.
+func SandboxGrantScopes(sandbox *model.Sandbox) []GrantScope {
+	scopes := []GrantScope{{Scope: model.SecretGrantScopeSandbox, ScopeKey: sandbox.ID}}
+	if sandbox.HarnessConfigID != nil && strings.TrimSpace(*sandbox.HarnessConfigID) != "" {
+		scopes = append(scopes, GrantScope{
+			Scope:    model.SecretGrantScopeHarnessConfig,
+			ScopeKey: strings.TrimSpace(*sandbox.HarnessConfigID),
+		})
+	}
+	return append(scopes, GrantScope{Scope: model.SecretGrantScopeProject, ScopeKey: sandbox.ProjectID})
 }
 
 func (s *Store) CreateSecretGrant(ctx context.Context, grant *model.SecretGrant) error {
