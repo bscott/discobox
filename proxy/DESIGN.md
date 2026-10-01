@@ -462,11 +462,21 @@ both the verdict that authorized a command and every request that spent the
 credential. Reads filter on it with `use_id`, matching a whole element of the
 list rather than a substring.
 
-The column holds the use ID and never a sentinel. An ephemeral sentinel is a
-live bearer token for the length of its activation window, and this trail is
-retained to be read afterwards; a use ID authorizes nothing and only names. A
-swap with no agent-credentials activation behind it leaves the column empty,
-which is the ordinary injected-sentinel case rather than a gap.
+It also records which secrets it spent, for every kind of sentinel
+([ADR 26-10-01-240](../docs/adr/26-10-01-240-a-swapped-request-records-the-secrets-it-spent.md)).
+The control plane's resolve answer names the secret a value is, and
+`ResolveResult.SecretID` rides beside `UseID` through the cache, the value kept
+for the rotated-credential retry, and `Result` onto
+`HTTPExchange.SwappedSecretIDs`. An ordinary injected sentinel has no use, so
+its row names a secret and no use; one taken under an approved use names both.
+A request the judge refused names the uses from the verdict and no secret:
+nothing was resolved, so nothing was spent. The column was added by
+`AutoMigrate`, and rows written before it read it as empty.
+
+Both columns hold IDs and never a sentinel. An ephemeral sentinel is a live
+bearer token for the length of its activation window, and a stable one never
+expires; this trail is retained to be read afterwards, and an ID authorizes
+nothing and only names.
 
 The control API (`ControlHandler`, served by `ListenAndServeControl` only when
 `Control.ListenAddress` is set) is read-only. It lists HTTP and SOCKS audit rows

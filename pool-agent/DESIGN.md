@@ -837,7 +837,10 @@ flowchart LR
   It forwards local plaintext proxy traffic to the pool host proxy over mTLS.
 - The proxy unit resolves sentinels through `proxyagent.secretResolver`, which
   calls the control plane with the scoped token the agent process writes to this
-  pool's resolve-context file.
+  pool's resolve-context file. It hands the proxy the secret the answer names
+  with the value, which the proxy records on every request it swaps the value
+  into
+  ([ADR 26-10-01-240](../docs/adr/26-10-01-240-a-swapped-request-records-the-secrets-it-spent.md)).
 - The same resolver reports back what an upstream made of a credential it
   handed over: a `401` the proxy's retry could not save, and the clearance when
   one starts working again

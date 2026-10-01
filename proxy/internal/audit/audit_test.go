@@ -481,3 +481,47 @@ func TestRecorderKeepsDNSOffTheHTTPQueue(t *testing.T) {
 		t.Fatal("a one-slot DNS queue took 2000 lookups without dropping any")
 	}
 }
+
+// A request's secrets are recorded beside its uses (ADR 26-10-01-240), and a
+// pool's database written before the column existed is upgraded in place: its
+// rows read the new column as empty rather than failing the read.
+func TestRecorderRecordsSecretsAndUpgradesAnOlderDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.db")
+	recorder, err := Open(context.Background(), path, 8, true)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	recorder.RecordHTTP(HTTPEvent{ClientID: "sandbox-1", URL: "https://old.example.com", SwappedUseIDs: []string{"use_old"}})
+	drainRecorder(t, recorder)
+	// The database as a pool wrote it before this column: the row is there,
+	// the column is not.
+	if err := recorder.db.Exec(`ALTER TABLE http_exchanges DROP COLUMN swapped_secret_ids`).Error; err != nil {
+		t.Fatalf("drop column: %v", err)
+	}
+	if err := recorder.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	recorder, err = Open(context.Background(), path, 8, true)
+	if err != nil {
+		t.Fatalf("reopening an older database: %v", err)
+	}
+	t.Cleanup(func() { _ = recorder.Close() })
+	recorder.RecordHTTP(HTTPEvent{ClientID: "sandbox-1", URL: "https://new.example.com", SwappedSecretIDs: []string{"sec_a", "sec_b"}})
+	drainRecorder(t, recorder)
+
+	rows, err := recorder.ListHTTP(context.Background(), QueryOptions{})
+	if err != nil {
+		t.Fatalf("ListHTTP() error = %v", err)
+	}
+	got := map[string]string{}
+	for _, row := range rows {
+		got[row.URL] = row.SwappedSecretIDs
+	}
+	if secrets, ok := got["https://old.example.com"]; !ok || secrets != "" {
+		t.Fatalf("the older row = %q (present %v), want it read with no secrets", secrets, ok)
+	}
+	if got["https://new.example.com"] != "sec_a,sec_b" {
+		t.Fatalf("the new row's secrets = %q, want sec_a,sec_b", got["https://new.example.com"])
+	}
+}

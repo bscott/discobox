@@ -320,6 +320,11 @@ func auditRecords[T any](source auditSource[T], name string, label func(T) audit
 
 func httpAuditRecord(e apimodel.HTTPAuditExchange) auditRecord {
 	summary := fmt.Sprintf("%s %s %s", terminalSafe(e.Method), httpAuditStatus(e), terminalSafe(e.URL))
+	// The secrets a request carried, whatever stood in for them; the uses only
+	// a credential taken through discobox-access has (ADR 26-10-01-240).
+	if len(e.SwappedSecretIds) > 0 {
+		summary += " secrets=" + terminalSafe(strings.Join(e.SwappedSecretIds, ","))
+	}
 	if len(e.SwappedUseIds) > 0 {
 		summary += " uses=" + terminalSafe(strings.Join(e.SwappedUseIds, ","))
 	}

@@ -31,12 +31,19 @@ func TestAuditGetReadsAnExchangeInFull(t *testing.T) {
 				"displayName":"box","poolId":"` + poolID + `","config":{"name":"box","image":""},
 				"runtime":{"state":"ready","desiredState":"present","generation":1,"observedGeneration":1},
 				"createdAt":"2026-09-17T09:00:00Z","updatedAt":"2026-09-17T09:00:01Z"}`))
+		case strings.HasSuffix(r.URL.Path, "/secrets/sec_gh"):
+			_, _ = w.Write([]byte(`{"id":"sec_gh","projectId":"project-1","name":"GitHub token","type":"token","maxGrantTTLSeconds":0,"createdAt":"2026-06-17T00:00:00Z","updatedAt":"2026-06-17T00:00:01Z"}`))
+		case strings.HasSuffix(r.URL.Path, "/secrets/sec_gone"):
+			// Deleted since: the record still names it, by ID.
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"status":404,"title":"Not Found","detail":"secret not found"}`))
 		case strings.Contains(r.URL.Path, "/audit/http/"):
 			gotPath, gotSandbox = r.URL.Path, r.URL.Query().Get("sandboxId")
 			_, _ = w.Write([]byte(`{"poolId":"` + poolID + `","id":"http_10219","createdAt":"2026-09-17T10:00:00Z",
 				"writtenAt":"2026-09-17T10:00:02Z","sandboxId":"` + sandboxID + `","method":"POST",
 				"url":"https://api.github.com/x\u001b[1A","host":"api.github.com","status":201,"blocked":false,
-				"swappedUseIds":["use_x"],"durationMillis":340,
+				"swappedUseIds":["use_x"],"swappedSecretIds":["sec_gh","sec_gone"],"durationMillis":340,
 				"requestHeaders":{"Authorization":["[REDACTED]"],"Accept":["application/json"]},
 				"responseHeaders":{"Content-Type":["application/json"]},
 				"appliedHeaders":["Authorization"],"appliedRuleId":"rule-1","appliedPattern":"api.github.com/*",
@@ -59,6 +66,8 @@ func TestAuditGetReadsAnExchangeInFull(t *testing.T) {
 		"rule-1 (api.github.com/*)", "stored, key key-1",
 		"2048 bytes, recorded as raw",
 		"request headers:", "Authorization: [REDACTED]", "response headers:",
+		// Each secret by ID and its name now; one deleted since by its ID.
+		"secrets:       sec_gh (GitHub token), sec_gone",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("detail missing %q:\n%s", want, stdout)

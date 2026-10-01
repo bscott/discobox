@@ -131,6 +131,7 @@ func (a *App) printHTTPAuditRecord(ctx context.Context, out io.Writer, asJSON bo
 		{"host", terminalSafe(detail.Host)},
 		{"status", httpAuditDetailStatus(detail)},
 		{"duration", (time.Duration(detail.DurationMillis.Or(0)) * time.Millisecond).String()},
+		{"secrets", a.auditSecretNames(ctx, client, projectID, detail.SwappedSecretIds)},
 		{"uses", terminalSafe(strings.Join(detail.SwappedUseIds, ", "))},
 		{"rule", auditFieldPair(detail.AppliedRuleId.Or(""), detail.AppliedPattern.Or(""))},
 		{"set headers", terminalSafe(strings.Join(detail.AppliedHeaders, ", "))},
@@ -271,6 +272,24 @@ func (a *App) readOneExecEvent(ctx context.Context, client *apiclientgen.Client,
 		return nil, err
 	}
 	return body.GetEvents(), nil
+}
+
+// auditSecretNames is the secrets a request carried, each by its ID and the
+// name it has now. A record outlives a secret's name and the secret itself, so
+// one that cannot be read is shown by its ID alone rather than failing the
+// record it is a line of.
+func (a *App) auditSecretNames(ctx context.Context, client *apiclientgen.Client, projectID string, ids []string) string {
+	named := make([]string, 0, len(ids))
+	for _, id := range ids {
+		label := terminalSafe(id)
+		if res, err := client.GetSecret(ctx, apiclientgen.GetSecretParams{ProjectId: projectID, SecretId: id}); err == nil {
+			if secret, err := expectResponse[apimodel.Secret](res); err == nil && secret.Name != "" {
+				label += " (" + terminalSafe(secret.Name) + ")"
+			}
+		}
+		named = append(named, label)
+	}
+	return strings.Join(named, ", ")
 }
 
 func auditRecordNotFound(recordID, sandboxID string) error {

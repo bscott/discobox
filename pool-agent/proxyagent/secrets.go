@@ -172,6 +172,10 @@ type resolveResponseBody struct {
 	Status    string     `json:"status"`
 	Value     string     `json:"value"`
 	ExpiresAt *time.Time `json:"expiresAt"`
+	// SecretID is the secret the value is, which the proxy records on every
+	// request it swaps the value into (ADR 26-10-01-240). Empty from a control
+	// plane that predates it.
+	SecretID string `json:"secretId"`
 }
 
 // rejectionRequestBody reports what an upstream made of a credential this pool
@@ -250,7 +254,7 @@ func (r *secretResolver) Resolve(ctx context.Context, req proxy.SecretResolveReq
 	if out.Status != "approved" || out.Value == "" {
 		return proxy.SecretResolveResult{}, proxy.ErrSecretResolveDenied
 	}
-	result := proxy.SecretResolveResult{Value: out.Value, UseID: useID}
+	result := proxy.SecretResolveResult{Value: out.Value, UseID: useID, SecretID: out.SecretID}
 	if out.ExpiresAt != nil {
 		result.ExpiresAt = *out.ExpiresAt
 	}

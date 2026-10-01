@@ -207,6 +207,7 @@ func (h *Handler) ResolveSandboxSecret(ctx context.Context, req *apimodel.Resolv
 		if resolution.ExpiresAt != nil {
 			resp.SetExpiresAt(serverapi.NewOptDateTime(*resolution.ExpiresAt))
 		}
+		resp.SetSecretId(serverapi.NewOptString(resolution.SecretID))
 	}
 	return &resp, nil
 }

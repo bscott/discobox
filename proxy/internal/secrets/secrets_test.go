@@ -528,6 +528,60 @@ func TestSwapReportsEveryUseID(t *testing.T) {
 	}
 }
 
+// Every swapped value names its secret, an ordinary sentinel's as much as one
+// taken under an approved use — which has no use to name — and a cached value
+// as much as one just resolved (ADR 26-10-01-240).
+func TestSwapReportsSecretIDForEverySentinel(t *testing.T) {
+	resolver := &fakeResolver{fn: func(req ResolveRequest) (ResolveResult, error) {
+		switch req.Sentinel {
+		case "SENTINELUSER":
+			return ResolveResult{Value: "real-user", SecretID: "sec_user", ExpiresAt: time.Now().Add(time.Hour)}, nil
+		case "SENTINELPASS":
+			return ResolveResult{Value: "real-pass", UseID: "use_pass", SecretID: "sec_pass", ExpiresAt: time.Now().Add(time.Hour)}, nil
+		}
+		return ResolveResult{}, ErrDenied
+	}}
+	sw := New(resolver, Config{Sentinels: map[string][]string{"sandbox-1": {"SENTINELUSER", "SENTINELPASS"}}})
+
+	for i := range 2 {
+		req := newRequest(t, http.MethodGet, "https://github.com/org/repo.git/info/refs")
+		req.Header.Set("Authorization", basicAuth("SENTINELUSER:SENTINELPASS"))
+		res := sw.Apply(context.Background(), req, "sandbox-1")
+		if !slices.Equal(res.SecretIDs, []string{"sec_pass", "sec_user"}) {
+			t.Fatalf("request %d: SecretIDs = %v, want both secrets", i, res.SecretIDs)
+		}
+		if !slices.Equal(res.UseIDs, []string{"use_pass"}) {
+			t.Fatalf("request %d: UseIDs = %v, want only the approved use", i, res.UseIDs)
+		}
+	}
+	if calls := resolver.calls.Load(); calls != 2 {
+		t.Fatalf("resolver calls = %d, want 2 (the second request should hit the cache)", calls)
+	}
+}
+
+// The retry with the value a rotation displaced spends the same secret, and
+// its row names it.
+func TestApplyPreviousReportsTheSecret(t *testing.T) {
+	now := time.Unix(1000, 0)
+	value := "FIRST"
+	resolver := &fakeResolver{fn: func(ResolveRequest) (ResolveResult, error) {
+		return ResolveResult{Value: value, SecretID: "sec_key", ExpiresAt: now.Add(30 * time.Second)}, nil
+	}}
+	sw := New(resolver, Config{Sentinels: map[string][]string{"sandbox-1": {"SENTINEL"}}})
+	sw.now = func() time.Time { return now }
+	swapAuth(t, sw, "sandbox-1", "SENTINEL")
+	now = now.Add(time.Minute)
+	value = "SECOND"
+	swapAuth(t, sw, "sandbox-1", "SENTINEL")
+
+	req := newRequest(t, http.MethodGet, "https://api.example.com/")
+	req.Header.Set("Authorization", "Bearer SENTINEL")
+	res := sw.ApplyPrevious(req, "sandbox-1")
+	if !res.Swapped() || !slices.Equal(res.SecretIDs, []string{"sec_key"}) {
+		t.Fatalf("ApplyPrevious swapped %v with SecretIDs %v, want the displaced value's secret", res.Swapped(), res.SecretIDs)
+	}
+}
+
 // What Match reports is what Apply would swap. The two walk the same surface
 // through the same scan, and a sentinel Apply substitutes without Match having
 // named it would be a credential sent on a request nothing authorized

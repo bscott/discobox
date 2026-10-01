@@ -43,6 +43,11 @@ type ResolveResult struct {
 	// It is an identifier, never a sentinel: it authorizes nothing, so it is
 	// safe in a trail kept to be read later.
 	UseID string
+	// SecretID is the secret the value is, for every kind of sentinel: the
+	// audit row names what a request spent even where no use was approved
+	// (ADR 26-10-01-240). An identifier like UseID, and empty from a control
+	// plane that predates it.
+	SecretID string
 }
 
 // Outcome is what an upstream made of a credential the proxy swapped in, as
@@ -250,9 +255,10 @@ type Swapper struct {
 }
 
 type previousValue struct {
-	value string
-	useID string
-	until time.Time
+	value    string
+	useID    string
+	secretID string
+	until    time.Time
 }
 
 type cacheEntry struct {
@@ -260,9 +266,11 @@ type cacheEntry struct {
 	// useID rides the cached value because the audit row needs it on every
 	// request, not only the one that resolved. The cache key includes the
 	// sentinel, and an ephemeral sentinel belongs to exactly one activation, so
-	// an entry can never be shared by two uses.
-	useID  string
-	denied bool
+	// an entry can never be shared by two uses. secretID rides it for the same
+	// reason, and a sentinel stands for one secret.
+	useID    string
+	secretID string
+	denied   bool
 	// expiresAt is the hard bound: past it the entry is unusable and a request
 	// resolves synchronously.
 	expiresAt time.Time
@@ -331,6 +339,9 @@ type Result struct {
 	// sends a username and a password in a single Authorization: Basic token,
 	// and each half resolves on its own.
 	UseIDs []string
+	// SecretIDs are the secrets the substituted values were, for every kind
+	// of sentinel, plural for the same reason (ADR 26-10-01-240).
+	SecretIDs []string
 }
 
 // Swapped reports whether any value in the request was substituted.
@@ -359,6 +370,7 @@ func (s *Swapper) Apply(ctx context.Context, req *http.Request, clientID string)
 	dedupe(&res.Headers)
 	dedupe(&res.QueryParams)
 	dedupe(&res.UseIDs)
+	dedupe(&res.SecretIDs)
 	dedupe(&res.Sentinels)
 	return res
 }
@@ -528,7 +540,7 @@ func (s *Swapper) resolve(ctx context.Context, clientID, sentinel, host string, 
 		if !entry.refreshAt.IsZero() && !now.Before(entry.refreshAt) {
 			s.triggerRefresh(clientID, sentinel, host, key)
 		}
-		noteUseID(res, entry.useID)
+		noteSwap(res, entry.useID, entry.secretID)
 		res.Sentinels = append(res.Sentinels, sentinel)
 		return entry.value, true
 	}
@@ -548,18 +560,22 @@ func (s *Swapper) resolve(ctx context.Context, clientID, sentinel, host string, 
 	if cacheable {
 		s.store(key, entry)
 	}
-	noteUseID(res, result.UseID)
+	noteSwap(res, result.UseID, result.SecretID)
 	res.Sentinels = append(res.Sentinels, sentinel)
 	return result.Value, true
 }
 
-// noteUseID records one approved use on a swap result, ignoring the empty ID a
-// sentinel outside the agent credentials protocol resolves with.
-func noteUseID(res *Result, useID string) {
-	if useID == "" {
-		return
+// noteSwap records what one substituted value was on a swap result: the
+// approved use it was taken under, which a sentinel outside the agent
+// credentials protocol has none of, and the secret it is, which an older
+// control plane does not say. An empty ID is not recorded.
+func noteSwap(res *Result, useID, secretID string) {
+	if useID != "" {
+		res.UseIDs = append(res.UseIDs, useID)
 	}
-	res.UseIDs = append(res.UseIDs, useID)
+	if secretID != "" {
+		res.SecretIDs = append(res.SecretIDs, secretID)
+	}
 }
 
 // entryFor turns a resolver result into a cache entry, applying the positive TTL
@@ -581,7 +597,7 @@ func (s *Swapper) entryFor(result ResolveResult, now time.Time) (cacheEntry, boo
 		// refresh, it will resolve synchronously once expired.
 		refreshAt = time.Time{}
 	}
-	return cacheEntry{value: result.Value, useID: result.UseID, expiresAt: expiresAt, refreshAt: refreshAt}, true
+	return cacheEntry{value: result.Value, useID: result.UseID, secretID: result.SecretID, expiresAt: expiresAt, refreshAt: refreshAt}, true
 }
 
 // triggerRefresh refreshes a soft-expired entry in the background, deduplicated
@@ -631,7 +647,7 @@ func (s *Swapper) triggerRefresh(clientID, sentinel, host, key string) {
 func (s *Swapper) store(key string, entry cacheEntry) {
 	s.mu.Lock()
 	if old, ok := s.cache[key]; ok && !old.denied && old.value != "" && old.value != entry.value {
-		s.previous[key] = previousValue{value: old.value, useID: old.useID, until: s.now().Add(previousValueGrace)}
+		s.previous[key] = previousValue{value: old.value, useID: old.useID, secretID: old.secretID, until: s.now().Add(previousValueGrace)}
 	}
 	s.cache[key] = entry
 	s.mu.Unlock()
@@ -670,14 +686,15 @@ func (s *Swapper) ApplyPrevious(req *http.Request, clientID string) Result {
 	for name, values := range req.Header {
 		for i, value := range values {
 			out := swapSentinels(value, sentinels, func(sentinel string) (string, bool) {
-				value, useID, ok := s.previousFor(clientID, sentinel, host, now)
-				// The retry spends the same approved use the rejected attempt
-				// did, so its audit row names it too.
-				noteUseID(&res, useID)
-				if ok {
-					res.Sentinels = append(res.Sentinels, sentinel)
+				prev, ok := s.previousFor(clientID, sentinel, host, now)
+				if !ok {
+					return "", false
 				}
-				return value, ok
+				// The retry spends the same approved use and the same secret
+				// the rejected attempt did, so its audit row names them too.
+				noteSwap(&res, prev.useID, prev.secretID)
+				res.Sentinels = append(res.Sentinels, sentinel)
+				return prev.value, true
 			})
 			if out.swapped {
 				req.Header[name][i] = out.value
@@ -687,23 +704,24 @@ func (s *Swapper) ApplyPrevious(req *http.Request, clientID string) Result {
 	}
 	dedupe(&res.Headers)
 	dedupe(&res.UseIDs)
+	dedupe(&res.SecretIDs)
 	dedupe(&res.Sentinels)
 	return res
 }
 
-func (s *Swapper) previousFor(clientID, sentinel, host string, now time.Time) (string, string, bool) {
+func (s *Swapper) previousFor(clientID, sentinel, host string, now time.Time) (previousValue, bool) {
 	key := clientID + "\x00" + sentinel + "\x00" + host
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	prev, ok := s.previous[key]
 	if !ok {
-		return "", "", false
+		return previousValue{}, false
 	}
 	if !now.Before(prev.until) {
 		delete(s.previous, key)
-		return "", "", false
+		return previousValue{}, false
 	}
-	return prev.value, prev.useID, true
+	return prev, true
 }
 
 // Report hands the response path's verdict to the resolver. It is a

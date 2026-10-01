@@ -113,9 +113,13 @@ first, from every pool in the project. With --follow, print the last --limit
 oldest first and keep printing requests as they are recorded.
 
 The proxy records these from what crossed the wire, so a discobox cannot alter
-them. USES names the approved credential uses whose values the proxy swapped
-into a request: pass one to --use-id here and to "audit creds" to see the
-verdict that authorized a credential beside every request that spent it.
+them. SECRETS names every secret whose value the proxy swapped into a
+request, however it reached the discobox — a harness's own keys included.
+USES names the approved credential uses among them, which only a credential
+taken with discobox-access has: pass one to --use-id here and to "audit creds"
+to see the verdict that authorized a credential beside every request that
+spent it. A request recorded by a pool from before secrets were recorded names
+none.
 
 --body ID prints what the proxy recorded beside the request with that ID: the
 response body, or with --part the request body or an upgraded connection's
@@ -252,7 +256,7 @@ func httpAuditTable(follow bool) auditTable[apimodel.HTTPAuditExchange] {
 		columns: []auditColumn{
 			{name: "TIME", width: 12}, {name: "POOL", width: 22}, {name: "ID", width: 12},
 			{name: "DISCOBOX", width: 22}, {name: "METHOD", width: 7}, {name: "STATUS", width: 7},
-			{name: "REFUSED BY", width: 10}, {name: "USES", width: 22}, {name: "URL"},
+			{name: "REFUSED BY", width: 10}, {name: "USES", width: 22}, {name: "SECRETS", width: 22}, {name: "URL"},
 		},
 		row: func(e apimodel.HTTPAuditExchange) []string {
 			return []string{
@@ -264,6 +268,7 @@ func httpAuditTable(follow bool) auditTable[apimodel.HTTPAuditExchange] {
 				httpAuditStatus(e),
 				httpAuditRefuser(e.Blocked, e.BlockedReason.Or("")),
 				terminalSafe(strings.Join(e.SwappedUseIds, ",")),
+				terminalSafe(strings.Join(e.SwappedSecretIds, ",")),
 				truncateTableValue(terminalSafe(e.URL), 100),
 			}
 		},

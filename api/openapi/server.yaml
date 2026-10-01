@@ -3435,6 +3435,11 @@ components:
                 status:
                     description: Response status; zero when no response was received
                     type: integer
+                swappedSecretIds:
+                    description: Secrets whose values were swapped into this request, by ID, whatever kind of sentinel stood in for them. It is optional because a pool agent older than ADR 26-10-01-240 does not send it, and absent means no secret was named.
+                    items:
+                        type: string
+                    type: array
                 swappedUseIds:
                     description: Approved credential uses whose sentinels were swapped into this request. Joins to credential verdicts by useId.
                     items:
@@ -3588,6 +3593,11 @@ components:
                 streamSessionId:
                     description: The upgraded stream's session
                     type: string
+                swappedSecretIds:
+                    description: Secrets whose values were swapped into this request, by ID, whatever kind of sentinel stood in for them. It is optional because a pool agent older than ADR 26-10-01-240 does not send it, and absent means no secret was named.
+                    items:
+                        type: string
+                    type: array
                 swappedUseIds:
                     description: Approved credential uses whose sentinels were swapped into this request. Joins to credential verdicts by useId.
                     items:
@@ -3773,6 +3783,9 @@ components:
                 expiresAt:
                     description: Grant expiry time when approved.
                     format: date-time
+                    type: string
+                secretId:
+                    description: The secret the value is; present only when status is approved. The pool's proxy records it on the request the value is swapped into (ADR 26-10-01-240).
                     type: string
             required:
                 - status

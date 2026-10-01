@@ -5,8 +5,11 @@ authorizes them, and the two ways a sandbox comes to use one. It also owns host
 trust ([below](#host-trust)), the other thing an agent asks a person for.
 
 Cleartext leaves the control plane through exactly one door — `ResolveSandboxSecret`,
-called by a pool agent's proxy for one sentinel and one destination host. Every
-other surface here deals in sentinels, requests, and grants.
+called by a pool agent's proxy for one sentinel and one destination host. An
+approved answer names the secret beside its value, which the proxy records on
+the request it swaps the value into
+([ADR 26-10-01-240](../../../../docs/adr/26-10-01-240-a-swapped-request-records-the-secrets-it-spent.md)).
+Every other surface here deals in sentinels, requests, and grants.
 
 ## Grants authorize; requests are the inbox
 

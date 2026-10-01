@@ -3544,6 +3544,10 @@ type HTTPAuditExchange struct {
 	SandboxId string `json:"sandboxId"`
 	// Response status; zero when no response was received.
 	Status int `json:"status"`
+	// Secrets whose values were swapped into this request, by ID, whatever kind of sentinel stood in for
+	// them. It is optional because a pool agent older than ADR 26-10-01-240 does not send it, and absent
+	// means no secret was named.
+	SwappedSecretIds []string `json:"swappedSecretIds"`
 	// Approved credential uses whose sentinels were swapped into this request. Joins to credential
 	// verdicts by useId.
 	SwappedUseIds []string `json:"swappedUseIds"`
@@ -3623,6 +3627,11 @@ func (s *HTTPAuditExchange) GetSandboxId() string {
 // GetStatus returns the value of Status.
 func (s *HTTPAuditExchange) GetStatus() int {
 	return s.Status
+}
+
+// GetSwappedSecretIds returns the value of SwappedSecretIds.
+func (s *HTTPAuditExchange) GetSwappedSecretIds() []string {
+	return s.SwappedSecretIds
 }
 
 // GetSwappedUseIds returns the value of SwappedUseIds.
@@ -3713,6 +3722,11 @@ func (s *HTTPAuditExchange) SetSandboxId(val string) {
 // SetStatus sets the value of Status.
 func (s *HTTPAuditExchange) SetStatus(val int) {
 	s.Status = val
+}
+
+// SetSwappedSecretIds sets the value of SwappedSecretIds.
+func (s *HTTPAuditExchange) SetSwappedSecretIds(val []string) {
+	s.SwappedSecretIds = val
 }
 
 // SetSwappedUseIds sets the value of SwappedUseIds.
@@ -3810,6 +3824,10 @@ type HTTPAuditExchangeDetail struct {
 	StreamRecorded OptBool `json:"streamRecorded"`
 	// The upgraded stream's session.
 	StreamSessionId OptString `json:"streamSessionId"`
+	// Secrets whose values were swapped into this request, by ID, whatever kind of sentinel stood in for
+	// them. It is optional because a pool agent older than ADR 26-10-01-240 does not send it, and absent
+	// means no secret was named.
+	SwappedSecretIds []string `json:"swappedSecretIds"`
 	// Approved credential uses whose sentinels were swapped into this request. Joins to credential
 	// verdicts by useId.
 	SwappedUseIds []string `json:"swappedUseIds"`
@@ -3995,6 +4013,11 @@ func (s *HTTPAuditExchangeDetail) GetStreamRecorded() OptBool {
 // GetStreamSessionId returns the value of StreamSessionId.
 func (s *HTTPAuditExchangeDetail) GetStreamSessionId() OptString {
 	return s.StreamSessionId
+}
+
+// GetSwappedSecretIds returns the value of SwappedSecretIds.
+func (s *HTTPAuditExchangeDetail) GetSwappedSecretIds() []string {
+	return s.SwappedSecretIds
 }
 
 // GetSwappedUseIds returns the value of SwappedUseIds.
@@ -4200,6 +4223,11 @@ func (s *HTTPAuditExchangeDetail) SetStreamRecorded(val OptBool) {
 // SetStreamSessionId sets the value of StreamSessionId.
 func (s *HTTPAuditExchangeDetail) SetStreamSessionId(val OptString) {
 	s.StreamSessionId = val
+}
+
+// SetSwappedSecretIds sets the value of SwappedSecretIds.
+func (s *HTTPAuditExchangeDetail) SetSwappedSecretIds(val []string) {
+	s.SwappedSecretIds = val
 }
 
 // SetSwappedUseIds sets the value of SwappedUseIds.
@@ -16353,6 +16381,9 @@ type ResolveSandboxSecretResponse struct {
 	Value OptString `json:"value"`
 	// Grant expiry time when approved.
 	ExpiresAt OptDateTime `json:"expiresAt"`
+	// The secret the value is; present only when status is approved. The pool's proxy records it on the
+	// request the value is swapped into (ADR 26-10-01-240).
+	SecretId OptString `json:"secretId"`
 }
 
 // GetSchema returns the value of Schema.
@@ -16375,6 +16406,11 @@ func (s *ResolveSandboxSecretResponse) GetExpiresAt() OptDateTime {
 	return s.ExpiresAt
 }
 
+// GetSecretId returns the value of SecretId.
+func (s *ResolveSandboxSecretResponse) GetSecretId() OptString {
+	return s.SecretId
+}
+
 // SetSchema sets the value of Schema.
 func (s *ResolveSandboxSecretResponse) SetSchema(val OptURI) {
 	s.Schema = val
@@ -16393,6 +16429,11 @@ func (s *ResolveSandboxSecretResponse) SetValue(val OptString) {
 // SetExpiresAt sets the value of ExpiresAt.
 func (s *ResolveSandboxSecretResponse) SetExpiresAt(val OptDateTime) {
 	s.ExpiresAt = val
+}
+
+// SetSecretId sets the value of SecretId.
+func (s *ResolveSandboxSecretResponse) SetSecretId(val OptString) {
+	s.SecretId = val
 }
 
 func (*ResolveSandboxSecretResponse) resolveSandboxSecretRes() {}

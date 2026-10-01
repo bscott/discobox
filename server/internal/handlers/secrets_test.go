@@ -9,6 +9,8 @@ import (
 
 	serverapi "github.com/discobox-ai/discobox/api/gen"
 	"github.com/discobox-ai/discobox/judge"
+	"github.com/discobox-ai/discobox/pool-agent/poolauth"
+	"github.com/discobox-ai/discobox/server/internal/auth"
 	"github.com/discobox-ai/discobox/server/internal/model"
 	svcapi "github.com/discobox-ai/discobox/server/internal/services"
 	"github.com/discobox-ai/discobox/server/internal/store"
@@ -367,5 +369,36 @@ func TestListCredentialVerdictsReturnsARequestVerdictsFields(t *testing.T) {
 		v.JudgeSandboxId.Or("") != "sbx_judge" || v.HarnessConfigId.Or("") != "hc_1" ||
 		v.Image.Or("") != "harness:1" || v.ImageDigest.Or("") != "sha256:one" {
 		t.Fatalf("request verdict lost a field on the way out: %+v", v)
+	}
+}
+
+// resolvingSecretService approves every resolve with one secret's value.
+type resolvingSecretService struct{ fakeSecretService }
+
+func (resolvingSecretService) ResolveSandboxSecret(context.Context, string, string, string, string) (*model.SandboxSecretResolution, error) {
+	return &model.SandboxSecretResolution{
+		Status:   model.SecretRequestStatusApproved,
+		Value:    &model.SecretValue{Token: "real-token"},
+		SecretID: "sec_1",
+	}, nil
+}
+
+// An approved answer names the secret it is, so the pool's proxy can record
+// which secret a request spent (ADR 26-10-01-240).
+func TestResolveSandboxSecretNamesTheSecret(t *testing.T) {
+	h := New(svcapi.Services{Secrets: resolvingSecretService{}})
+	ctx := auth.WithPrincipal(context.Background(), auth.Principal{
+		Type: auth.PrincipalTypePool, PoolID: "pool-1", Scopes: []string{poolauth.ScopeSecretResolve},
+	})
+	res, err := h.ResolveSandboxSecret(ctx, &serverapi.ResolveSandboxSecretBody{SandboxId: "sb-1", Sentinel: "SENT", Host: "api.example.com"}, serverapi.ResolveSandboxSecretParams{PoolId: "pool-1"})
+	if err != nil {
+		t.Fatalf("ResolveSandboxSecret() error = %v", err)
+	}
+	body, ok := res.(*serverapi.ResolveSandboxSecretResponse)
+	if !ok {
+		t.Fatalf("response = %T, want the resolution", res)
+	}
+	if body.Status != serverapi.ResolveSandboxSecretResponseStatusApproved || body.SecretId.Or("") != "sec_1" {
+		t.Fatalf("resolution = %+v, want approved and naming sec_1", body)
 	}
 }

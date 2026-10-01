@@ -36,6 +36,8 @@ type stubResolver struct {
 	value string
 	host  string
 	useID string
+	// secretID is the secret every value is, as the control plane names it.
+	secretID string
 	// reports is where this resolver is told what the upstream made of its
 	// value, for the tests that assert on it. Nil discards.
 	reports *reportLog
@@ -109,7 +111,7 @@ func (r stubResolver) Resolve(_ context.Context, req secrets.ResolveRequest) (se
 	if r.host != "" && req.Host != r.host {
 		return secrets.ResolveResult{}, secrets.ErrDenied
 	}
-	return secrets.ResolveResult{Value: r.value, UseID: r.useID, ExpiresAt: time.Now().Add(time.Hour)}, nil
+	return secrets.ResolveResult{Value: r.value, UseID: r.useID, SecretID: r.secretID, ExpiresAt: time.Now().Add(time.Hour)}, nil
 }
 
 func TestHTTPProxyMTLSIdentityHeaderRewriteAndAudit(t *testing.T) {
@@ -264,7 +266,15 @@ func TestHTTPProxyMTLSIdentityHeaderRewriteAndAudit(t *testing.T) {
 	}
 }
 
+// A swapped request's row names the secret it spent whatever stood in for it:
+// an ordinary injected sentinel, which has no approved use (ADR 26-10-01-240),
+// and one taken under a use, which names the use as well (ADR 0130 §3).
 func TestHTTPProxySecretSentinelSwapAndAudit(t *testing.T) {
+	t.Run("ordinary sentinel", func(t *testing.T) { testSentinelSwapAndAudit(t, "") })
+	t.Run("approved use", func(t *testing.T) { testSentinelSwapAndAudit(t, "use_abc") })
+}
+
+func testSentinelSwapAndAudit(t *testing.T, useID string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -310,7 +320,7 @@ func TestHTTPProxySecretSentinelSwapAndAudit(t *testing.T) {
 				Sentinels: []string{sentinel},
 			}},
 		},
-	}, prepared.Bundle, stubResolver{value: realValue, host: originHost, useID: "use_abc"})
+	}, prepared.Bundle, stubResolver{value: realValue, host: originHost, useID: useID, secretID: "sec_abc"})
 	if err != nil {
 		t.Fatalf("NewServer() error = %v", err)
 	}
@@ -376,11 +386,15 @@ func TestHTTPProxySecretSentinelSwapAndAudit(t *testing.T) {
 	}
 	// The join to the control plane's verdict trail (ADR 0130 §3): the row
 	// names the approved use the request spent, and never the sentinel.
-	if exchange.SwappedUseIDs != "use_abc" {
-		t.Fatalf("SwappedUseIDs = %q, want use_abc", exchange.SwappedUseIDs)
+	if exchange.SwappedUseIDs != useID {
+		t.Fatalf("SwappedUseIDs = %q, want %q", exchange.SwappedUseIDs, useID)
 	}
 	if strings.Contains(exchange.SwappedUseIDs, sentinel) {
 		t.Fatalf("audit recorded a sentinel in the use ID column: %s", exchange.SwappedUseIDs)
+	}
+	// And the secret it spent, whether or not there was a use to name.
+	if exchange.SwappedSecretIDs != "sec_abc" {
+		t.Fatalf("SwappedSecretIDs = %q, want sec_abc", exchange.SwappedSecretIDs)
 	}
 }
 

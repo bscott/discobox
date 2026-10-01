@@ -105,16 +105,17 @@ func seedHTTPAuditRows(t *testing.T, dsn string) {
 		client       string
 		url, host    string
 		uses         string
+		secrets      string
 		status       int
 		responseBody string
 	}{
-		{older, "sandbox-1", "https://api.github.com/user", "api.github.com", "use_abc", 200, "response-1"},
-		{newer, "sandbox-2", "https://example.com/", "example.com", "", 404, ""},
+		{older, "sandbox-1", "https://api.github.com/user", "api.github.com", "use_abc", "sec_abc", 200, "response-1"},
+		{newer, "sandbox-2", "https://example.com/", "example.com", "", "", 404, ""},
 	} {
 		if err := pools.Write.Exec(
-			`INSERT INTO http_exchanges (created_at, enqueued_at, written_at, client_id, method, url, host, status, duration_millis, swapped_use_ids, response_body_file, response_body_format)
-			 VALUES (?, ?, ?, ?, 'GET', ?, ?, ?, 12, ?, ?, 'raw')`,
-			row.createdAt, row.createdAt, row.createdAt, row.client, row.url, row.host, row.status, row.uses, row.responseBody,
+			`INSERT INTO http_exchanges (created_at, enqueued_at, written_at, client_id, method, url, host, status, duration_millis, swapped_use_ids, swapped_secret_ids, response_body_file, response_body_format)
+			 VALUES (?, ?, ?, ?, 'GET', ?, ?, ?, 12, ?, ?, ?, 'raw')`,
+			row.createdAt, row.createdAt, row.createdAt, row.client, row.url, row.host, row.status, row.uses, row.secrets, row.responseBody,
 		).Error; err != nil {
 			t.Fatalf("seed audit row: %v", err)
 		}
@@ -139,6 +140,13 @@ func TestPoolProviderListHTTPAuditReadsTheProxyThroughTheAgent(t *testing.T) {
 	}
 	if all[0].SwappedUseIDs == nil || len(all[0].SwappedUseIDs) != 0 {
 		t.Fatalf("an exchange that spent nothing has uses %#v, want an empty list", all[0].SwappedUseIDs)
+	}
+	// The secrets it spent ride the same three hops (ADR 26-10-01-240).
+	if !reflect.DeepEqual(all[1].SwappedSecretIDs, []string{"sec_abc"}) {
+		t.Fatalf("sandbox-1's secrets = %#v, want [sec_abc]", all[1].SwappedSecretIDs)
+	}
+	if all[0].SwappedSecretIDs == nil || len(all[0].SwappedSecretIDs) != 0 {
+		t.Fatalf("an exchange that spent nothing has secrets %#v, want an empty list", all[0].SwappedSecretIDs)
 	}
 
 	// The join the whole trail is for: one use ID, the one request that spent it.

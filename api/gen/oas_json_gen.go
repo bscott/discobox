@@ -6409,6 +6409,16 @@ func (s *HTTPAuditExchange) encodeFields(e *jx.Encoder) {
 		e.Int(s.Status)
 	}
 	{
+		if s.SwappedSecretIds != nil {
+			e.FieldStart("swappedSecretIds")
+			e.ArrStart()
+			for _, elem := range s.SwappedSecretIds {
+				e.Str(elem)
+			}
+			e.ArrEnd()
+		}
+	}
+	{
 		e.FieldStart("swappedUseIds")
 		e.ArrStart()
 		for _, elem := range s.SwappedUseIds {
@@ -6434,7 +6444,7 @@ func (s *HTTPAuditExchange) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfHTTPAuditExchange = [18]string{
+var jsonFieldsNameOfHTTPAuditExchange = [19]string{
 	0:  "$schema",
 	1:  "blocked",
 	2:  "blockedReason",
@@ -6449,10 +6459,11 @@ var jsonFieldsNameOfHTTPAuditExchange = [18]string{
 	11: "responseBytes",
 	12: "sandboxId",
 	13: "status",
-	14: "swappedUseIds",
-	15: "upgrade",
-	16: "upgradeType",
-	17: "url",
+	14: "swappedSecretIds",
+	15: "swappedUseIds",
+	16: "upgrade",
+	17: "upgradeType",
+	18: "url",
 }
 
 // Decode decodes HTTPAuditExchange from json.
@@ -6620,8 +6631,27 @@ func (s *HTTPAuditExchange) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"status\"")
 			}
+		case "swappedSecretIds":
+			if err := func() error {
+				s.SwappedSecretIds = make([]string, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem string
+					v, err := d.Str()
+					elem = string(v)
+					if err != nil {
+						return err
+					}
+					s.SwappedSecretIds = append(s.SwappedSecretIds, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"swappedSecretIds\"")
+			}
 		case "swappedUseIds":
-			requiredBitSet[1] |= 1 << 6
+			requiredBitSet[1] |= 1 << 7
 			if err := func() error {
 				s.SwappedUseIds = make([]string, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -6661,7 +6691,7 @@ func (s *HTTPAuditExchange) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"upgradeType\"")
 			}
 		case "url":
-			requiredBitSet[2] |= 1 << 1
+			requiredBitSet[2] |= 1 << 2
 			if err := func() error {
 				v, err := d.Str()
 				s.URL = string(v)
@@ -6683,8 +6713,8 @@ func (s *HTTPAuditExchange) Decode(d *jx.Decoder) error {
 	var failures []validate.FieldError
 	for i, mask := range [3]uint8{
 		0b11010010,
-		0b01110011,
-		0b00000010,
+		0b10110011,
+		0b00000100,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -6926,6 +6956,16 @@ func (s *HTTPAuditExchangeDetail) encodeFields(e *jx.Encoder) {
 		}
 	}
 	{
+		if s.SwappedSecretIds != nil {
+			e.FieldStart("swappedSecretIds")
+			e.ArrStart()
+			for _, elem := range s.SwappedSecretIds {
+				e.Str(elem)
+			}
+			e.ArrEnd()
+		}
+	}
+	{
 		e.FieldStart("swappedUseIds")
 		e.ArrStart()
 		for _, elem := range s.SwappedUseIds {
@@ -6969,7 +7009,7 @@ func (s *HTTPAuditExchangeDetail) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfHTTPAuditExchangeDetail = [41]string{
+var jsonFieldsNameOfHTTPAuditExchangeDetail = [42]string{
 	0:  "$schema",
 	1:  "appliedHeaders",
 	2:  "appliedPattern",
@@ -7004,13 +7044,14 @@ var jsonFieldsNameOfHTTPAuditExchangeDetail = [41]string{
 	31: "streamFormat",
 	32: "streamRecorded",
 	33: "streamSessionId",
-	34: "swappedUseIds",
-	35: "upgrade",
-	36: "upgradeC2sBytes",
-	37: "upgradeS2cBytes",
-	38: "upgradeType",
-	39: "url",
-	40: "writtenAt",
+	34: "swappedSecretIds",
+	35: "swappedUseIds",
+	36: "upgrade",
+	37: "upgradeC2sBytes",
+	38: "upgradeS2cBytes",
+	39: "upgradeType",
+	40: "url",
+	41: "writtenAt",
 }
 
 // Decode decodes HTTPAuditExchangeDetail from json.
@@ -7388,8 +7429,27 @@ func (s *HTTPAuditExchangeDetail) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"streamSessionId\"")
 			}
+		case "swappedSecretIds":
+			if err := func() error {
+				s.SwappedSecretIds = make([]string, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem string
+					v, err := d.Str()
+					elem = string(v)
+					if err != nil {
+						return err
+					}
+					s.SwappedSecretIds = append(s.SwappedSecretIds, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"swappedSecretIds\"")
+			}
 		case "swappedUseIds":
-			requiredBitSet[4] |= 1 << 2
+			requiredBitSet[4] |= 1 << 3
 			if err := func() error {
 				s.SwappedUseIds = make([]string, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -7449,7 +7509,7 @@ func (s *HTTPAuditExchangeDetail) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"upgradeType\"")
 			}
 		case "url":
-			requiredBitSet[4] |= 1 << 7
+			requiredBitSet[5] |= 1 << 0
 			if err := func() error {
 				v, err := d.Str()
 				s.URL = string(v)
@@ -7484,8 +7544,8 @@ func (s *HTTPAuditExchangeDetail) Decode(d *jx.Decoder) error {
 		0b11100100,
 		0b00100001,
 		0b00011100,
-		0b10000100,
-		0b00000000,
+		0b00001000,
+		0b00000001,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -25644,13 +25704,20 @@ func (s *ResolveSandboxSecretResponse) encodeFields(e *jx.Encoder) {
 			s.ExpiresAt.Encode(e, json.EncodeDateTime)
 		}
 	}
+	{
+		if s.SecretId.Set {
+			e.FieldStart("secretId")
+			s.SecretId.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfResolveSandboxSecretResponse = [4]string{
+var jsonFieldsNameOfResolveSandboxSecretResponse = [5]string{
 	0: "$schema",
 	1: "status",
 	2: "value",
 	3: "expiresAt",
+	4: "secretId",
 }
 
 // Decode decodes ResolveSandboxSecretResponse from json.
@@ -25701,6 +25768,16 @@ func (s *ResolveSandboxSecretResponse) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"expiresAt\"")
+			}
+		case "secretId":
+			if err := func() error {
+				s.SecretId.Reset()
+				if err := s.SecretId.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"secretId\"")
 			}
 		default:
 			return errors.Errorf("unexpected field %q", k)

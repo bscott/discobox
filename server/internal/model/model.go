@@ -1374,6 +1374,9 @@ type SandboxSecretResolution struct {
 	Status    string
 	Value     *SecretValue
 	ExpiresAt *time.Time
+	// SecretID is the secret an approved value is, which the pool's proxy
+	// records on the request it swapped it into (ADR 26-10-01-240 §1).
+	SecretID string
 }
 
 // SandboxSecret binds a sandbox environment variable to a project secret via a

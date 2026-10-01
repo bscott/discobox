@@ -583,3 +583,26 @@ func TestHTTPAuditRecordsGroupByMethodStatusAndOrigin(t *testing.T) {
 		t.Fatalf("a CONNECT is named by its host, got %q", connect.group)
 	}
 }
+
+// The timeline line names the secrets a request carried — an ordinary
+// sentinel's too, which has no use (ADR 26-10-01-240) — and the http table
+// gives them a column beside the uses.
+func TestHTTPAuditNamesTheSecretsSpent(t *testing.T) {
+	t.Parallel()
+	exchange := apimodel.HTTPAuditExchange{Method: "POST", Status: 200, URL: "https://api.anthropic.com/v1/messages", SwappedSecretIds: []string{"sec_key"}}
+	if summary := httpAuditRecord(exchange).summary; !strings.Contains(summary, "secrets=sec_key") || strings.Contains(summary, "uses=") {
+		t.Fatalf("summary = %q, want the secret and no use", summary)
+	}
+	table := httpAuditTable(false)
+	names := table.names()
+	row := table.row(exchange)
+	for i, name := range names {
+		if name == "SECRETS" {
+			if row[i] != "sec_key" {
+				t.Fatalf("SECRETS = %q, want sec_key", row[i])
+			}
+			return
+		}
+	}
+	t.Fatalf("columns %v, want SECRETS", names)
+}

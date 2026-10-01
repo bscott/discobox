@@ -57,8 +57,10 @@ func TestResolverApproved(t *testing.T) {
 		gotAuth = r.Header.Get("Authorization")
 		gotPath = r.URL.Path
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		exp := time.Now().Add(time.Hour)
-		_ = json.NewEncoder(w).Encode(resolveResponseBody{Status: "approved", Value: "real-secret", ExpiresAt: &exp})
+		// Spelled as the server's resolve-sandbox-secret answer spells it, not
+		// with this package's own struct, so a wrong field name shows here.
+		exp := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+		_, _ = w.Write([]byte(`{"status":"approved","value":"real-secret","expiresAt":"` + exp + `","secretId":"sec_1"}`))
 	}))
 	defer srv.Close()
 
@@ -72,6 +74,11 @@ func TestResolverApproved(t *testing.T) {
 	}
 	if res.Value != "real-secret" {
 		t.Fatalf("value = %q", res.Value)
+	}
+	// The secret the value is, which the proxy records on the request
+	// (ADR 26-10-01-240) — for an ordinary sentinel, which has no use.
+	if res.SecretID != "sec_1" || res.UseID != "" {
+		t.Fatalf("secretId = %q useId = %q, want sec_1 and no use", res.SecretID, res.UseID)
 	}
 	if gotAuth != "Bearer tok-123" {
 		t.Fatalf("auth = %q", gotAuth)

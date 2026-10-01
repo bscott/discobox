@@ -82,6 +82,11 @@ type requestMeta struct {
 	// backdate it onto the 401's row, which is written after the retry is
 	// chosen.
 	swappedUseIDs []string
+	// swappedSecretIDs names the secrets this request carried, for every kind
+	// of sentinel (ADR 26-10-01-240). Like swappedUseIDs, the unauthorized
+	// retry does not add to it: it re-swaps the same sentinels, which stand for
+	// the same secrets.
+	swappedSecretIDs []string
 	// swappedSentinels is which sentinels this request carried, kept beside the
 	// header names they were found in because a rejection has to name the
 	// credential and a header name cannot (ADR 0132 §1).
@@ -581,6 +586,7 @@ func (h *httpProxy) auditEvent(req *http.Request, resp *http.Response, meta *req
 		AppliedPattern:       meta.appliedPattern,
 		AppliedHeaders:       meta.appliedHeaders,
 		SwappedUseIDs:        meta.swappedUseIDs,
+		SwappedSecretIDs:     meta.swappedSecretIDs,
 		RedactRequestHeaders: meta.redactRequestHeaders(),
 		RequestHeaders:       req.Header,
 		ResponseHeaders:      headers,
@@ -631,6 +637,7 @@ func (h *httpProxy) swapSecrets(req *http.Request, meta *requestMeta, client cli
 	}
 	meta.swappedHeaders = result.Headers
 	meta.swappedUseIDs = result.UseIDs
+	meta.swappedSecretIDs = result.SecretIDs
 	meta.swappedSentinels = result.Sentinels
 	// A query swap rewrote the URL, so the retry path — which rebuilds a
 	// request from the pre-swap headers — cannot reproduce this request.
@@ -1186,6 +1193,7 @@ func (s *upgradedResponseStream) auditEvent(duration time.Duration) audit.HTTPEv
 		AppliedPattern:       s.meta.appliedPattern,
 		AppliedHeaders:       s.meta.appliedHeaders,
 		SwappedUseIDs:        s.meta.swappedUseIDs,
+		SwappedSecretIDs:     s.meta.swappedSecretIDs,
 		RedactRequestHeaders: s.meta.redactRequestHeaders(),
 		RequestHeaders:       s.req.Header,
 		ResponseHeaders:      s.headers,
@@ -1286,6 +1294,7 @@ func (s *responseStream) finish(aborted bool, readErr error) {
 			AppliedPattern:       s.meta.appliedPattern,
 			AppliedHeaders:       s.meta.appliedHeaders,
 			SwappedUseIDs:        s.meta.swappedUseIDs,
+			SwappedSecretIDs:     s.meta.swappedSecretIDs,
 			RedactRequestHeaders: s.meta.redactRequestHeaders(),
 			RequestHeaders:       s.req.Header,
 			ResponseHeaders:      s.headers,

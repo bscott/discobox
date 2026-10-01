@@ -2623,6 +2623,10 @@ type PoolHTTPAuditExchange struct {
 	SandboxId string `json:"sandboxId"`
 	// Response status; zero when no response was received.
 	Status int `json:"status"`
+	// Secrets whose values were swapped into this request, by ID, whatever kind of sentinel stood in for
+	// them. It is optional because a pool agent older than ADR 26-10-01-240 does not send it, and absent
+	// means no secret was named.
+	SwappedSecretIds []string `json:"swappedSecretIds"`
 	// Approved credential uses whose sentinels were swapped into this request.
 	SwappedUseIds []string `json:"swappedUseIds"`
 	// True for an upgraded (e.g. WebSocket) connection.
@@ -2696,6 +2700,11 @@ func (s *PoolHTTPAuditExchange) GetSandboxId() string {
 // GetStatus returns the value of Status.
 func (s *PoolHTTPAuditExchange) GetStatus() int {
 	return s.Status
+}
+
+// GetSwappedSecretIds returns the value of SwappedSecretIds.
+func (s *PoolHTTPAuditExchange) GetSwappedSecretIds() []string {
+	return s.SwappedSecretIds
 }
 
 // GetSwappedUseIds returns the value of SwappedUseIds.
@@ -2781,6 +2790,11 @@ func (s *PoolHTTPAuditExchange) SetSandboxId(val string) {
 // SetStatus sets the value of Status.
 func (s *PoolHTTPAuditExchange) SetStatus(val int) {
 	s.Status = val
+}
+
+// SetSwappedSecretIds sets the value of SwappedSecretIds.
+func (s *PoolHTTPAuditExchange) SetSwappedSecretIds(val []string) {
+	s.SwappedSecretIds = val
 }
 
 // SetSwappedUseIds sets the value of SwappedUseIds.
@@ -2878,6 +2892,10 @@ type PoolHTTPAuditExchangeDetail struct {
 	StreamRecorded OptBool `json:"streamRecorded"`
 	// The upgraded stream's session.
 	StreamSessionId OptString `json:"streamSessionId"`
+	// Secrets whose values were swapped into this request, by ID, whatever kind of sentinel stood in for
+	// them. It is optional because a pool agent older than ADR 26-10-01-240 does not send it, and absent
+	// means no secret was named.
+	SwappedSecretIds []string `json:"swappedSecretIds"`
 	// Approved credential uses whose sentinels were swapped into this request.
 	SwappedUseIds []string `json:"swappedUseIds"`
 	// True for an upgraded (e.g. WebSocket) connection.
@@ -3057,6 +3075,11 @@ func (s *PoolHTTPAuditExchangeDetail) GetStreamRecorded() OptBool {
 // GetStreamSessionId returns the value of StreamSessionId.
 func (s *PoolHTTPAuditExchangeDetail) GetStreamSessionId() OptString {
 	return s.StreamSessionId
+}
+
+// GetSwappedSecretIds returns the value of SwappedSecretIds.
+func (s *PoolHTTPAuditExchangeDetail) GetSwappedSecretIds() []string {
+	return s.SwappedSecretIds
 }
 
 // GetSwappedUseIds returns the value of SwappedUseIds.
@@ -3257,6 +3280,11 @@ func (s *PoolHTTPAuditExchangeDetail) SetStreamRecorded(val OptBool) {
 // SetStreamSessionId sets the value of StreamSessionId.
 func (s *PoolHTTPAuditExchangeDetail) SetStreamSessionId(val OptString) {
 	s.StreamSessionId = val
+}
+
+// SetSwappedSecretIds sets the value of SwappedSecretIds.
+func (s *PoolHTTPAuditExchangeDetail) SetSwappedSecretIds(val []string) {
+	s.SwappedSecretIds = val
 }
 
 // SetSwappedUseIds sets the value of SwappedUseIds.
