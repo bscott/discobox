@@ -32,9 +32,10 @@ type sandboxList struct {
 	// no key it is every folder, which is the one choice that is not a place.
 	folder folder
 
-	// tag is the tag the list is filtered to, chosen in the header after the
-	// folder (tags.go). Empty is every discobox, tagged or not.
-	tag string
+	// tags are the tags the list is filtered to, chosen in the header after
+	// the folder (tags.go), in order: a discobox is listed when it carries
+	// every one. None is every discobox, tagged or not.
+	tags []string
 
 	// server is the server the list is filtered to, chosen in the header
 	// beside the folder. Empty is every server at once, which is the one

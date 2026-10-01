@@ -1050,7 +1050,7 @@ func (m *Model) update(msg tea.Msg) tea.Cmd {
 		return m.toolsResolved(msg)
 
 	case filterChosenMsg:
-		return m.applyFilter(msg.server, msg.folder, msg.tag)
+		return m.applyFilter(msg.server, msg.folder, msg.tags)
 
 	case sourceChosenMsg:
 		if msg.enter {
@@ -3920,7 +3920,7 @@ func (m *Model) helpText() string {
 		"",
 		"  The header says what the list is narrowed to: the server, when",
 		"  there is more than one, the folder — the directory or repository",
-		"  URL the discoboxes were cut from — and the tag, once anything is",
+		"  URL the discoboxes were cut from — and the tags, once anything is",
 		"  tagged. It names only what is narrowed; `all discoboxes` is",
 		"  everything. The window's own folder lists this machine's",
 		"  discoboxes with no source too. Whatever is left open, the list is",
@@ -3949,6 +3949,8 @@ func (m *Model) helpText() string {
 		"",
 		"  On the card, ↑ ↓ move, Space marks a choice in its group, and",
 		"  Enter picks the one under the cursor and shows everything marked.",
+		"  Tags are boxes rather than dots: Space turns each on and off, and",
+		"  the list shows the discoboxes carrying every tag marked.",
 		"",
 		"───────────────────────────────────────────────────────────────",
 		"The workspace screen",

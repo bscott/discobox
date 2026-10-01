@@ -23,7 +23,7 @@ import (
 // narrowing is where the window opens, not a choice made in it, so it is what
 // the store is taken to have — it is saved only once the filters move off it.
 func (m *Model) restoreView(view ListView) {
-	if view == (ListView{}) {
+	if view.IsZero() {
 		if m.session.SourceChosen {
 			own := m.session.folder()
 			view.FolderKey, view.FolderLabel, view.FolderSource, view.FolderLocal = own.key, own.label, own.source, own.local
@@ -48,7 +48,7 @@ func (m *Model) restoreView(view ListView) {
 	if view.Server != "" && m.manyServers() && m.knownServer(view.Server) {
 		m.list.server = view.Server
 	}
-	m.list.tag = view.Tag
+	m.list.tags = view.Tags
 }
 
 // knownServer reports whether name is among the servers the window lists.
@@ -64,7 +64,7 @@ func (m *Model) knownServer(name string) bool {
 // currentView is the header's filters as they stand. Every folder is no
 // folder at all, so its label is not carried: the zero view is the default.
 func (m *Model) currentView() ListView {
-	view := ListView{Server: m.list.server, Tag: m.list.tag}
+	view := ListView{Server: m.list.server, Tags: m.list.tags}
 	if f := m.list.folder; f.key != "" {
 		view.FolderKey, view.FolderLabel, view.FolderSource, view.FolderLocal = f.key, f.label, f.source, f.local
 	}
@@ -108,7 +108,7 @@ func (m *Model) viewToSave() (folder string, view ListView, ok bool) {
 		return "", ListView{}, false
 	}
 	view = m.currentView()
-	if view == m.savedView {
+	if view.Equal(m.savedView) {
 		return "", ListView{}, false
 	}
 	m.savedView = view

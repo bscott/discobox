@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -14,7 +15,7 @@ func TestAFreshFolderOpensOnEverything(t *testing.T) {
 	ds.freshFolder = true
 	m := newTestModel(t, ds)
 
-	if m.list.server != "" || m.list.folder.key != "" || m.list.tag != "" {
+	if m.list.server != "" || m.list.folder.key != "" || len(m.list.tags) != 0 {
 		t.Fatalf("view = %+v, want every server, folder and tag", m.currentView())
 	}
 	if got := len(m.list.rows()); got != 3 {
@@ -38,11 +39,11 @@ func TestASavedViewIsWhereTheWindowOpens(t *testing.T) {
 		FolderKey:    testKey("/src/obot"),
 		FolderLabel:  "/src/obot",
 		FolderSource: "/src/obot",
-		Tag:          "wip",
+		Tags:         []string{"wip"},
 	}
 	m := newTestModel(t, ds)
 
-	if m.list.server != "beta" || m.list.folder.key != testKey("/src/obot") || m.list.tag != "wip" {
+	if m.list.server != "beta" || m.list.folder.key != testKey("/src/obot") || !slices.Equal(m.list.tags, []string{"wip"}) {
 		t.Fatalf("view = %+v, want the one saved", m.currentView())
 	}
 	if m.opts.folder != "/src/obot" {
@@ -90,7 +91,7 @@ func TestChangingAFilterIsSaved(t *testing.T) {
 	// Back to every folder is a change too, and closing the window saves it.
 	filterTo(t, m, allFolders)
 	send(t, m, keyPress("ctrl+c"))
-	if len(ds.views) != 2 || ds.views[1].view != (ListView{}) {
+	if len(ds.views) != 2 || !ds.views[1].view.IsZero() {
 		t.Fatalf("views = %+v, want the default saved on the way out", ds.views)
 	}
 }
@@ -112,8 +113,8 @@ func TestTheCommandLineNarrowsAFreshFolder(t *testing.T) {
 	if m.list.folder.key != testKey("/src/disco2") {
 		t.Fatalf("folder = %q, want the one -C named", m.list.folder.label)
 	}
-	if m.list.tag != "" {
-		t.Fatalf("tag = %q, want every tag", m.list.tag)
+	if len(m.list.tags) != 0 {
+		t.Fatalf("tags = %q, want every tag", m.list.tags)
 	}
 	send(t, m, tickMsg{})
 	if len(ds.views) != 0 {
@@ -149,9 +150,9 @@ func TestASavedViewOutranksTheCommandLine(t *testing.T) {
 	ds := newFakeSource(onServer("alpha", testSandboxes())...)
 	ds.session.Servers = []string{"alpha", "beta"}
 	ds.session.ServerChosen, ds.session.SourceChosen = true, true
-	ds.session.View = ListView{Server: "beta", Tag: "wip"}
+	ds.session.View = ListView{Server: "beta", Tags: []string{"wip"}}
 	m := newTestModel(t, ds)
-	if m.list.server != "beta" || m.list.folder.key != "" || m.list.tag != "wip" {
+	if m.list.server != "beta" || m.list.folder.key != "" || !slices.Equal(m.list.tags, []string{"wip"}) {
 		t.Fatalf("view = %+v, want the saved one", m.currentView())
 	}
 }

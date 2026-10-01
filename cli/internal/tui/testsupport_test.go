@@ -352,7 +352,7 @@ func testHarnesses() []Harness {
 // one folder's discoboxes, which is what a window left narrowed there opens on.
 func (f *fakeSource) Session(context.Context) (Session, error) {
 	s := f.session
-	if !f.freshFolder && s.View == (ListView{}) {
+	if !f.freshFolder && s.View.IsZero() {
 		own := s.folder()
 		s.View = ListView{FolderKey: own.key, FolderLabel: own.label, FolderSource: own.source, FolderLocal: own.local}
 	}

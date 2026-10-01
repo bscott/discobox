@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -50,16 +51,16 @@ func TestTheFilterCardAppliesEveryMarkOnEnter(t *testing.T) {
 	markFilter(t, m, "alpha")
 	markFilter(t, m, own.label)
 	markFilter(t, m, "#wip")
-	if m.list.server != "" || m.list.folder.key != "" || m.list.tag != "" {
-		t.Fatalf("the list moved before Enter: server %q, folder %q, tag %q", m.list.server, m.list.folder.label, m.list.tag)
+	if m.list.server != "" || m.list.folder.key != "" || len(m.list.tags) != 0 {
+		t.Fatalf("the list moved before Enter: server %q, folder %q, tags %q", m.list.server, m.list.folder.label, m.list.tags)
 	}
 
 	send(t, m, keyPress("enter"))
 	if m.dialog != nil {
 		t.Fatal("Enter should close the card")
 	}
-	if m.list.server != "alpha" || m.list.folder.key != own.key || m.list.tag != "wip" {
-		t.Fatalf("server %q, folder %q, tag %q, want alpha, the window's own and wip", m.list.server, m.list.folder.label, m.list.tag)
+	if m.list.server != "alpha" || m.list.folder.key != own.key || !slices.Equal(m.list.tags, []string{"wip"}) {
+		t.Fatalf("server %q, folder %q, tags %q, want alpha, the window's own and wip", m.list.server, m.list.folder.label, m.list.tags)
 	}
 	for _, s := range m.list.rows() {
 		if s.Server != "alpha" || s.OriginKey != own.key || !m.list.tagged(s) {
@@ -176,7 +177,7 @@ func TestEnterPicksTheRowUnderTheCursor(t *testing.T) {
 		send(t, m, keyPress("down"))
 	}
 	send(t, m, keyPress("enter"))
-	if m.list.folder.key != m.session.OriginKey || m.list.tag != "wip" {
-		t.Fatalf("folder %q, tag %q, want the folder Space marked and the tag Enter was on", m.list.folder.label, m.list.tag)
+	if m.list.folder.key != m.session.OriginKey || !slices.Equal(m.list.tags, []string{"wip"}) {
+		t.Fatalf("folder %q, tags %q, want the folder Space marked and the tag Enter was on", m.list.folder.label, m.list.tags)
 	}
 }

@@ -65,20 +65,20 @@ func TestATagNarrowsTheList(t *testing.T) {
 		t.Fatalf("rows = %v, want both of this folder's boxes", got)
 	}
 
+	filterTo(t, m, "#wip")
+	if got := rows(); !slices.Equal(m.list.tags, []string{"wip"}) || len(got) != 2 {
+		t.Fatalf("tags %q list %v, want both boxes tagged wip", m.list.tags, got)
+	}
 	filterTo(t, m, "#ticket=ENG-12")
-	if m.list.tag != "ticket=ENG-12" || !strings.Contains(headerLine(m), "#ticket=ENG-12") {
-		t.Fatalf("tag = %q, header = %q", m.list.tag, headerLine(m))
+	if !slices.Equal(m.list.tags, []string{"ticket=ENG-12", "wip"}) || !strings.Contains(headerLine(m), "#ticket=ENG-12 #wip") {
+		t.Fatalf("tags = %q, header = %q, want both tags", m.list.tags, headerLine(m))
 	}
 	if got := rows(); len(got) != 1 || got[0] != "sbx_one" {
-		t.Fatalf("rows = %v, want only the box with that tag", got)
-	}
-	filterTo(t, m, "#wip")
-	if got := rows(); m.list.tag != "wip" || len(got) != 2 {
-		t.Fatalf("tag %q lists %v, want both boxes tagged wip", m.list.tag, got)
+		t.Fatalf("rows = %v, want only the box carrying both tags", got)
 	}
 	filterTo(t, m, allTags)
-	if m.list.tag != "" || strings.Contains(headerLine(m), "#") {
-		t.Fatalf("tag = %q, header = %q, want every box and no tag named", m.list.tag, headerLine(m))
+	if len(m.list.tags) != 0 || strings.Contains(headerLine(m), "#") {
+		t.Fatalf("tags = %q, header = %q, want every box and no tag named", m.list.tags, headerLine(m))
 	}
 }
 
@@ -87,7 +87,7 @@ func TestATagNarrowsTheList(t *testing.T) {
 func TestAChosenTagOutlivesItsLastBox(t *testing.T) {
 	t.Parallel()
 	m := newTestModel(t, newFakeSource(taggedSandboxes()...))
-	m.list.tag = "wip"
+	m.list.tags = []string{"wip"}
 	untagged := testSandboxes()
 	m.list.setAll(untagged)
 	if got := tagRows(m); !slices.Contains(got, "#wip") || !strings.Contains(headerLine(m), "#wip") {
@@ -95,5 +95,63 @@ func TestAChosenTagOutlivesItsLastBox(t *testing.T) {
 	}
 	if len(m.list.rows()) != 0 {
 		t.Fatalf("rows = %d, want none: nothing carries the tag now", len(m.list.rows()))
+	}
+}
+
+// Space turns a tag on and off again, so several can be marked; Enter only
+// ever turns the row it is on on, so the key that applies the card never drops
+// the tag under the cursor.
+func TestSpaceTogglesTagsAndEnterOnlyMarks(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, newFakeSource(taggedSandboxes()...))
+	m.dialog = m.filterDialog()
+	p := m.dialog.filter
+	marked := func() []string { return p.list.tags }
+
+	markFilter(t, m, "#wip")
+	markFilter(t, m, "#ticket=ENG-12")
+	if got := marked(); !slices.Equal(got, []string{"ticket=ENG-12", "wip"}) {
+		t.Fatalf("marked %q, want both tags", got)
+	}
+	if got := dialogText(m); !strings.Contains(got, "■ #wip") || !strings.Contains(got, "□ "+allTags) {
+		t.Fatalf("the tags are not drawn as boxes, marked:\n%s", got)
+	}
+	markFilter(t, m, "#wip")
+	if got := marked(); !slices.Equal(got, []string{"ticket=ENG-12"}) {
+		t.Fatalf("marked %q after Space on a marked tag, want it let go", got)
+	}
+	markFilter(t, m, "#ticket=ENG-12")
+	if got := marked(); len(got) != 0 {
+		t.Fatalf("marked %q, want none", got)
+	}
+
+	markFilter(t, m, "#wip")
+	send(t, m, keyPress("enter"))
+	if !slices.Equal(m.list.tags, []string{"wip"}) {
+		t.Fatalf("tags = %q after Enter on a marked tag, want it kept", m.list.tags)
+	}
+
+	m.dialog = m.filterDialog()
+	markFilter(t, m, "#ticket=ENG-12")
+	markFilter(t, m, allTags)
+	if got := m.dialog.filter.list.tags; len(got) != 0 {
+		t.Fatalf("marked %q after all tags, want none", got)
+	}
+}
+
+// A discobox has one value for a key, so marking another value of a key
+// already marked takes its place rather than narrowing to what nothing carries.
+func TestATagReplacesAnotherValueOfItsKey(t *testing.T) {
+	t.Parallel()
+	var l sandboxList
+	l.addTag("wip")
+	l.addTag("ticket=ENG-12")
+	l.addTag("ticket=ENG-13")
+	if want := []string{"ticket=ENG-13", "wip"}; !slices.Equal(l.tags, want) {
+		t.Fatalf("tags = %q, want %q", l.tags, want)
+	}
+	l.addTag("ticket")
+	if want := []string{"ticket", "wip"}; !slices.Equal(l.tags, want) {
+		t.Fatalf("tags = %q, want a bare key in place of its value: %q", l.tags, want)
 	}
 }

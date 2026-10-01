@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -385,7 +386,8 @@ type Session struct {
 }
 
 // ListView is the header's three filters as a window leaves them: the server,
-// the folder and the tag the list is narrowed to, each empty for every one.
+// the folder and the tags the list is narrowed to, each empty for every one.
+// The tags are in order, so two views holding the same ones are Equal.
 //
 // The folder is carried whole rather than by key alone, because the window
 // opens on it before a listing has landed to name it from: its label is what
@@ -396,8 +398,18 @@ type ListView struct {
 	FolderLabel  string
 	FolderSource string
 	FolderLocal  bool
-	Tag          string
+	Tags         []string
 }
+
+// Equal reports whether two views narrow the list the same way.
+func (v ListView) Equal(o ListView) bool {
+	return v.Server == o.Server && v.FolderKey == o.FolderKey && v.FolderLabel == o.FolderLabel &&
+		v.FolderSource == o.FolderSource && v.FolderLocal == o.FolderLocal && slices.Equal(v.Tags, o.Tags)
+}
+
+// IsZero reports whether the view narrows nothing: every server, folder and
+// tag, which is the default and so nothing to remember.
+func (v ListView) IsZero() bool { return v.Equal(ListView{}) }
 
 // HarnessState is what a harness is set to, and so whether a discobox can be
 // run on it. It is the one thing the harnesses screen is really about: a

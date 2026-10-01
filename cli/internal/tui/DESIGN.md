@@ -721,9 +721,9 @@ at them every time a poll runs long.
 
 **The header's filter is one control** (`filter.go`). The list can be
 narrowed to one server (`server.go`, `sandboxList.server`), one folder
-(`folder.go`) and one tag (`tags.go`, `sandboxList.tag`), and the header
+(`folder.go`) and any number of tags (`tags.go`, `sandboxList.tags`), and the header
 carries all three as one line naming only what is narrowed — `server beta ·
-~/src/foo @ main · #wip ▾`, or `all discoboxes ▾` — since what is left open the
+~/src/foo @ main · #wip #ticket=ENG-12 ▾`, or `all discoboxes ▾` — since what is left open the
 list's own sections already name. Enter or a click opens one card
 (`filterPicker`, `dlgFilter`) with a group per filter: the servers when
 `Session.Servers` has more than one (`all servers` first, the primary next),
@@ -731,7 +731,14 @@ the folders, and the tags once any discobox inside the other two carries one
 ([ADR 0136](../../../docs/adr/0136-a-sandboxs-meta-lives-in-the-sandbox-and-the-server-caches-it.md)),
 as the rows spell them (`#wip`, `#ticket=ENG-12`). Space or a click marks a
 choice in its group; Enter marks the row under the cursor too and applies every
-mark at once (`applyFilter`). So ↓ Enter changes one filter, as any other list
+mark at once (`applyFilter`). The tags are the one group that takes several
+marks, drawn as boxes (`□ ■`) rather than dots: Space or a click turns a tag on
+and off (`filterPicker.toggle`), `all tags` clears them, and a discobox is
+listed when it carries every tag marked — `discobox list --tag` repeated. A
+discobox holds one value per key, so marking `#ticket=ENG-13` lets go of
+`#ticket=ENG-12` rather than narrowing to what nothing carries. Enter
+only ever turns its row on (`filterPicker.pick`), so the key that applies the
+card never drops the tag under the cursor. So ↓ Enter changes one filter, as any other list
 in the window takes its highlighted row, narrowing two is one trip rather than
 one dropdown each, and nothing the card shows moves the list under it until
 Enter. Esc applies nothing. Over the harnesses and secrets screens the primary
@@ -741,11 +748,11 @@ untouched Enter there moves nothing behind the screen. The card is drawn in a
 window over its rows that keeps the cursor on screen (`filterPicker.offset`):
 every server, folder and tag at once is taller than a short terminal. A
 chosen folder or tag stays among the choices after its last box leaves it, so
-the choice never vanishes from under what the list is showing. The tag narrows
-the list only; unlike the other two it says nothing about where a create goes.
+the choice never vanishes from under what the list is showing. The tags narrow
+the list only; unlike the other two they say nothing about where a create goes.
 
 **The filters are one filter.** `sandboxList.inView` is the server, the
-folder and the tag together, and everything that counts discoboxes counts through it — the
+folder and the tags together, and everything that counts discoboxes counts through it — the
 rows, the archived offer — so a filter added to one count cannot be forgotten
 in another. The card counts the same way: it holds a copy of the list carrying
 the marks so far, and each choice's count is what the list would show with
@@ -2067,7 +2074,7 @@ console has no independent prepull subscription or reserved setup row.
 
 **The header's filters are kept per folder** (`view.go`,
 [ADR 26-09-30-188](../../../docs/adr/26-09-30-188-the-consoles-filters-open-on-everything-and-are-kept-per-directory.md)). A window opens on
-`Session.View`: the server, folder and tag the last window in the session's
+`Session.View`: the server, folder and tags the last window in the session's
 directory was left on, or — in a directory never narrowed — every server, every
 folder and every tag, the zero `ListView`, narrowed by what the command line
 named (`Session.ServerChosen`, `SourceChosen`): `--server` opens on the primary
@@ -2079,7 +2086,9 @@ outranks it: the flags choose the default and nothing else. They are written thr
 have moved and from `closeWindow` on the way out, and never by a one-shot
 window, whose header nobody chose. The folder is carried whole (key, label,
 source) because the window opens on it before any listing has landed to name
-it; a saved server no longer registered opens as every server. On `all
+it; a saved server no longer registered opens as every server. A view saved
+when the filter held one tag (`tag` in the state file) opens on that tag and is
+rewritten as `tags` the next time it moves. On `all
 folders` a create still asks where to cut from (`askWhereToCutFrom`), so the
 first prompt in a fresh directory asks, and answering narrows the folder —
 which is then what that directory opens on.
@@ -2587,7 +2596,7 @@ the newest one where the busy line goes.
 | --- | --- |
 | `data.go` | `Sandbox`, `Session`, `Harness`, `RunRequest`, `Verb`, `Interaction`, `DataSource` |
 | `harnesses.go` | the harnesses screen: the list, its actions, the config card, `F3` |
-| `filter.go` | the header's filter: the line naming what is narrowed, the card that marks a server, folder and tag, and applying them together |
+| `filter.go` | the header's filter: the line naming what is narrowed, the card that marks a server, folder and tags, and applying them together |
 | `folder.go` | a folder: the origin key it files under, and what it holds |
 | `server.go` | the server the list shows and a create goes to, and the config screens' ←→ over it |
 | `tags.go` | the tags the list can be narrowed to, and how one reads |

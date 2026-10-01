@@ -75,7 +75,7 @@ func (m *Model) cycleServer(delta int) tea.Cmd {
 		return status("no other servers to show")
 	}
 	at := m.serverIndex(choices)
-	return m.applyFilter(choices[(at+delta+len(choices))%len(choices)], m.list.folder, m.list.tag)
+	return m.applyFilter(choices[(at+delta+len(choices))%len(choices)], m.list.folder, m.list.tags)
 }
 
 // serverIndex is where the server those screens show sits among the choices.

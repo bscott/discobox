@@ -9,7 +9,7 @@ import (
 )
 
 // The header's filter is one control: a line saying what the list is narrowed
-// to, and one card that changes all of it. The server, the folder and the tag
+// to, and one card that changes all of it. The server, the folder and the tags
 // are one filter (sandboxList.inView), so they are chosen on one card rather
 // than three dropdowns: each dropdown answered one question with the other two
 // held still, where the card shows every choice at once, counted against
@@ -34,13 +34,17 @@ type filterPicker struct {
 
 // filterRow is one choice on the card: the group it is in, what it reads as,
 // what it is worth knowing, whether it is marked, and how marking it narrows
-// the list.
+// the list. A row in a group that takes several marks at once — the tags —
+// is several, and says how Space lets go of it unless, like `all tags`,
+// marking another is the only way off it.
 type filterRow struct {
-	group  string
-	label  string
-	detail string
-	marked bool
-	mark   func(l *sandboxList)
+	group   string
+	label   string
+	detail  string
+	marked  bool
+	several bool
+	mark    func(l *sandboxList)
+	unmark  func(l *sandboxList)
 }
 
 // filterDialog is the card, opened on the filter as it stands with the cursor
@@ -65,7 +69,8 @@ func (m *Model) filterDialog() *dialog {
 
 // rows are the card's choices, group by group: the servers when there is more
 // than one, the folders on the server marked, and the tags inside both once
-// anything there is tagged.
+// anything there is tagged. The servers and folders are one choice each; the
+// tags are any number, with `all tags` the way to none.
 func (p *filterPicker) rows() []filterRow {
 	l := &p.list
 	var rows []filterRow
@@ -96,12 +101,18 @@ func (p *filterPicker) rows() []filterRow {
 			mark:   func(l *sandboxList) { l.folder = f },
 		})
 	}
-	if tags := l.tags(); len(tags) > 0 {
-		for _, tag := range append([]string{""}, tags...) {
+	if tags := l.tagChoices(); len(tags) > 0 {
+		rows = append(rows, filterRow{
+			group: "Tag", label: allTags, detail: p.tagDetail(""),
+			marked: len(l.tags) == 0, several: true,
+			mark: func(l *sandboxList) { l.tags = nil },
+		})
+		for _, tag := range tags {
 			rows = append(rows, filterRow{
 				group: "Tag", label: tagLabel(tag), detail: p.tagDetail(tag),
-				marked: l.tag == tag,
-				mark:   func(l *sandboxList) { l.tag = tag },
+				marked: slices.Contains(l.tags, tag), several: true,
+				mark:   func(l *sandboxList) { l.addTag(tag) },
+				unmark: func(l *sandboxList) { l.toggleTag(tag) },
 			})
 		}
 	}
@@ -160,9 +171,14 @@ func (p *filterPicker) folderDetail(f folder) string {
 	return detail
 }
 
-// tagDetail is a tag's count, and for a key=value tag what the value is of.
+// tagDetail is a tag's count alongside the tags marked, and for a key=value
+// tag what the value is of. The empty tag is `all tags`, counted with none.
 func (p *filterPicker) tagDetail(tag string) string {
-	detail := plural(p.count(func(l *sandboxList) { l.tag = tag }), "box", "boxes")
+	mark := func(l *sandboxList) { l.addTag(tag) }
+	if tag == "" {
+		mark = func(l *sandboxList) { l.tags = nil }
+	}
+	detail := plural(p.count(mark), "box", "boxes")
 	if key, _, ok := strings.Cut(tag, "="); ok {
 		detail += " · " + key + " set to this value"
 	}
@@ -174,9 +190,25 @@ func (p *filterPicker) move(delta int) {
 	p.cursor = min(max(p.cursor+delta, 0), len(p.rows())-1)
 }
 
-// pick marks the choice at i, in place of whatever its group had marked. The
-// groups below it are drawn again from the new choice, so the cursor is held
-// to the rows there are.
+// toggle is Space or a press on the choice at i: in a group of several marks
+// it lets go of a marked choice, and otherwise it marks it as pick does.
+func (p *filterPicker) toggle(i int) {
+	rows := p.rows()
+	if i < 0 || i >= len(rows) {
+		return
+	}
+	if rows[i].marked && rows[i].unmark != nil {
+		p.cursor = i
+		rows[i].unmark(&p.list)
+		p.cursor = min(p.cursor, len(p.rows())-1)
+		return
+	}
+	p.pick(i)
+}
+
+// pick marks the choice at i, in place of whatever its group had marked — or,
+// among the tags, alongside it. The groups below it are drawn again from the
+// new choice, so the cursor is held to the rows there are.
 func (p *filterPicker) pick(i int) {
 	rows := p.rows()
 	if i < 0 || i >= len(rows) {
@@ -195,7 +227,7 @@ func (p *filterPicker) pick(i int) {
 
 // chosen is the card's answer: the three filters as marked.
 func (p *filterPicker) chosen() tea.Cmd {
-	msg := filterChosenMsg{server: p.list.server, folder: p.list.folder, tag: p.list.tag}
+	msg := filterChosenMsg{server: p.list.server, folder: p.list.folder, tags: p.list.tags}
 	return func() tea.Msg { return msg }
 }
 
@@ -204,13 +236,15 @@ func (p *filterPicker) chosen() tea.Cmd {
 type filterChosenMsg struct {
 	server string
 	folder folder
-	tag    string
+	tags   []string
 }
 
-// update answers a key on the card. Space marks the choice under the cursor,
-// and Enter marks it too and applies everything marked: ↓ Enter changes one
-// filter the way a list anywhere else in the window takes its highlighted row,
-// and Space in the other groups first changes several in one trip.
+// update answers a key on the card. Space marks the choice under the cursor —
+// or, on a tag already marked, unmarks it — and Enter marks it too and applies
+// everything marked: ↓ Enter changes one filter the way a list anywhere else
+// in the window takes its highlighted row, and Space first changes several in
+// one trip. Enter only ever marks, so a tag it is on is kept rather than
+// dropped by the key that applies the card.
 func (p *filterPicker) update(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	switch keyName(msg) {
 	case "up", "k":
@@ -222,7 +256,7 @@ func (p *filterPicker) update(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "end", "G":
 		p.move(len(p.rows()))
 	case " ":
-		p.pick(p.cursor)
+		p.toggle(p.cursor)
 	case "enter":
 		p.pick(p.cursor)
 		return p.chosen(), true
@@ -298,9 +332,15 @@ func (p *filterPicker) view(st *styles, z *zones, top, inner, height int) string
 			case z.hovering(0, line, inner+2*dialogPadLeft, 1):
 				label = st.hover
 			}
-			dot := st.dimText.Render("○")
+			// A group of several marks wears boxes rather than dots, so the
+			// card says which groups Space adds to and which it moves in.
+			off, on := "○", "●"
+			if row.several {
+				off, on = "□", "■"
+			}
+			dot := st.dimText.Render(off)
 			if row.marked {
-				dot = st.key.Render("●")
+				dot = st.key.Render(on)
 			}
 			room := max(inner-labelW-8, 8)
 			b.WriteString(padANSI(bar+" "+dot+" "+label.Render(pad(truncate(row.label, labelW), labelW))+"  "+st.dimText.Render(truncate(row.detail, room)), inner))
@@ -339,8 +379,8 @@ func (m *Model) filterLabel() string {
 	if m.list.folder.key != "" {
 		parts = append(parts, m.list.folder.label)
 	}
-	if m.list.tag != "" {
-		parts = append(parts, tagLabel(m.list.tag))
+	if len(m.list.tags) > 0 {
+		parts = append(parts, tagsLabel(m.list.tags))
 	}
 	if len(parts) == 0 {
 		return "all discoboxes"
@@ -372,13 +412,13 @@ func (m *Model) viewFilter(hovered bool) string {
 // The cursor goes back to the top: the rows underneath it are a different set
 // of discoboxes now, and leaving it on row four of a list that has been
 // replaced points it at something nobody chose.
-func (m *Model) applyFilter(server string, f folder, tag string) tea.Cmd {
+func (m *Model) applyFilter(server string, f folder, tags []string) tea.Cmd {
 	serverMoved, folderMoved := server != m.list.server, f.key != m.list.folder.key
-	if !serverMoved && !folderMoved && tag == m.list.tag {
+	if !serverMoved && !folderMoved && slices.Equal(tags, m.list.tags) {
 		return nil
 	}
 	was := m.configServer()
-	m.list.server, m.list.folder, m.list.tag = server, f, tag
+	m.list.server, m.list.folder, m.list.tags = server, f, tags
 	// Where the window is listing from is where it creates from. Every server
 	// at once is no answer to which server, so a create from there falls back
 	// to the primary, which is where `discobox new` puts it with no --server

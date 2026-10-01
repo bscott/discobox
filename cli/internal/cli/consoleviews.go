@@ -25,12 +25,18 @@ const consoleViewsFile = "console-views.json"
 const consoleViewLimit = 50
 
 type consoleView struct {
-	Server       string `json:"server,omitempty"`
-	FolderKey    string `json:"folderKey,omitempty"`
-	FolderLabel  string `json:"folderLabel,omitempty"`
-	FolderSource string `json:"folderSource,omitempty"`
-	FolderLocal  bool   `json:"folderLocal,omitempty"`
-	Tag          string `json:"tag,omitempty"`
+	Server       string   `json:"server,omitempty"`
+	FolderKey    string   `json:"folderKey,omitempty"`
+	FolderLabel  string   `json:"folderLabel,omitempty"`
+	FolderSource string   `json:"folderSource,omitempty"`
+	FolderLocal  bool     `json:"folderLocal,omitempty"`
+	Tags         []string `json:"tags,omitempty"`
+	// Tag is the one tag a view held before it could hold several. It is
+	// read as Tags, and a save never sets it: a folder's entry is rewritten
+	// in the new shape when its own filters move, while the others' entries
+	// are written back as they were read, Tag and all, so it must stay in the
+	// struct for as long as files from before may hold it.
+	Tag string `json:"tag,omitempty"`
 	// At is when it was written, and is what trimming sorts on.
 	At time.Time `json:"at"`
 }
@@ -67,7 +73,7 @@ func consoleViewFor(folder string) tui.ListView {
 		FolderLabel:  v.FolderLabel,
 		FolderSource: v.FolderSource,
 		FolderLocal:  v.FolderLocal,
-		Tag:          v.Tag,
+		Tags:         v.tags(),
 	}
 }
 
@@ -78,7 +84,7 @@ func saveConsoleView(folder string, view tui.ListView) error {
 		return nil
 	}
 	views := loadConsoleViews()
-	if view == (tui.ListView{}) {
+	if view.IsZero() {
 		if _, ok := views[folder]; !ok {
 			return nil
 		}
@@ -93,12 +99,20 @@ func saveConsoleView(folder string, view tui.ListView) error {
 			FolderLabel:  view.FolderLabel,
 			FolderSource: view.FolderSource,
 			FolderLocal:  view.FolderLocal,
-			Tag:          view.Tag,
+			Tags:         view.Tags,
 			At:           time.Now().UTC(),
 		}
 	}
 	trimConsoleViews(views)
 	return writeStateFile(consoleViewsPath(), views)
+}
+
+// tags are the view's tags, reading a file written when it held one.
+func (v consoleView) tags() []string {
+	if len(v.Tags) == 0 && v.Tag != "" {
+		return []string{v.Tag}
+	}
+	return v.Tags
 }
 
 func trimConsoleViews(views map[string]consoleView) {

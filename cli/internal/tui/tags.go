@@ -1,31 +1,74 @@
 package tui
 
-import "slices"
+import (
+	"slices"
+	"strings"
+)
 
-// The tag is the narrowest of the header filter's three (filter.go), after the
-// server and the folder: it narrows the list to the discoboxes carrying one
-// tag. A discobox's tags are its own, in the meta file inside it, and the rows
-// show the copy the server last heard (ADR 0136). The filter matches the tag as the row spells it —
-// `wip`, or `ticket=ENG-12` — so what you pick is what you see after the name.
+// The tags are the narrowest of the header filter's three (filter.go), after
+// the server and the folder: they narrow the list to the discoboxes carrying
+// every tag chosen, the way `discobox list --tag` does when it is repeated. A
+// discobox's tags are its own, in the meta file inside it, and the rows show
+// the copy the server last heard (ADR 0136). The filter matches a tag as the
+// row spells it — `wip`, or `ticket=ENG-12` — so what you pick is what you see
+// after the name.
 //
-// It is only offered once there is a tag to pick: a project nobody tags has no
-// use for a choice that can only say "all tags". It is not offered over the
-// harnesses and secrets screens, which list no discoboxes.
+// They are only offered once there is a tag to pick: a project nobody tags has
+// no use for a choice that can only say "all tags". They are not offered over
+// the harnesses and secrets screens, which list no discoboxes.
 
 // allTags is the choice that is not a tag: every discobox, tagged or not.
 const allTags = "all tags"
 
-// tagged reports whether a discobox carries the tag the list is filtered to.
-// Every discobox carries the empty one.
+// tagged reports whether a discobox carries every tag the list is filtered
+// to. Every discobox carries none at all.
 func (l *sandboxList) tagged(s Sandbox) bool {
-	return l.tag == "" || slices.Contains(s.Tags, l.tag)
+	for _, tag := range l.tags {
+		if !slices.Contains(s.Tags, tag) {
+			return false
+		}
+	}
+	return true
 }
 
-// tags are what the filter can narrow to: every tag the discoboxes inside the
-// other two filters carry, in order, and the one it is on when none of them
-// carries it any longer — the way the folders keep the one chosen, so the
+// toggleTag chooses a tag, or lets go of it when it is chosen already. The
+// chosen tags are kept in order, so two lists holding the same ones are equal.
+func (l *sandboxList) toggleTag(tag string) {
+	if i := slices.Index(l.tags, tag); i >= 0 {
+		l.tags = slices.Delete(slices.Clone(l.tags), i, i+1)
+		return
+	}
+	l.addTag(tag)
+}
+
+// addTag chooses a tag alongside the ones chosen already, in place of any
+// other value of its key: a discobox's tags are a map, one value to a key and
+// a bare `key` its empty one (sandboxmeta.TagStrings), so no discobox carries
+// `ticket=ENG-12` and `ticket=ENG-13` both, and marking the two would list
+// nothing.
+func (l *sandboxList) addTag(tag string) {
+	if slices.Contains(l.tags, tag) {
+		return
+	}
+	key := tagKey(tag)
+	// A fresh slice: the filter card works on a copy of the list, and
+	// appending into a shared backing array would mark the live one too.
+	l.tags = slices.DeleteFunc(slices.Clone(l.tags), func(t string) bool { return tagKey(t) == key })
+	l.tags = append(l.tags, tag)
+	slices.Sort(l.tags)
+}
+
+// tagKey is the key a tag sets, whether or not it gives a value.
+func tagKey(tag string) string {
+	key, _, _ := strings.Cut(tag, "=")
+	return key
+}
+
+// tagChoices are what the filter can narrow to: every tag the discoboxes
+// inside the other two filters carry, in order, and the chosen ones none of
+// them carries any longer — the way the folders keep the one chosen, so a
 // choice does not vanish from under the list it is showing.
-func (l *sandboxList) tags() []string {
+func (l *sandboxList) tagChoices() []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, s := range l.all {
@@ -43,8 +86,10 @@ func (l *sandboxList) tags() []string {
 		}
 	}
 	slices.Sort(out)
-	if l.tag != "" && !seen[l.tag] {
-		out = append(out, l.tag)
+	for _, tag := range l.tags {
+		if !seen[tag] {
+			out = append(out, tag)
+		}
 	}
 	return out
 }
@@ -56,4 +101,14 @@ func tagLabel(tag string) string {
 		return allTags
 	}
 	return "#" + tag
+}
+
+// tagsLabel is how the chosen tags read in the header, each as the rows draw
+// it.
+func tagsLabel(tags []string) string {
+	labels := make([]string, len(tags))
+	for i, tag := range tags {
+		labels[i] = tagLabel(tag)
+	}
+	return strings.Join(labels, " ")
 }

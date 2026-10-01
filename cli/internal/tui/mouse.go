@@ -351,10 +351,11 @@ func (m *Model) press(what hit, clicks int) (tea.Cmd, bool) {
 		return nil, true
 
 	case hitFilterRow:
-		// A press marks the choice, as Space does; Enter is still what applies
-		// the card, so several can be marked before the list moves.
+		// A press is Space: it marks the choice, or lets go of a marked tag;
+		// Enter is still what applies the card, so several can be marked
+		// before the list moves.
 		if d := m.dialog; d != nil && d.kind == dlgFilter {
-			d.filter.pick(what.idx)
+			d.filter.toggle(what.idx)
 		}
 		return nil, true
 

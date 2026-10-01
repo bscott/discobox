@@ -300,7 +300,7 @@ func TestASourcelessFolderElsewhereCutsFromTheWindowsOwn(t *testing.T) {
 	chosen := false
 	for _, f := range m.list.folders() {
 		if f.key == farHostKey {
-			m.applyFilter(m.list.server, f, m.list.tag)
+			m.applyFilter(m.list.server, f, m.list.tags)
 			chosen = true
 		}
 	}
