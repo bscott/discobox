@@ -572,6 +572,9 @@ func writeCredentialVerdictBlocks(out io.Writer, verdicts []apimodel.CredentialV
 		if grant := v.GrantId.Or(""); grant != "" {
 			lines = append(lines, "grant:    "+terminalSafe(grant))
 		}
+		if request := v.SecretRequestId.Or(""); request != "" {
+			lines = append(lines, "request:  "+terminalSafe(request))
+		}
 		if isRequestVerdict(v) {
 			lines = append(lines, requestVerdictLines(v)...)
 		}

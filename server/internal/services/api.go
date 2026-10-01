@@ -577,8 +577,10 @@ type JudgeService interface {
 // so everything in it is what the server holds rather than what a discobox
 // said.
 type DelegationAsk struct {
-	// ApproverID is the discobox approving.
+	// ApproverID is the discobox approving, and RequestID the request it is
+	// approving.
 	ApproverID string
+	RequestID  string
 	// DelegationGrantID is the delegation grant it approves under, which the
 	// verdict is recorded against.
 	DelegationGrantID string

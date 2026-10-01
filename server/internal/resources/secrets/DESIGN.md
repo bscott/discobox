@@ -223,11 +223,13 @@ and a discobox that needs both holds two grants.
   Whether the uses handed on — the request's, or the ones the approver
   narrowed them to — fall within that delegation's uses is a reading, so it is
   asked of the project's judge (`judgeDelegation`, through
-  `services.JudgeService.JudgeDelegation`) before the transaction, which then
-  refuses a delegation whose uses changed since. Anything but an explicit yes
-  refuses, including no judge at all. The judge's delegation verdict is
-  recorded against the delegation grant, which is what the grant handed on is
-  traced to. A request that names no uses is a person's, since a grant without
+  `services.JudgeService.JudgeDelegation`) before the transaction — last,
+  after every check that can refuse without it — and the transaction refuses a
+  delegation whose uses changed since. Anything but an explicit yes refuses,
+  including no judge at all. The delegation verdict names the delegation grant
+  (`GrantID`) and the request being approved (`SecretRequestID`), and the
+  request names the grant the approval minted: that chain is how a handed-on
+  grant is traced to the delegation that allowed it. A request that names no uses is a person's, since a grant without
   uses authorizes everything sent to its host.
 
 ## The agent credentials broker

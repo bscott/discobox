@@ -1263,7 +1263,7 @@ func TestADelegationIsJudgedAndRecordedAgainstItsGrant(t *testing.T) {
 	service.SetLeases(fake)
 
 	answer, err := service.JudgeDelegation(ctx, "project-1", services.DelegationAsk{
-		ApproverID: "sbx-lead", DelegationGrantID: "grant-delegated",
+		ApproverID: "sbx-lead", RequestID: "sreq-worker", DelegationGrantID: "grant-delegated",
 		Delegated:  []string{"read issues in org/repo", "read pull requests in org/repo"},
 		Uses:       []string{"push the branch fix-43 to org/repo"},
 		Credential: "github", Host: "api.github.com",
@@ -1292,6 +1292,7 @@ func TestADelegationIsJudgedAndRecordedAgainstItsGrant(t *testing.T) {
 	}
 	row := verdicts[0]
 	if row.Kind != model.CredentialVerdictKindDelegation || row.GrantID != "grant-delegated" || row.SandboxID != "sbx-lead" ||
+		row.SecretRequestID != "sreq-worker" ||
 		row.Allow || row.Reason != "pushing is not reading issues" || row.JudgeSandboxID != judgeSandbox.ID || row.Prompt == "" {
 		t.Fatalf("verdict = %+v, want a delegation verdict against the delegation grant", row)
 	}

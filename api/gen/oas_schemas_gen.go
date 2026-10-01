@@ -2225,6 +2225,9 @@ type CredentialVerdict struct {
 	Round OptInt64 `json:"round"`
 	// Sandbox the command ran in, or the request came from. It may no longer exist.
 	SandboxId string `json:"sandboxId"`
+	// On a delegation verdict, the secret request the discobox was approving; the request names the
+	// grant the approval minted.
+	SecretRequestId OptString `json:"secretRequestId"`
 	// The route this allow was let stand for, on a request verdict whose judge asked for one and whose
 	// route the control plane admitted. Requests matching it from the same discobox, under the same use,
 	// to the same host, were allowed until standingUntil without asking the judge.
@@ -2348,6 +2351,11 @@ func (s *CredentialVerdict) GetRound() OptInt64 {
 // GetSandboxId returns the value of SandboxId.
 func (s *CredentialVerdict) GetSandboxId() string {
 	return s.SandboxId
+}
+
+// GetSecretRequestId returns the value of SecretRequestId.
+func (s *CredentialVerdict) GetSecretRequestId() OptString {
+	return s.SecretRequestId
 }
 
 // GetStandingRoute returns the value of StandingRoute.
@@ -2483,6 +2491,11 @@ func (s *CredentialVerdict) SetRound(val OptInt64) {
 // SetSandboxId sets the value of SandboxId.
 func (s *CredentialVerdict) SetSandboxId(val string) {
 	s.SandboxId = val
+}
+
+// SetSecretRequestId sets the value of SecretRequestId.
+func (s *CredentialVerdict) SetSecretRequestId(val OptString) {
+	s.SecretRequestId = val
 }
 
 // SetStandingRoute sets the value of StandingRoute.

@@ -176,7 +176,6 @@ func TestADiscoboxHandsOnNothingItWasNotDelegated(t *testing.T) {
 			ctx := testPrincipalContext()
 			svc, st := newAgentCredentialService(t)
 			svc.SetJudge(&delegationJudge{allow: true})
-			svc.SetJudge(&delegationJudge{allow: true})
 			delegated := createBoundSecret(ctx, t, svc, "github", "", 86400)
 			other := createBoundSecret(ctx, t, svc, "github-admin", "", 86400)
 			if tc.setup != nil {
@@ -364,7 +363,7 @@ func TestADiscoboxHandsOnOnlyUsesTheJudgeFindsWithinItsDelegation(t *testing.T) 
 		t.Fatalf("judge asked %d times, want once", len(judging.asked))
 	}
 	asked := judging.asked[0]
-	if asked.ApproverID != leadID || asked.DelegationGrantID != delegation.ID ||
+	if asked.ApproverID != leadID || asked.RequestID == "" || asked.DelegationGrantID != delegation.ID ||
 		len(asked.Delegated) != 1 || asked.Delegated[0] != delegation.Uses[0].Description ||
 		len(asked.Uses) != 1 || asked.Uses[0] != narrowed[0].Description || asked.Host != "api.github.com" {
 		t.Fatalf("asked = %+v, want the delegation it approves under and the narrowed use", asked)
@@ -411,4 +410,24 @@ func (j *afterJudge) Judge(context.Context, string, services.JudgeAsk) (judge.An
 func (j *afterJudge) JudgeDelegation(context.Context, string, services.DelegationAsk) (judge.Answer, error) {
 	j.then()
 	return judge.Answer{Allow: true, Reason: "within"}, nil
+}
+
+// The judge is asked last: an approval a cheaper check refuses — a lifetime
+// past the secret's limit, here — never reaches it, so a delegation verdict is
+// the decision about an approval that would otherwise go through.
+func TestAnApprovalRefusedWithoutTheJudgeDoesNotAskIt(t *testing.T) {
+	ctx := testPrincipalContext()
+	svc, st := newAgentCredentialService(t)
+	secret := createBoundSecret(ctx, t, svc, "github", "", 600)
+	delegate(t, st, secret, "github.com", 0)
+	judging := &delegationJudge{allow: true}
+	svc.SetJudge(judging)
+
+	_, err := approveAsLead(svc, workerRequest(t, svc, nil), services.ApproveSecretRequestBody{GrantTTLSeconds: serverapi.NewOptInt64(3600)})
+	if err == nil {
+		t.Fatal("an approval past the secret's limit went through")
+	}
+	if len(judging.asked) != 0 {
+		t.Fatalf("the judge was asked %d times about an approval refused without it", len(judging.asked))
+	}
 }

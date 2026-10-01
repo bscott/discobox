@@ -483,18 +483,30 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 		}
 	}
 
-	// Whether the uses a discobox hands on fall within what it was delegated is
-	// the judge's reading, asked before the transaction because it takes a
-	// while; the delegation it was asked about is held to again inside it.
-	if approverIsSandbox {
-		if err := s.judgeDelegation(ctx, projectID, principal.SandboxID, delegation, secret, req, host, approvedUses); err != nil {
-			return nil, err
-		}
-	}
-
 	scopeKey, err := s.grantScopeKey(ctx, projectID, req.SandboxID, scope)
 	if err != nil {
 		return nil, err
+	}
+
+	// Whether the uses a discobox hands on fall within what it was delegated is
+	// the judge's reading, asked before the transaction because it takes a
+	// while; the delegation it was asked about is held to again inside it. It
+	// is asked last, once every check that can refuse the approval without it
+	// has passed — a discobox cannot change the secret, so its binding and
+	// limit are what the transaction will find — so a verdict is the decision
+	// about an approval that would otherwise go through.
+	if approverIsSandbox {
+		if err := guardGrantHost(secret, host); err != nil {
+			return nil, err
+		}
+		if named, ok := input.GrantTTLSeconds.Get(); ok {
+			if err := guardGrantTTL(secret, named); err != nil {
+				return nil, err
+			}
+		}
+		if err := s.judgeDelegation(ctx, projectID, principal.SandboxID, delegation, secret, req, host, approvedUses); err != nil {
+			return nil, err
+		}
 	}
 
 	// Every write the approval makes is one act: the secret's change, the

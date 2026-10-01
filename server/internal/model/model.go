@@ -1461,6 +1461,12 @@ type CredentialVerdict struct {
 	// delegation's uses against the ones handed on, both in the prompt.
 	GrantID string `gorm:"column:grant_id;not null;type:text;default:'';index" json:"grantId,omitempty" doc:"Grant the use belonged to, when it could still be resolved; on a delegation verdict, the delegation grant judged against"`
 	UseID   string `gorm:"column:use_id;not null;type:text;index" json:"useId" doc:"Approved use the command was judged against"`
+	// SecretRequestID is, on a delegation verdict, the request the discobox
+	// was approving, whose GrantID is the grant the approval minted — so a
+	// handed-on grant is found from its request, and its verdict from either.
+	// Empty on every other verdict, which is what every row written before
+	// delegation verdicts existed already is.
+	SecretRequestID string `gorm:"column:secret_request_id;not null;type:text;default:'';index" json:"secretRequestId,omitempty" doc:"On a delegation verdict, the secret request the discobox was approving; the request names the grant the approval minted"`
 	// Command is serialized JSON rather than a joined string: SecretGrant.Uses
 	// already sets the precedent for a slice column on this model, and keeping
 	// argv elements distinct is what let the judge — and lets a reader of this

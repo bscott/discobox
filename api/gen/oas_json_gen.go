@@ -4536,6 +4536,12 @@ func (s *CredentialVerdict) encodeFields(e *jx.Encoder) {
 		e.Str(s.SandboxId)
 	}
 	{
+		if s.SecretRequestId.Set {
+			e.FieldStart("secretRequestId")
+			s.SecretRequestId.Encode(e)
+		}
+	}
+	{
 		if s.StandingRoute.Set {
 			e.FieldStart("standingRoute")
 			s.StandingRoute.Encode(e)
@@ -4563,7 +4569,7 @@ func (s *CredentialVerdict) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfCredentialVerdict = [27]string{
+var jsonFieldsNameOfCredentialVerdict = [28]string{
 	0:  "$schema",
 	1:  "allow",
 	2:  "command",
@@ -4586,11 +4592,12 @@ var jsonFieldsNameOfCredentialVerdict = [27]string{
 	19: "role",
 	20: "round",
 	21: "sandboxId",
-	22: "standingRoute",
-	23: "standingUntil",
-	24: "standingVerdictId",
-	25: "useId",
-	26: "volunteered",
+	22: "secretRequestId",
+	23: "standingRoute",
+	24: "standingUntil",
+	25: "standingVerdictId",
+	26: "useId",
+	27: "volunteered",
 }
 
 // Decode decodes CredentialVerdict from json.
@@ -4841,6 +4848,16 @@ func (s *CredentialVerdict) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"sandboxId\"")
 			}
+		case "secretRequestId":
+			if err := func() error {
+				s.SecretRequestId.Reset()
+				if err := s.SecretRequestId.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"secretRequestId\"")
+			}
 		case "standingRoute":
 			if err := func() error {
 				s.StandingRoute.Reset()
@@ -4872,7 +4889,7 @@ func (s *CredentialVerdict) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"standingVerdictId\"")
 			}
 		case "useId":
-			requiredBitSet[3] |= 1 << 1
+			requiredBitSet[3] |= 1 << 2
 			if err := func() error {
 				v, err := d.Str()
 				s.UseId = string(v)
@@ -4884,7 +4901,7 @@ func (s *CredentialVerdict) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"useId\"")
 			}
 		case "volunteered":
-			requiredBitSet[3] |= 1 << 2
+			requiredBitSet[3] |= 1 << 3
 			if err := func() error {
 				v, err := d.Bool()
 				s.Volunteered = bool(v)
@@ -4908,7 +4925,7 @@ func (s *CredentialVerdict) Decode(d *jx.Decoder) error {
 		0b01001010,
 		0b01000000,
 		0b00100000,
-		0b00000110,
+		0b00001100,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.

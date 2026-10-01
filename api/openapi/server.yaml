@@ -3340,6 +3340,9 @@ components:
                 sandboxId:
                     description: Sandbox the command ran in, or the request came from. It may no longer exist.
                     type: string
+                secretRequestId:
+                    description: On a delegation verdict, the secret request the discobox was approving; the request names the grant the approval minted.
+                    type: string
                 standingRoute:
                     description: The route this allow was let stand for, on a request verdict whose judge asked for one and whose route the control plane admitted. Requests matching it from the same discobox, under the same use, to the same host, were allowed until standingUntil without asking the judge.
                     type: string

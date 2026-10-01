@@ -169,6 +169,7 @@ func (s *Service) judgeDelegation(ctx context.Context, projectID, approverID str
 	}
 	answer, err := s.judge.JudgeDelegation(ctx, projectID, services.DelegationAsk{
 		ApproverID:        approverID,
+		RequestID:         req.ID,
 		DelegationGrantID: delegation.ID,
 		Delegated:         useDescriptions(delegation.Uses),
 		Uses:              useDescriptions(uses),

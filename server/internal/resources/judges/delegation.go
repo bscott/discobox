@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/discobox-ai/discobox/judge"
 	"github.com/discobox-ai/discobox/server/internal/apperrors"
@@ -50,7 +51,7 @@ func (s *Service) JudgeDelegation(ctx context.Context, projectID string, ask ser
 		return judge.Answer{}, apperrors.NewStatusError(http.StatusBadRequest, "a delegation cannot be judged: "+err.Error())
 	}
 
-	bound := judge.ReachWait + judge.Timeout + judgeRoutingGrace
+	bound := min(judge.ReachWait+judge.Timeout+judgeRoutingGrace, delegationBound)
 	ctx, cancel := context.WithTimeout(ctx, bound)
 	defer cancel()
 	decided, latency, err := s.put(ctx, project, judgeSandbox, job, bound)
@@ -67,22 +68,23 @@ func (s *Service) JudgeDelegation(ctx context.Context, projectID string, ask ser
 		return judge.Answer{}, err
 	}
 	row := &model.CredentialVerdict{
-		ProjectID:      project.ID,
-		Kind:           model.CredentialVerdictKindDelegation,
-		Origin:         model.CredentialVerdictOriginJudge,
-		SandboxID:      ask.ApproverID,
-		GrantID:        ask.DelegationGrantID,
-		Round:          job.Round,
-		Allow:          decided.Allow,
-		Need:           decided.Need,
-		Reason:         decided.Reason,
-		Role:           judge.Role,
-		Prompt:         prompt,
-		PromptVersion:  judge.PromptVersion,
-		LatencyMS:      latency.Milliseconds(),
-		JudgeSandboxID: judgeSandbox.ID,
-		Image:          judgeSandbox.Image,
-		ImageDigest:    judgeSandbox.ImageDigest,
+		ProjectID:       project.ID,
+		Kind:            model.CredentialVerdictKindDelegation,
+		Origin:          model.CredentialVerdictOriginJudge,
+		SandboxID:       ask.ApproverID,
+		GrantID:         ask.DelegationGrantID,
+		SecretRequestID: ask.RequestID,
+		Round:           job.Round,
+		Allow:           decided.Allow,
+		Need:            decided.Need,
+		Reason:          decided.Reason,
+		Role:            judge.Role,
+		Prompt:          prompt,
+		PromptVersion:   judge.PromptVersion,
+		LatencyMS:       latency.Milliseconds(),
+		JudgeSandboxID:  judgeSandbox.ID,
+		Image:           judgeSandbox.Image,
+		ImageDigest:     judgeSandbox.ImageDigest,
 	}
 	if judgeSandbox.HarnessConfigID != nil {
 		row.HarnessConfigID = *judgeSandbox.HarnessConfigID
@@ -92,3 +94,12 @@ func (s *Service) JudgeDelegation(ctx context.Context, projectID string, ask ser
 	}
 	return decided, nil
 }
+
+// delegationBound is how long the judge may take over a delegation. The
+// approval that asks it is a discobox's own call, held open by its pool's gate
+// for two minutes (pool-agent's gateHTTPTimeout) — less than an ordinary ask's
+// bound, a judge brought up and then thinking — so the question is answered
+// inside it, with room left for the verdict, the approval's transaction, and
+// the way back: the discobox then reads why it was refused rather than the
+// gate giving up on a silence.
+const delegationBound = 100 * time.Second
