@@ -351,9 +351,22 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 			fmt.Sprintf("a refresh request is answered with a new value, not an approval: `discobox secret refresh %s --run` runs its command, or --value gives one", req.SecretID))
 	}
 
+	// A discobox answering the inbox may hand on only what it was delegated
+	// (ADR 26-09-30-782 §3), so the secret is the one a delegation grant it
+	// holds is of, not any the project has.
+	principal, _ := auth.PrincipalFromContext(ctx)
+	approverIsSandbox := principal.Type == auth.PrincipalTypeSandbox
+	host := normalizeHost(input.Host.Or(req.Host))
 	secretID := strings.TrimSpace(input.SecretId.Or(""))
 	var secret *model.Secret
-	if req.WellKnownID != "" {
+	if approverIsSandbox {
+		if err := refuseDelegatedApproval(req); err != nil {
+			return nil, err
+		}
+		if secret, err = s.delegatedSecret(ctx, projectID, principal.SandboxID, req, secretID, host); err != nil {
+			return nil, err
+		}
+	} else if req.WellKnownID != "" {
 		// A well-known credential knows which secret answers it.
 		if secret, err = s.wellKnownSecret(ctx, projectID, req.WellKnownID, secretID); err != nil {
 			return nil, err
@@ -367,9 +380,8 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 		}
 	}
 
-	// A discobox answers the inbox as a person does, with one exception: the
-	// discobox API itself is granted only by a person.
-	if principal, ok := auth.PrincipalFromContext(ctx); ok && principal.Type == auth.PrincipalTypeSandbox && isGateSecret(secret) {
+	// The discobox API itself is granted only by a person.
+	if approverIsSandbox && isGateSecret(secret) {
 		return nil, gateGivenOnlyByAPerson(secret.WellKnownID)
 	}
 
@@ -400,7 +412,7 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 		// A discobox answering the inbox approves with the secret as it is:
 		// its role does not change secrets, and an approval is not a way
 		// around that.
-		if principal, ok := auth.PrincipalFromContext(ctx); ok && principal.Type == auth.PrincipalTypeSandbox {
+		if approverIsSandbox {
 			return nil, apperrors.NewStatusError(http.StatusForbidden,
 				"a discobox approves with the secret as it is; a person changes its binding or limit")
 		}
@@ -415,7 +427,6 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 			scope = model.SecretGrantScopeProject
 		}
 	}
-	host := normalizeHost(input.Host.Or(req.Host))
 
 	// A protocol-originated request is a different species from one the proxy
 	// minted on hitting an unresolvable sentinel, and the two are handled apart
@@ -485,9 +496,14 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 		// the secret's limit, so approving needs nothing read first (ADR
 		// 26-09-30-782 §4). An explicit value is checked against the limit in
 		// mintGrantAs, along with every other path that mints one.
-		ttl, ok := input.GrantTTLSeconds.Get()
-		if !ok {
+		ttl, named := input.GrantTTLSeconds.Get()
+		if !named {
 			ttl = defaultApprovalTTL(req, secret)
+		}
+		if approverIsSandbox {
+			if ttl, err = delegatedTTL(ctx, txStore, projectID, principal.SandboxID, secret.ID, host, ttl, named); err != nil {
+				return err
+			}
 		}
 		grant, err := tx.mintGrantAs(ctx, projectID, secret, scope, scopeKey, host, req.EnvName, ttl, approvedUses, purpose)
 		if err != nil {

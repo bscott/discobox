@@ -724,9 +724,12 @@ func TestADiscoboxCannotChangeASecretByApproving(t *testing.T) {
 	svc, st := newAgentCredentialService(t)
 	secret := createBoundSecret(ctx, t, svc, "github", "www.github.com", 0)
 	req := createAgentRequest(ctx, t, svc)
+	// It holds a delegation of the secret, so the refusal is about changing
+	// it and not about what it may hand on.
+	delegate(t, st, secret, "api.github.com", time.Hour)
 
 	asSandbox := auth.WithPrincipal(context.Background(), auth.Principal{
-		Type: auth.PrincipalTypeSandbox, SandboxID: "sbx-lead", UserID: "user-1",
+		Type: auth.PrincipalTypeSandbox, SandboxID: "sbx-lead", ProjectID: "project-1", UserID: "user-1",
 	})
 	_, err := svc.ApproveSecretRequest(asSandbox, "project-1", req.ID, services.ApproveSecretRequestBody{
 		SecretId:   serverapi.NewOptString(secret.ID),

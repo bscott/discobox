@@ -111,10 +111,6 @@ var sandboxRole = []sandboxRoleRoute{
 	{method: http.MethodGet, path: "sandboxes/*/git-origins/*/info/refs", service: "git-receive-pack", owner: createdSandbox},
 	{method: http.MethodPost, path: "sandboxes/*/git-origins/*/git-receive-pack", owner: createdSandbox},
 	{method: http.MethodPost, path: "sandboxes/*/complete-source-push", owner: createdSandbox},
-	// Secrets are listed so a request can be answered with one, or a new
-	// discobox given one: the listing carries names and bindings, never a
-	// value, and nothing in the role changes a secret.
-	{method: http.MethodGet, path: "secrets"},
 	// The requests of the discoboxes it created, and no others (ADR
 	// 26-09-30-782 §2). The listing is filtered to them where it is served,
 	// since a route cannot filter what it answers with.

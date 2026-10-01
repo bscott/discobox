@@ -207,6 +207,19 @@ and a discobox that needs both holds two grants.
   delegate), and approving it mints a grant with that purpose. An ask to
   delegate binds nothing on approval, and is its own question rather than a
   retry of an open ask to use (`FindPendingAgentCredentialRequests` keys on it).
+  Only a person approves one: a discobox never hands on the power to hand on.
+- **It bounds what its holder hands on by approving**
+  ([ADR 26-09-30-782](../../../../docs/adr/26-09-30-782-a-discobox-answers-its-own-discoboxes-requests-within-what-it-may-delegate.md)
+  §3, `delegated_approval.go`). A discobox approving one of its discoboxes'
+  requests answers it with the secret of a live delegation grant it holds
+  (`ListLiveDelegationGrants`), not by choosing among the project's: one that
+  covers the host asked for, of the secret marked for a well-known credential,
+  and — when it was delegated more than one that fits — the one it names. In
+  the approval's transaction the delegations are read again, and at least one
+  of that secret must still cover the host and outlast the grant: a lifetime
+  nobody named is fitted to its remaining time, and one the approver named
+  must fit or is refused. A request that names no uses is a person's, since a
+  grant without uses authorizes everything sent to its host.
 
 ## The agent credentials broker
 

@@ -123,6 +123,9 @@ func TestSandboxRoleAnswersOnlyItsOwnDiscoboxesRequests(t *testing.T) {
 		{"approve a gone discobox's request", http.MethodPost, "/projects/default/secret-requests/sreq-gone/approve", http.StatusForbidden},
 		{"approve a person's own request", http.MethodPost, "/projects/default/secret-requests/sreq-person/approve", http.StatusForbidden},
 		{"approve nothing", http.MethodPost, "/projects/default/secret-requests/sreq-none/approve", http.StatusNotFound},
+		// It answers with what it was delegated, not by choosing among the
+		// project's secrets, so it does not list them (ADR 26-09-30-782 §3).
+		{"list the project's secrets", http.MethodGet, "/projects/default/secrets", http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequestWithContext(WithPrincipal(context.Background(), lead), tc.method, tc.path, nil)

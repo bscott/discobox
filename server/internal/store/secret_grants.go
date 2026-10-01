@@ -156,6 +156,26 @@ func (s *Store) FindLiveGrant(ctx context.Context, projectID, secretID, host str
 	return best, nil
 }
 
+// ListLiveDelegationGrants returns the live delegation grants a discobox holds
+// (purpose delegate, scoped to it), newest first: what bounds the grants it may
+// hand on by approving a request (ADR 26-09-30-782 §3). Every other live-grant
+// query leaves these out, since a delegation grant authorizes nothing its
+// holder sends.
+func (s *Store) ListLiveDelegationGrants(ctx context.Context, projectID, sandboxID string) ([]model.SecretGrant, error) {
+	read, err := s.getRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []model.SecretGrant
+	err = read.
+		Where("project_id = ? AND purpose = ? AND scope = ? AND scope_key = ?",
+			projectID, model.SecretGrantPurposeDelegate, model.SecretGrantScopeSandbox, sandboxID).
+		Where("expires_at IS NULL OR expires_at > ?", time.Now().UTC()).
+		Order("granted_at DESC").
+		Find(&out).Error
+	return out, err
+}
+
 // ListLiveAgentGrants returns the live grants that carry uses and cover one of
 // the given scopes, narrowest first.
 //

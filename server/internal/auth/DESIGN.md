@@ -85,8 +85,7 @@ Current authorizers:
 
 - `SandboxRoleAuthorizer` answers every request a sandbox principal makes, and
   only those: it allows the routes of the sandbox role (`sandboxRole`: discobox
-  create, list, and get; secret requests list, get, approve, and deny; secrets
-  list) in the sandbox's own project, resolving `default` to it, and refuses
+  create, list, and get; secret requests list, get, approve, and deny) in the sandbox's own project, resolving `default` to it, and refuses
   everything else — including the any-authenticated routes below, which is
   why it runs first. It is decided by the route; no grant or use text is
   read ([ADR 0140](../../../docs/adr/0140-a-discobox-reaches-the-discobox-api-through-its-pool-with-a-fixed-role.md)
