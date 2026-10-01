@@ -199,6 +199,66 @@ func TestABodyKnowsWhenAnAskWouldChangeNothing(t *testing.T) {
 	}
 }
 
+// A job says beside its request whether the judge may still ask to be shown
+// the body, and how many more times: the rule to ask rather than refuse is in
+// the system prompt, but a model deciding one request asks only when the job
+// in front of it says it can. Prompt derives both, whatever a caller set.
+func TestAJobSaysWhetherItsBodyMayStillBeShown(t *testing.T) {
+	t.Parallel()
+	asks := func(j judge.Job) (bool, int) {
+		t.Helper()
+		prompt, err := judge.Prompt(j)
+		if err != nil {
+			t.Fatalf("Prompt() error = %v", err)
+		}
+		var got struct {
+			BodyCanBeShown bool `json:"bodyCanBeShown"`
+			AsksLeft       int  `json:"asksLeft"`
+		}
+		if err := json.Unmarshal([]byte(prompt), &got); err != nil {
+			t.Fatalf("prompt %s: %v", prompt, err)
+		}
+		return got.BodyCanBeShown, got.AsksLeft
+	}
+
+	if can, left := asks(requestJob()); !can || left != judge.MaxRounds-1 {
+		t.Fatalf("first round, body described = %v, %d asks; want it may be shown, %d asks", can, left, judge.MaxRounds-1)
+	}
+	partly := requestJob()
+	partly.Round = 2
+	partly.Request.Body.Content, partly.Request.Body.Missing = shown("{"), "cut at the budget asked for"
+	if can, left := asks(partly); !can || left != 1 {
+		t.Fatalf("second round, body cut short = %v, %d asks; want it may be shown, 1 ask", can, left)
+	}
+	for name, job := range map[string]judge.Job{
+		"a body shown whole": func() judge.Job {
+			j := requestJob()
+			j.Round = 2
+			j.Request.Body.Content = shown("{}")
+			return j
+		}(),
+		"the last round": func() judge.Job {
+			j := requestJob()
+			j.Round = judge.MaxRounds
+			j.Request.Body.Content, j.Request.Body.Missing = shown("{"), "cut at the budget asked for"
+			return j
+		}(),
+		"no body":       func() judge.Job { j := requestJob(); j.Request.Body = nil; return j }(),
+		"an empty body": func() judge.Job { j := requestJob(); j.Request.Body.Length = 0; return j }(),
+		"a command":     commandJob(),
+		"a caller's claim": func() judge.Job {
+			j := requestJob()
+			j.Request.Body = nil
+			j.BodyCanBeShown, j.AsksLeft = true, 9
+			return j
+		}(),
+	} {
+		if can, left := asks(job); can || left != 0 {
+			t.Fatalf("%s = %v, %d asks; want neither said", name, can, left)
+		}
+	}
+}
+
 // Guidance comes from the names a request was recognized as, and only from
 // this package: a name it does not know brings none, and nothing else in the
 // request can bring any.

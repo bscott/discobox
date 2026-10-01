@@ -86,3 +86,10 @@ whole exchange, because a request is held open while the judge thinks.
 `ReachWait` comes before it: how long the control plane waits for the judge's
 discobox to become reachable, which every hop bounding the exchange allows for. A
 command job is asked once: there is nothing further to show.
+
+**A job says beside its request whether the judge may still ask.** `Prompt`
+derives `BodyCanBeShown` and `AsksLeft` — a request job before its last round,
+with a body not yet shown in full — and replaces whatever a caller set. The
+rule to ask rather than refuse is in `System`, but a model deciding one request
+follows what that request says it can do: replaying refused requests, the
+judge never asked for a body until the job said it could.

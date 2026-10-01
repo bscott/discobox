@@ -23,7 +23,7 @@ const (
 	Role = "judge"
 	// PromptVersion changes whenever System changes. A stored verdict names
 	// it, so a decision can be read against the words that produced it.
-	PromptVersion = "5"
+	PromptVersion = "6"
 	// Timeout bounds one exchange — every round of it together, not each ask.
 	// A request is being held open while the judge thinks.
 	//
@@ -98,6 +98,13 @@ type Job struct {
 	// Round is which ask this is, from 1. A round after the first exists
 	// because the judge asked to be shown the body.
 	Round int `json:"round"`
+	// BodyCanBeShown and AsksLeft say, beside the request, that the judge may
+	// still ask to be shown its body and how many more times it may ask. They
+	// are derived by Prompt, never supplied: a caller's values are replaced.
+	// The rule to ask rather than refuse is in System, but a model deciding
+	// one request follows what the request in front of it says it can do.
+	BodyCanBeShown bool `json:"bodyCanBeShown,omitempty"`
+	AsksLeft       int  `json:"asksLeft,omitempty"`
 	// Command is the argv, for a command job. For a request job it is what
 	// the discobox declared it was running, which is context and not
 	// authority: a declaration cannot override the request observed.
@@ -311,12 +318,27 @@ func (b *Body) validate() error {
 	return nil
 }
 
+// bodyCanBeShown reports whether asking to be shown this job's body could
+// still show something: a request job, before its last round, with a body
+// there is something of that has not already been shown in full.
+func (j Job) bodyCanBeShown() bool {
+	if j.Kind != KindRequest || j.Request == nil || j.Round >= MaxRounds {
+		return false
+	}
+	body := j.Request.Body
+	return body != nil && body.Length != 0 && !body.Answers(Need{Body: true, Bytes: MaxBodyBytes})
+}
+
 // Prompt is the job as the judge receives it: JSON, so that the boundary
 // between what Discobox says and what the request says is a structure rather
 // than a sentence an injected instruction can imitate.
 func Prompt(j Job) (string, error) {
 	if err := j.Validate(); err != nil {
 		return "", err
+	}
+	j.BodyCanBeShown, j.AsksLeft = false, 0
+	if j.bodyCanBeShown() {
+		j.BodyCanBeShown, j.AsksLeft = true, MaxRounds-j.Round
 	}
 	data, err := json.Marshal(j)
 	if err != nil {
