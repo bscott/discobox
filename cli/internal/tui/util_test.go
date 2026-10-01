@@ -162,3 +162,87 @@ func TestAgoReadsAsEnglish(t *testing.T) {
 		}
 	}
 }
+
+// Nothing a card wraps is lost to its width: a word wider than the line — a
+// URL, a header value — is broken where the line runs out rather than cut, and
+// joining the rows back gives the text back.
+func TestWrapLosesNothing(t *testing.T) {
+	t.Parallel()
+	url := "https://api.github.com/repos/discobox-ai/discobox/pulls?state=open&per_page=100&page=2"
+	lines := wrap("url:   "+url, 30)
+	for _, line := range lines {
+		if w := lipgloss.Width(line); w > 30 {
+			t.Fatalf("row %q is %d cells, past the width", line, w)
+		}
+	}
+	var got strings.Builder
+	for i, line := range lines {
+		if i > 0 {
+			line = strings.TrimPrefix(line, "       ")
+		}
+		got.WriteString(line)
+	}
+	if got.String() != "url:   "+url {
+		t.Fatalf("rows %q do not give the line back", lines)
+	}
+}
+
+// A wrapped row hangs under the line's second column — the value of a
+// `label:  value` field, the description of a key — or under its indentation
+// when it has none, and keeps the spacing inside it.
+func TestWrapHangsUnderTheValue(t *testing.T) {
+	t.Parallel()
+	got := wrap("method:   GET a request whose url runs long", 24)
+	want := []string{"method:   GET a request", "          whose url runs", "          long"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("wrap = %q, want %q", got, want)
+	}
+	got = wrap(`    "tool_input": "go test ./... and more"`, 24)
+	want = []string{`    "tool_input": "go`, `    test ./... and more"`}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("wrap = %q, want %q", got, want)
+	}
+}
+
+// A megabyte on one line — a response body with no spaces in it — is broken
+// in one pass. Breaking it by re-cutting the rest of the word for each row
+// took minutes, and the card froze the window while it did.
+func TestWrapBreaksAMegabyteLineInOnePass(t *testing.T) {
+	t.Parallel()
+	line := strings.Repeat("0123456789abcdef", 1<<16)
+	start := time.Now()
+	rows := wrap("body:  "+line, 80)
+	if took := time.Since(start); took > 10*time.Second {
+		t.Fatalf("wrapping a megabyte took %s", took)
+	}
+	var got strings.Builder
+	for i, row := range rows {
+		if w := lipgloss.Width(row); w > 80 {
+			t.Fatalf("row %d is %d cells", i, w)
+		}
+		if i > 0 {
+			row = strings.TrimPrefix(row, "       ")
+		}
+		got.WriteString(row)
+	}
+	if got.String() != "body:  "+line {
+		t.Fatal("the rows do not give the line back")
+	}
+}
+
+// A card lays its body out once per width, not once per frame.
+func TestADialogWrapsItsBodyOncePerWidth(t *testing.T) {
+	t.Parallel()
+	d := textDialog("t", strings.Repeat("word ", 1000))
+	first := d.bodyAt(40)
+	if again := d.bodyAt(40); &again[0] != &first[0] {
+		t.Fatal("the same body at the same width should not be laid out again")
+	}
+	if wider := d.bodyAt(60); &wider[0] == &first[0] {
+		t.Fatal("a new width should lay the body out again")
+	}
+	d.body = "changed"
+	if changed := d.bodyAt(60); changed[0] != "changed" {
+		t.Fatal("a new body should be laid out again")
+	}
+}

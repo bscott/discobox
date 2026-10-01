@@ -197,6 +197,19 @@ type fakeSource struct {
 	serviceLogs    map[string][]byte
 	serviceLogsErr error
 
+	// audit is what a followed audit timeline delivers: a test sends on it
+	// and FollowAudit hands each update on. auditFollows records which
+	// discoboxes were followed and auditStops how many follows have ended;
+	// auditDetails is what AuditDetail answers, by record ID.
+	audit        chan AuditUpdate
+	auditFollows []string
+	auditStops   int
+	auditDetails map[string]string
+	auditReads   []string
+	// auditBodies are the recordings AuditBody answers, by "ID/part"; a
+	// record has on its card the parts it has here.
+	auditBodies map[string]string
+
 	// forward is what the workspace's port forward reports, and forwardErr
 	// fails opening one. forwards counts the ones opened and closed, so a test
 	// can hold the window to the rule that a workspace releases its ports.
@@ -852,6 +865,60 @@ func (f *fakeSource) ServiceLogs(_ context.Context, _, serviceID string) ([]byte
 		return nil, f.serviceLogsErr
 	}
 	return f.serviceLogs[serviceID], nil
+}
+
+func (f *fakeSource) FollowAudit(ctx context.Context, sandboxID string, report func(AuditUpdate)) error {
+	f.mu.Lock()
+	f.auditFollows = append(f.auditFollows, sandboxID)
+	feed := f.audit
+	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		f.auditStops++
+		f.mu.Unlock()
+	}()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case update := <-feed:
+			report(update)
+		}
+	}
+}
+
+func (f *fakeSource) AuditDetail(_ context.Context, _, recordID string) (AuditRecordDetail, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.auditReads = append(f.auditReads, recordID)
+	text, ok := f.auditDetails[recordID]
+	if !ok {
+		return AuditRecordDetail{}, fmt.Errorf("no audit record %s", recordID)
+	}
+	detail := AuditRecordDetail{Text: text}
+	for _, part := range []string{AuditRequestBody, AuditResponseBody, AuditStream} {
+		if _, ok := f.auditBodies[recordID+"/"+part]; ok {
+			detail.Recordings = append(detail.Recordings, part)
+		}
+	}
+	return detail, nil
+}
+
+func (f *fakeSource) AuditBody(_ context.Context, _, recordID, part string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.auditReads = append(f.auditReads, recordID+"/"+part)
+	body, ok := f.auditBodies[recordID+"/"+part]
+	if !ok {
+		return "", fmt.Errorf("no %s recorded for %s", part, recordID)
+	}
+	return body, nil
+}
+
+func (f *fakeSource) auditState() (follows []string, stops int, reads []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.auditFollows...), f.auditStops, append([]string(nil), f.auditReads...)
 }
 
 func (f *fakeSource) DoService(_ context.Context, verb ServiceVerb, sandboxID, serviceID string) error {

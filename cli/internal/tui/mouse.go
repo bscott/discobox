@@ -296,6 +296,9 @@ func (m *Model) press(what hit, clicks int) (tea.Cmd, bool) {
 	case hitRequestRow:
 		return m.pressRequestRow(what.idx, clicks), clicks > 1 && what.idx >= 0
 
+	case hitAuditRow:
+		return m.pressAuditRow(what.idx, clicks), clicks > 1 && what.idx >= 0
+
 	case hitOptionRow:
 		m.opts.moveTo(what.idx)
 		if clicks > 1 {
@@ -685,6 +688,10 @@ func (m *Model) wheelAt(ev tea.MouseWheelMsg) tea.Cmd {
 		m.secrets.move(-lines)
 	case hitRequestRow:
 		m.requestRows.move(-lines)
+	case hitAuditRow:
+		if m.audit != nil {
+			m.audit.move(-lines)
+		}
 	case hitOptionRow, hitOptionCycle:
 		// moveTo rather than move: the arrow keys wrap round the panel, and a
 		// wheel that wrapped would jump from the last row to the first on the

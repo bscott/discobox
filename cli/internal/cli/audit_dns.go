@@ -228,12 +228,12 @@ func dnsAuditRecord(q apimodel.DNSAuditQuery) auditRecord {
 // the list filtered to its ID, the way a credential verdict is read: a row has
 // nothing the list does not carry. The ID is only unique on its pool, and the
 // discobox is what names the pool.
-func (a *App) printDNSAuditRecord(cmd *cobra.Command, client *apiclientgen.Client, projectID, poolID, sandboxID, recordID string) error {
+func (a *App) printDNSAuditRecord(ctx context.Context, out io.Writer, asJSON bool, client *apiclientgen.Client, projectID, poolID, sandboxID, recordID string) error {
 	id, err := auditid.ParseDNSQuery(recordID)
 	if err != nil {
 		return err
 	}
-	pool, err := a.auditRecordPool(cmd.Context(), client, projectID, poolID, sandboxID)
+	pool, err := a.auditRecordPool(ctx, client, projectID, poolID, sandboxID)
 	if err != nil {
 		return err
 	}
@@ -244,7 +244,7 @@ func (a *App) printDNSAuditRecord(cmd *cobra.Command, client *apiclientgen.Clien
 		ID:        apiclientgen.NewOptString(id.String()),
 		Limit:     apiclientgen.NewOptInt(1),
 	}
-	res, err := client.ListDNSAudit(cmd.Context(), params)
+	res, err := client.ListDNSAudit(ctx, params)
 	if err != nil {
 		return err
 	}
@@ -260,8 +260,8 @@ func (a *App) printDNSAuditRecord(cmd *cobra.Command, client *apiclientgen.Clien
 		return auditRecordNotFound(recordID, sandboxID)
 	}
 	q := queries[0]
-	if a.output == "json" {
-		return writeTerminalSafeJSON(cmd.OutOrStdout(), &q)
+	if asJSON {
+		return writeTerminalSafeJSON(out, &q)
 	}
 	fields := []auditField{
 		{"record", terminalSafe(q.ID)},
@@ -275,5 +275,5 @@ func (a *App) printDNSAuditRecord(cmd *cobra.Command, client *apiclientgen.Clien
 		{"answers", terminalSafe(strings.Join(q.Answers, ", "))},
 		{"error", terminalSafe(q.Error.Or(""))},
 	}
-	return writeAuditFields(cmd.OutOrStdout(), fields)
+	return writeAuditFields(out, fields)
 }

@@ -46,6 +46,7 @@ const (
 	hitHarnessRow
 	hitSecretRow
 	hitRequestRow
+	hitAuditRow
 
 	// hitOptionRow is a row of the run options panel; hitOptionCycle is one of
 	// the ‹ › arrows on it, with delta saying which.

@@ -36,6 +36,7 @@ flowchart LR
     WS -->|leader g| Cred
     L -->|y| Overlay["overlay pane → DataSource.Open"]
     WS -->|leader o| T["tools picker → Tools / NewTool / EndExec / RunHostTool / Addresses"]
+    WS -->|leader A| Aud["audit screen → FollowAudit / AuditDetail"]
     A -->|d s| AVerb["DataSource.DoHarness"]
     A -->|v| ACard["config card → HarnessSecrets"]
     A -->|e| ACfg["configuration overlay pane → OpenHarnessConfigure"]
@@ -573,6 +574,50 @@ modules is a string that drifts.
 The link is drawn only when the forward has bound it, the same rule
 `portEntry` follows: an offer to open something unreachable is worse than no
 offer.
+
+## The audit screen
+
+`leader A` in the workspace draws one discobox's audit trails over it as a
+single followed timeline — what `discobox admin audit list --follow` prints —
+and Enter opens a record on the scrolling card, as `audit get` prints it. It is
+drawn in the box a tool window would have and takes the keys and the mouse
+(`onScreen` is empty under it); the panes keep running, unresized.
+
+- **One reader.** `FollowAudit` and `AuditDetail` are the commands' own code
+  (`auditTimelineTrails`, `readAudit`, `writeAuditRecord`), not a second
+  implementation: the screen cannot show a different timeline than the
+  command prints.
+- **Oldest at the top, cursor on the newest.** Moving off the newest stops
+  following, so an arriving record never moves the row being read; moving back
+  onto it, or End, follows again.
+- **Nothing is dropped.** Unlike narration, the feed blocks rather than drops:
+  the follower's position is already past a record it has handed over.
+  Closing the screen cancels the follow, which releases a blocked send. The
+  screen holds the newest `auditHistory` records.
+- **Runs fold.** Consecutive records with one `Group` — the CLI gives an http
+  exchange its method, status and origin — are one row with a count; Enter or
+  → opens it, ← folds it. Only consecutive ones: folding across a record from
+  another trail would reorder what happened. Rows are rebuilt as records
+  arrive and the cursor is found again by its record's ID, so a run growing
+  under it never moves it.
+- **Bodies are one key from the record.** An http record's card offers the
+  recordings the pool kept (`AuditRecordDetail.Recordings`) on `b`, `r` and
+  `s` — the card's own `offers` — and a body opens on a card whose `back` is
+  the record, so every way of closing it returns there. `AuditBody` is the
+  `audit http --body` read, escaped, JSON laid out, cut at 1 MiB with the
+  command for the rest.
+- **`/` filters, fzf-style.** Each word must appear in order, not
+  together; every word must match; smart case (`fuzzy.go`, fzf's first
+  algorithm, so the lit window is the tight one). Matched against what a row
+  says, or its ID on its own — never a line with the ID appended, since every
+  http ID starts "http" and a term would borrow its letters. Results stay in
+  timeline order rather than ranked: in an audit trail the order is the
+  information. Runs fold over what the filter lets through, arrivals are
+  filtered as they come, and Esc clears the filter before it closes anything.
+- **Silence is explained.** Every poll reports the trails it could not reach,
+  drawn at the foot of the box, so a stopped discobox's in-box trails read as
+  missing rather than quiet.
+
 ## Pushing, without being asked
 
 The other direction from apply, and deliberately not shaped like it. While a
@@ -2565,6 +2610,8 @@ the newest one where the busy line goes.
 | `workspace.go` | the workspace screen: open, poll/reconcile, tabs, detach, the port forward |
 | `services.go` | the discobox's declared services: the menu behind the leader, and the three verbs |
 | `tools.go` | the tools: the catalog, the picker, the tool window and its `[-]`/`[x]` |
+| `audit.go` | the audit screen: the followed timeline over the workspace, its search, and a record's card |
+| `fuzzy.go` | the fzf-style matcher the audit search filters and lights with |
 | `narration.go` | what a slow operation is doing, on the busy line |
 | `tui.go` | `Run`: the program the CLI starts against a `DataSource` |
 | `secrets.go` | the secrets screen (`F4`): the secrets table, a secret's card and grants, the secret and grant forms |

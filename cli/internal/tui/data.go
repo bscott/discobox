@@ -1212,6 +1212,55 @@ type Forward interface {
 	io.Closer
 }
 
+// AuditRecord is one record of a discobox's audit timeline, as `discobox admin
+// audit list` prints it: when, which trail, and what it says. Everything else
+// about it is AuditDetail's to say.
+type AuditRecord struct {
+	// ID is what AuditDetail is asked for, and the ID `audit get` takes.
+	ID   string
+	Time time.Time
+	// Source is the trail the record is in — http, creds, refresh, hooks or
+	// execs — which is also what says who vouches for it (ADR 0130 §2).
+	Source string
+	// Summary is the record in one line, already safe to put on a terminal.
+	Summary string
+	// Group is what a run of records has in common when the timeline may fold
+	// it into one row — an http exchange's method, status and origin — and
+	// GroupSummary is that row's line. Consecutive records with the same Group
+	// fold; an empty Group never does.
+	Group        string
+	GroupSummary string
+}
+
+// AuditRecordDetail is one record in full: the text `discobox admin audit get`
+// prints, and what of it that text leaves out.
+type AuditRecordDetail struct {
+	Text string
+	// Recordings are the parts of an http record the pool kept the bytes of
+	// — AuditRequestBody, AuditResponseBody, AuditStream — which are unbounded
+	// and so read on their own, with AuditBody.
+	Recordings []string
+}
+
+// The recordings an http record can have, as AuditBody names them.
+const (
+	AuditRequestBody  = "request"
+	AuditResponseBody = "response"
+	AuditStream       = "stream"
+)
+
+// AuditUpdate is one delivery from a followed timeline.
+type AuditUpdate struct {
+	// Records are the records read since the last update, oldest first.
+	Records []AuditRecord
+	// Polled marks the end of one read of every trail, and Missing is then
+	// what that read could not reach, a sentence each: empty says every trail
+	// answered. A follower that has gone quiet because a trail stopped
+	// answering has to be able to say so with no records to say it beside.
+	Polled  bool
+	Missing []string
+}
+
 // DataSource is everything the window needs from the outside. It is implemented
 // once, in the cli package, over the same API client and code paths the
 // non-interactive commands use: the launcher runs `discobox`'s commands rather
@@ -1772,6 +1821,25 @@ type DataSource interface {
 	// the exec listing; this is what can also see the ones that are not, and
 	// is read when the menu is opened rather than polled.
 	Services(ctx context.Context, sandboxID string) ([]Service, error)
+
+	// FollowAudit reads one discobox's audit trails as one timeline, the way
+	// `discobox admin audit list --follow` reads them: the newest records,
+	// delivered oldest first, and then each record as it is recorded, until
+	// ctx ends. It blocks, and report is called from the goroutine running it.
+	// A trail that cannot be read is named in an update rather than failing
+	// the rest; an error is the whole read failing.
+	FollowAudit(ctx context.Context, sandboxID string, report func(AuditUpdate)) error
+
+	// AuditDetail is one record of that timeline in full, as `discobox admin
+	// audit get` prints it. It is a call of its own because the timeline
+	// carries a line per record and a record can be a page of headers.
+	AuditDetail(ctx context.Context, sandboxID, recordID string) (AuditRecordDetail, error)
+
+	// AuditBody is one recording of an http record — a body, or an upgraded
+	// stream — as `discobox admin audit http --body` prints it, escaped for
+	// the terminal. A body is unbounded, so a long one comes back cut, saying
+	// so and how to read the rest.
+	AuditBody(ctx context.Context, sandboxID, recordID, part string) (string, error)
 
 	// ServiceLogs is the transcript of a service's current or last run, as the
 	// bytes it wrote. It is read for a service that is not running, whose pane

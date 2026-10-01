@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -55,6 +56,12 @@ type auditRecord struct {
 	key     string
 	cursor  rowCursor
 	summary string
+	// group is what a run of these records has in common, when a timeline may
+	// fold one — an http exchange's method, status and origin — and
+	// groupSummary is how the folded run reads. Empty for a record that is
+	// always read on its own.
+	group        string
+	groupSummary string
 }
 
 // auditUnavailable is a trail, or part of one, that could not be read.
@@ -64,6 +71,15 @@ type auditUnavailable struct {
 	// trail's other pools may still have.
 	Pool   string `json:"pool,omitempty"`
 	Reason string `json:"reason"`
+}
+
+// sentence says what is missing from the timeline, and why.
+func (u auditUnavailable) sentence() string {
+	source := terminalSafe(u.Source)
+	if u.Pool != "" {
+		source += " on pool " + terminalSafe(u.Pool)
+	}
+	return fmt.Sprintf("%s could not be read, so its records are missing: %s", source, terminalSafe(u.Reason))
 }
 
 // auditListResult is `audit list -o json`: the merged records, and what is
@@ -136,47 +152,7 @@ are missing from the timeline.`,
 					unavailable = append(unavailable, entry)
 				}
 			}
-			var trails []auditSource[auditRecord]
-			if wantSource[auditSourceHTTP] {
-				query := httpAuditQuery{projectID: projectID}
-				query.params.SandboxId = apiclientgen.NewOptString(resolvedSandboxID)
-				trails = append(trails, auditRecords(httpAuditSource(client, query, func(pools []apimodel.UnavailableAuditPool) {
-					for _, pool := range pools {
-						missing(auditUnavailable{Source: auditSourceHTTP, Pool: pool.PoolId, Reason: pool.Reason})
-					}
-				}), auditSourceHTTP, httpAuditRecord))
-			}
-			if wantSource[auditSourceDNS] {
-				query := dnsAuditQuery{projectID: projectID}
-				query.params.SandboxId = apiclientgen.NewOptString(resolvedSandboxID)
-				trails = append(trails, auditRecords(dnsAuditSource(client, query, func(pools []apimodel.UnavailableAuditPool) {
-					for _, pool := range pools {
-						missing(auditUnavailable{Source: auditSourceDNS, Pool: pool.PoolId, Reason: pool.Reason})
-					}
-				}), auditSourceDNS, dnsAuditRecord))
-			}
-			if wantSource[auditSourceCreds] {
-				params := apiclientgen.ListCredentialVerdictsParams{
-					ProjectId: projectID,
-					SandboxId: apiclientgen.NewOptString(resolvedSandboxID),
-				}
-				trails = append(trails, auditRecords(credentialVerdictSource(client, params), auditSourceCreds, credentialVerdictRecord))
-			}
-			if wantSource[auditSourceRefresh] {
-				params := apiclientgen.ListSecretRefreshesParams{
-					ProjectId: projectID,
-					SandboxId: apiclientgen.NewOptString(resolvedSandboxID),
-				}
-				trails = append(trails, auditRecords(secretRefreshSource(client, params), auditSourceRefresh, secretRefreshRecord))
-			}
-			if wantSource[auditSourceHooks] {
-				trails = append(trails, auditRecords(harnessHookSource(client, apiclientgen.ListHarnessHooksParams{ProjectId: projectID, SandboxId: resolvedSandboxID}),
-					auditSourceHooks, harnessHookRecord(resolvedSandboxID)))
-			}
-			if wantSource[auditSourceExecs] {
-				trails = append(trails, auditRecords(execEventSource(client, apiclientgen.ListExecEventsParams{ProjectId: projectID, SandboxId: resolvedSandboxID}),
-					auditSourceExecs, execEventRecord(resolvedSandboxID)))
-			}
+			trails := auditTimelineTrails(client, projectID, resolvedSandboxID, wantSource, missing)
 
 			// Every trail is read on its own position and its own clock; the
 			// timeline is only how the records that arrive are ordered for
@@ -213,11 +189,8 @@ are missing from the timeline.`,
 			report := func() {
 				var b strings.Builder
 				for _, gap := range unavailable {
-					source := terminalSafe(gap.Source)
-					if gap.Pool != "" {
-						source += " on pool " + terminalSafe(gap.Pool)
-					}
-					_, _ = fmt.Fprintf(&b, "%s could not be read, so its records are missing: %s\n", source, terminalSafe(gap.Reason))
+					b.WriteString(gap.sentence())
+					b.WriteString("\n")
 				}
 				unavailable = unavailable[:0]
 				if reported.changed(b.String()) {
@@ -245,6 +218,55 @@ are missing from the timeline.`,
 	_ = cmd.RegisterFlagCompletionFunc("discobox-id", a.completeSandboxes)
 	_ = cmd.RegisterFlagCompletionFunc("source", cobra.FixedCompletions(auditSources, cobra.ShellCompDirectiveNoFileComp))
 	return cmd
+}
+
+// auditTimelineTrails is the trails `audit list` merges for one discobox, those
+// wantSource names, each labeled for the timeline. missing is told about a pool
+// a pool-recorded trail could not read; a whole trail that cannot be read is
+// the reader's to report (auditReadOptions.unavailable).
+func auditTimelineTrails(client *apiclientgen.Client, projectID, sandboxID string, wantSource map[string]bool, missing func(auditUnavailable)) []auditSource[auditRecord] {
+	var trails []auditSource[auditRecord]
+	if wantSource[auditSourceHTTP] {
+		query := httpAuditQuery{projectID: projectID}
+		query.params.SandboxId = apiclientgen.NewOptString(sandboxID)
+		trails = append(trails, auditRecords(httpAuditSource(client, query, func(pools []apimodel.UnavailableAuditPool) {
+			for _, pool := range pools {
+				missing(auditUnavailable{Source: auditSourceHTTP, Pool: pool.PoolId, Reason: pool.Reason})
+			}
+		}), auditSourceHTTP, httpAuditRecord))
+	}
+	if wantSource[auditSourceDNS] {
+		query := dnsAuditQuery{projectID: projectID}
+		query.params.SandboxId = apiclientgen.NewOptString(sandboxID)
+		trails = append(trails, auditRecords(dnsAuditSource(client, query, func(pools []apimodel.UnavailableAuditPool) {
+			for _, pool := range pools {
+				missing(auditUnavailable{Source: auditSourceDNS, Pool: pool.PoolId, Reason: pool.Reason})
+			}
+		}), auditSourceDNS, dnsAuditRecord))
+	}
+	if wantSource[auditSourceCreds] {
+		params := apiclientgen.ListCredentialVerdictsParams{
+			ProjectId: projectID,
+			SandboxId: apiclientgen.NewOptString(sandboxID),
+		}
+		trails = append(trails, auditRecords(credentialVerdictSource(client, params), auditSourceCreds, credentialVerdictRecord))
+	}
+	if wantSource[auditSourceRefresh] {
+		params := apiclientgen.ListSecretRefreshesParams{
+			ProjectId: projectID,
+			SandboxId: apiclientgen.NewOptString(sandboxID),
+		}
+		trails = append(trails, auditRecords(secretRefreshSource(client, params), auditSourceRefresh, secretRefreshRecord))
+	}
+	if wantSource[auditSourceHooks] {
+		trails = append(trails, auditRecords(harnessHookSource(client, apiclientgen.ListHarnessHooksParams{ProjectId: projectID, SandboxId: sandboxID}),
+			auditSourceHooks, harnessHookRecord(sandboxID)))
+	}
+	if wantSource[auditSourceExecs] {
+		trails = append(trails, auditRecords(execEventSource(client, apiclientgen.ListExecEventsParams{ProjectId: projectID, SandboxId: sandboxID}),
+			auditSourceExecs, execEventRecord(sandboxID)))
+	}
+	return trails
 }
 
 // auditSelection reads a list flag against the values it may hold; an empty
@@ -306,7 +328,24 @@ func httpAuditRecord(e apimodel.HTTPAuditExchange) auditRecord {
 		// the one question worth asking to another command.
 		summary += " refused: " + truncateTableValue(terminalSafe(e.BlockedReason.Or(httpAuditRefuser(true, ""))), 80)
 	}
-	return auditRecord{ID: e.ID, Attestor: auditAttestorPool, DiscoboxID: e.SandboxId, Record: &e, summary: summary}
+	origin := terminalSafe(httpAuditOrigin(e))
+	group := fmt.Sprintf("%s %s %s", terminalSafe(e.Method), httpAuditStatus(e), origin)
+	return auditRecord{ID: e.ID, Attestor: auditAttestorPool, DiscoboxID: e.SandboxId, Record: &e, summary: summary,
+		group: group, groupSummary: group + "/..."}
+}
+
+// httpAuditOrigin is where an exchange went — scheme and host, without the
+// path — which is what a run of calls to one service has in common. A URL
+// with no host of its own (a CONNECT's authority) is named by the exchange's
+// host instead.
+func httpAuditOrigin(e apimodel.HTTPAuditExchange) string {
+	if u, err := url.Parse(e.URL); err == nil && u.Host != "" {
+		if u.Scheme == "" {
+			return u.Host
+		}
+		return u.Scheme + "://" + u.Host
+	}
+	return e.Host
 }
 
 // credentialVerdictRecord labels a verdict by how it arrived: one recorded at

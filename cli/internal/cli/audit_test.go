@@ -552,3 +552,34 @@ func TestHarnessHookRecordEscapesThePrompt(t *testing.T) {
 		t.Fatalf("summary = %q, want the prompt on one line with its controls escaped", got)
 	}
 }
+
+// The timeline folds a run of exchanges by what they have in common — method,
+// status, and where they went — never by path, which is what tells one call
+// of a run from the next.
+func TestHTTPAuditRecordsGroupByMethodStatusAndOrigin(t *testing.T) {
+	t.Parallel()
+	group := func(method string, status int, blocked bool, rawURL, host string) auditRecord {
+		return httpAuditRecord(apimodel.HTTPAuditExchange{Method: method, Status: status, Blocked: blocked, URL: rawURL, Host: host})
+	}
+	a := group("GET", 200, false, "https://api.github.com/user", "api.github.com")
+	b := group("GET", 200, false, "https://api.github.com/repos/x/y?page=2", "api.github.com")
+	if a.group != b.group || a.group != "GET 200 https://api.github.com" {
+		t.Fatalf("groups %q and %q, want both GET 200 https://api.github.com", a.group, b.group)
+	}
+	if a.groupSummary != "GET 200 https://api.github.com/..." {
+		t.Fatalf("group summary = %q", a.groupSummary)
+	}
+	for _, other := range []auditRecord{
+		group("POST", 200, false, "https://api.github.com/user", "api.github.com"),
+		group("GET", 404, false, "https://api.github.com/user", "api.github.com"),
+		group("GET", 0, true, "https://api.github.com/user", "api.github.com"),
+		group("GET", 200, false, "http://api.github.com/user", "api.github.com"),
+	} {
+		if other.group == a.group {
+			t.Fatalf("%q should not fold with %q", other.group, a.group)
+		}
+	}
+	if connect := group("CONNECT", 200, false, "registry.npmjs.org:443", "registry.npmjs.org:443"); connect.group != "CONNECT 200 registry.npmjs.org:443" {
+		t.Fatalf("a CONNECT is named by its host, got %q", connect.group)
+	}
+}

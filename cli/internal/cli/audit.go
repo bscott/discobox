@@ -173,7 +173,8 @@ with non-printing characters escaped.`,
 				if err != nil {
 					return err
 				}
-				return a.writeHTTPAuditArtifact(cmd, projectID, pool, query.params.SandboxId.Or(""), id, part)
+				out := cmd.OutOrStdout()
+				return a.writeHTTPAuditArtifact(cmd.Context(), out, cmd.ErrOrStderr(), isTerminalStream(out), projectID, pool, query.params.SandboxId.Or(""), id, part)
 			}
 			if host != "" {
 				query.params.Host = apiclientgen.NewOptString(host)

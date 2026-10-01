@@ -600,6 +600,8 @@ func (m *Model) paneOptions(kind paneKind, readOnly bool) []termpane.Option {
 	// their own here: a second way to open one of the picker's tools is one
 	// more key to remember for no more reach. See tools.go.
 	opts = append(opts, termpane.WithPrefixBinding(toolsKey, openToolsMsg{}))
+	// The audit screen, over the workspace like a tool. See audit.go.
+	opts = append(opts, termpane.WithPrefixBinding(auditKey, openAuditMsg{}))
 	// The services have the same alphabet one keystroke further in: S1 through
 	// S9 are their own tabs, and S0 is the menu that reaches the ones with no
 	// tab at all. See paneServicesKey.
@@ -871,6 +873,9 @@ func (m *Model) updatePaneMsg(tagged paneMsg) tea.Cmd {
 
 	case openToolsMsg:
 		return m.openTools()
+
+	case openAuditMsg:
+		return m.openAudit()
 
 	case openCredentialsMsg:
 		return m.openCredentialDialog(m.paneBox.ID)
@@ -1244,6 +1249,9 @@ func (m *Model) paneAt(x, y int) (*pane, int, int) {
 // but the position the mouse names belongs to whatever is drawn there.
 func (m *Model) onScreen() []*pane {
 	switch {
+	case m.audit != nil:
+		// The audit screen has the window, and no pane is drawn under it.
+		return nil
 	case m.screenPane() != nil:
 		return []*pane{m.screenPane()}
 	case m.split():
@@ -1603,6 +1611,8 @@ func (m *Model) viewPaneWindow() string {
 	// there when the command exits.
 	var body string
 	switch {
+	case m.audit != nil:
+		body = m.viewAuditBox(m.width)
 	case m.overlay != nil:
 		body = m.viewOverlayBox(m.width)
 	case m.showingTool() != nil:
@@ -2182,7 +2192,7 @@ func (m *Model) columnControls(edge lipgloss.Style, p *pane, shells bool, left, 
 // it, offset by where that pane's grid was drawn.
 func (m *Model) paneCursor() *tea.Cursor {
 	p := m.focusedPane()
-	if p == nil {
+	if p == nil || m.audit != nil {
 		return nil
 	}
 	x, y := m.paneOrigin(p)

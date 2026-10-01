@@ -330,6 +330,11 @@ type Model struct {
 	// terms the harnesses screen has it.
 	secretsOpen bool
 
+	// audit is the audit screen, drawn over the workspace while it is up, and
+	// auditGen counts its openings. See audit.go.
+	audit    *auditScreen
+	auditGen int
+
 	// harnessesOpen is whether the harnesses screen has the window. Like the
 	// options panel it stands in place of the launcher rather than inside it, and
 	// every key belongs to it while it is up.
@@ -989,6 +994,18 @@ func (m *Model) update(msg tea.Msg) tea.Cmd {
 		m.promptSpent(msg.req)
 		return nil
 
+	case auditUpdateMsg:
+		return m.auditUpdated(msg)
+
+	case auditEndedMsg:
+		return m.auditEnded(msg)
+
+	case auditDetailMsg:
+		return m.auditDetail(msg)
+
+	case auditBodyMsg:
+		return m.auditBody(msg)
+
 	case provisioningDoneMsg:
 		// The attach can finish, so the report on it goes and what is
 		// underneath — the pane it was covering — comes forward.
@@ -1242,6 +1259,10 @@ func (m *Model) updatePaste(msg tea.PasteMsg) tea.Cmd {
 		return m.dialog.paste(msg)
 	case m.welcoming, m.optionsOpen:
 		return nil
+	// The audit screen's only field is its search; the pane under it is not
+	// on screen to take a paste.
+	case m.audit != nil && m.inPanes():
+		return m.pasteQuery(msg)
 	// Before the two screens, not after: a pane opened from one of them is
 	// drawn over it and owns every key, paste included. See updateKey.
 	case m.inPanes():
@@ -1388,7 +1409,7 @@ func (m *Model) updateKey(msg tea.KeyPressMsg) tea.Cmd {
 		answered := m.dialog
 		cmd, closed := m.dialog.update(msg)
 		if closed && m.dialog == answered {
-			m.dialog = nil
+			m.dialog = answered.back
 		}
 		return cmd
 	}
@@ -1407,15 +1428,34 @@ func (m *Model) updateKey(msg tea.KeyPressMsg) tea.Cmd {
 		if keyName(msg) == paneQuitKey {
 			return m.closeWindow()
 		}
+		// Over the audit screen the workspace's banner is still drawn, and it
+		// names its keys behind the leader; they mean here what they mean in
+		// the panes the screen covers, or the band would be a sentence rather
+		// than a button and its key would move the list instead.
+		if m.audit != nil && m.inPanes() {
+			switch keyName(msg) {
+			case credentialsLeaderKey:
+				return m.openCredentialDialog(m.paneBox.ID)
+			case rejectedKey:
+				return m.openCredentialRemedy(m.currentBox())
+			case bannerDismissKey:
+				return m.dismissBanner()
+			}
+		}
 		// A mistyped leader costs nothing: the key it preceded is handled as
 		// though the leader had never been pressed, the way it is in a pane.
-	} else if m.focus != focusPrompt && !m.inPanes() && keyName(msg) == m.leader() {
+	} else if m.focus != focusPrompt && (!m.inPanes() || m.audit != nil) && keyName(msg) == m.leader() {
 		m.leaderArmed = true
 		return nil
 	}
 	if keyName(msg) == "f1" {
 		m.dialog = m.helpDialog()
 		return nil
+	}
+	// The audit screen is drawn over the workspace and takes its keys: none of
+	// the panes under it is on screen to be typed at. See audit.go.
+	if m.audit != nil && m.inPanes() {
+		return m.updateAudit(msg)
 	}
 	// The harnesses screen is on a function key because the prompt takes every
 	// letter and the list has spent them on its own actions — the same reason
@@ -3523,6 +3563,9 @@ func (m *Model) hints() []hint {
 			return m.secretHints()
 		}
 	}
+	if m.audit != nil && m.inPanes() {
+		return m.auditHints()
+	}
 	switch m.focus {
 	case focusPane:
 		return m.paneHints()
@@ -3682,6 +3725,7 @@ func (m *Model) paneHints() []hint {
 	// service's line: this is the only place they are advertised, and a picker
 	// nothing points at is a picker nobody opens.
 	hints = append(hints, pressing(leader+" "+toolsKey+" tools", leader, toolsKey))
+	hints = append(hints, pressing(leader+" "+auditKey+" audit", leader, auditKey))
 	if len(m.panes()) > 1 {
 		hints = append(hints, says(leader+" ←/→ pane"))
 		if len(m.numbered()) > 1 {
@@ -3930,6 +3974,17 @@ func (m *Model) helpText() string {
 		"    " + leader + " " + paneServicesKey + paneServicesMenuKey + "      every service, running or not, with start,",
 		"                   stop and restart for each",
 		"    " + leader + " " + toolsKey + "       the tools, as a picker",
+		"    " + leader + " " + auditKey + "       the audit trail: everything recorded about this",
+		"                   discobox, followed as it is recorded. ↑ ↓ move,",
+		"                   Enter opens a record in full, End follows the",
+		"                   newest again, Esc goes back to the box. Calls in",
+		"                   a row with one method, status, scheme and host fold into",
+		"                   one line with a count: Enter or → opens it, ←",
+		"                   folds it. On an http record, b r and s read its",
+		"                   response body, request body and stream. / filters",
+		"                   as you type, fzf-style — the letters in order, not",
+		"                   together — and lights what matched; ↑ ↓ move",
+		"                   while typing, Enter keeps the filter, Esc clears it",
 		"    " + leader + " " + credentialsLeaderKey + "       answer the credential request in the banner",
 		"    " + leader + " " + bannerDismissKey + "       dismiss the banner, like its ✕; it comes back",
 		"                   when what it says happens again",
