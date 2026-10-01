@@ -60,12 +60,10 @@ func (s *Service) delegationFor(ctx context.Context, projectID, approverID strin
 		return nil, nil, apperrors.NewStatusError(http.StatusForbidden,
 			"this discobox holds no delegation grant, so it hands nothing on; ask a person for one with `discobox-access request --delegate`, or leave the request for a person")
 	}
-	var chosen *model.Secret
-	if chosenID != "" {
-		if chosen, err = s.store.GetSecret(ctx, projectID, chosenID); err != nil {
-			return nil, nil, apperrors.NotFound(err, "secret not found")
-		}
-	}
+	// The secret the approver named is matched only against what it was
+	// delegated — its ID, or a prefix of it, as IDs are matched elsewhere —
+	// and never looked up among the project's: a secret it was not delegated
+	// answers the same as one that does not exist.
 	fits := map[string]*model.Secret{}
 	bySecret := map[string][]*model.SecretGrant{}
 	for i := range delegations {
@@ -73,7 +71,7 @@ func (s *Service) delegationFor(ctx context.Context, projectID, approverID strin
 		if !hostscope.Covers(delegation.Host, host) {
 			continue
 		}
-		if chosen != nil && delegation.SecretID != chosen.ID {
+		if chosenID != "" && !strings.HasPrefix(delegation.SecretID, chosenID) {
 			continue
 		}
 		secret, ok := fits[delegation.SecretID]

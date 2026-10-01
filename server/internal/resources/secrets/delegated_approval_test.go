@@ -290,3 +290,22 @@ func TestADiscoboxListsOnlyTheSecretsItWasDelegated(t *testing.T) {
 		t.Fatalf("listed as a person = %d, %v; want every secret", len(all), err)
 	}
 }
+
+// A secret a discobox was not delegated answers its --secret-id the same as one
+// that does not exist, so naming IDs cannot tell it which the project holds.
+func TestASecretNotDelegatedAnswersAsIfItDidNotExist(t *testing.T) {
+	ctx := testPrincipalContext()
+	svc, st := newAgentCredentialService(t)
+	delegated := createBoundSecret(ctx, t, svc, "github", "", 86400)
+	other := createBoundSecret(ctx, t, svc, "github-admin", "", 86400)
+	delegate(t, st, delegated, "github.com", time.Hour)
+
+	for _, named := range []string{other.ID, other.ID[:len(other.ID)-3], "sec_doesnotexist"} {
+		_, err := approveAsLead(svc, workerRequest(t, svc, nil), services.ApproveSecretRequestBody{SecretId: serverapi.NewOptString(named)})
+		requireStatus(t, err, http.StatusForbidden)
+	}
+	// A prefix of the delegated secret's ID names it.
+	if _, err := approveAsLead(svc, workerRequest(t, svc, nil), services.ApproveSecretRequestBody{SecretId: serverapi.NewOptString(delegated.ID[:len(delegated.ID)-3])}); err != nil {
+		t.Fatalf("approve naming the delegated secret by a prefix: %v", err)
+	}
+}

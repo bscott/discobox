@@ -102,7 +102,7 @@ Current authorizers:
   secrets service filters them: to the caller's owned requests, and to the
   secrets of its live delegation grants
   ([ADR 26-09-30-782](../../../docs/adr/26-09-30-782-a-discobox-answers-its-own-discoboxes-requests-within-what-it-may-delegate.md)
-  §2). `ActingUserID` is the user such a call acts as: the sandbox's
+  §2 and §3 respectively). `ActingUserID` is the user such a call acts as: the sandbox's
   creator.
 - `ProjectAuthorizer` authorizes `/projects/{projectId}/...` and
   `/api/projects/{projectId}/...` routes by user principal and project
