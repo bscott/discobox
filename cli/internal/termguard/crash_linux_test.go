@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -34,6 +35,8 @@ func TestMain(m *testing.M) {
 		crashHoldingTheTerminal()
 	case "finish":
 		finishProperly()
+	case "hangup":
+		hangUpHoldingTheTerminal()
 	}
 	os.Exit(m.Run())
 }
@@ -51,6 +54,22 @@ func crashHoldingTheTerminal() {
 	os.Stdout.WriteString("\x1b[?1049h\x1b[?1003h\x1b[?1006hTHE CONSOLE")
 	go func() { panic("boom on a goroutine nobody recovers") }()
 	select {}
+}
+
+func hangUpHoldingTheTerminal() {
+	self, _ := os.Executable()
+	_ = os.Setenv(helperEnv, "guard")
+	if _, err := Start([]string{self}); err != nil {
+		os.Stderr.WriteString("no guard: " + err.Error())
+		os.Exit(3)
+	}
+	if _, err := term.MakeRaw(int(os.Stdin.Fd())); err != nil {
+		os.Exit(4)
+	}
+	os.Stdout.WriteString("\x1b[?1049h\x1b[?1003hTHE CONSOLE")
+	_ = syscall.Kill(os.Getpid(), syscall.SIGHUP)
+	time.Sleep(10 * time.Second)
+	os.Exit(5)
 }
 
 func finishProperly() {
@@ -95,6 +114,24 @@ func TestACrashLeavesTheTerminalAsItWasFound(t *testing.T) {
 	}
 	if report, _ := os.ReadFile(reports[0]); !strings.Contains(string(report), "boom on a goroutine nobody recovers") {
 		t.Errorf("the report does not hold the panic: %q", report)
+	}
+	if changed != "" {
+		t.Error(changed)
+	}
+}
+
+func TestAHangupIsNamed(t *testing.T) {
+	if signal.Ignored(syscall.SIGHUP) {
+		t.Skip("SIGHUP is ignored here, and the program would inherit that")
+	}
+	dir := t.TempDir()
+	got, changed := runOnTerminal(t, "hangup", dir, "the terminal has been restored")
+	reset := strings.LastIndex(got, resetSequence)
+	if reset < 0 || !strings.Contains(got[reset:], "was ended by SIGHUP;") {
+		t.Fatalf("want the hangup named after the reset, got %q", got)
+	}
+	if left, _ := os.ReadDir(dir); len(left) != 0 {
+		t.Errorf("a hangup left a report behind: %v", left)
 	}
 	if changed != "" {
 		t.Error(changed)

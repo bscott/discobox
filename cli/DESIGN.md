@@ -22,7 +22,7 @@ transport helpers where OpenAPI does not model the stream.
 | `internal/localpty` | Running one of this CLI's own commands on a pty of its own for a console pane: `creack/pty` on Unix, ConPTY on Windows (ADR 0065). Sets `DISCOBOX_PARENT_PID` on the child. |
 | `internal/lifetime` | How long a grant lives, said the way people say it: the presets an approval offers, the words `--grant-ttl` and `--max-grant-ttl` parse, and how one is read back. Owned here because the window's picker and the flags have to mean the same thing by "1 week". Zero is forever. |
 | `internal/refreshcmd` | Running the command a token suggests for its renewal (ADR 26-09-25-122): an argument vector split as a person types it, run with no shell, no stdin, a deadline, and a bound on output, printed value trimmed. Shared by `discobox secret refresh`/`create` and the console's data source, so the command a person was shown is run one way everywhere. |
-| `internal/termguard` | Putting the terminal back when the console dies holding it: a second process (`discobox admin console-guard`) on a lifeline pipe, plus the runtime's crash output sent to a temporary file it names. See below. |
+| `internal/termguard` | Putting the terminal back when the console dies holding it, and saying why: a second process (`discobox admin console-guard`) on a lifeline pipe, plus the runtime's crash output sent to a temporary file it names. See below. |
 | `internal/keys` | The leader: its default, its `DISCOBOX_LEADER` override, normalization, and the byte a raw stream matches it as. Owned here because the console's panes and a plain attach must reserve the same key. |
 
 ## UI Dependency Direction
@@ -214,7 +214,18 @@ writes every reset Bubble Tea could have needed, restores the modes, and
 names in one line the temporary file holding the crash report
 (`debug.SetCrashOutput`, tracebacks of every goroutine) that the alternate
 screen swallowed. The report is named rather than printed: it runs to a
-thousand lines, and on screen it would scroll the rest away. Bubble Tea's own panic recovery stays on:
+thousand lines, and on screen it would scroll the rest away. With no report,
+the guard still says why where it can. SIGHUP is the one catchable signal
+that ends a Go program without a trace and that Bubble Tea leaves alone, so
+the console catches it, writes its name down the lifeline, and re-raises it.
+On Linux the guard polls its cgroup's `oom_kill` count and blames the
+out-of-memory killer for a rise within a poll of the death: the cgroup may be
+a tmux server's or an ssh session's, shared with other panes. Where that count
+can be read, what is left is a SIGKILL from another process or an exit that
+skipped `Release`, and the guard says so with the `bpftrace` line that shows
+the next sender; elsewhere it says only that the console was killed without
+warning. A kill that takes the whole cgroup (systemd-oomd) takes the guard
+with it, and nothing is said. Bubble Tea's own panic recovery stays on:
 a panic it recovers ends `Run` normally, so the terminal is already back and
 an in-flight push still finishes (`waitForPushes`); the guard is for the
 deaths nothing in the process can catch. The guard is a child rather than a
