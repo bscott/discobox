@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/discobox-ai/discobox/server/internal/model"
+	resourcesecrets "github.com/discobox-ai/discobox/server/internal/resources/secrets"
 	"github.com/discobox-ai/discobox/server/internal/store"
 	"gorm.io/gorm"
 )
@@ -23,7 +24,7 @@ import (
 // reconciler that can observe the sandbox without its assignments launches it
 // with no secrets — the miss is permanent, because assignments are not part of
 // the spec fingerprint and nothing re-pushes them to a running sandbox.
-func (s *Service) createSandboxIntent(ctx context.Context, sandbox *model.Sandbox, secrets []*model.SandboxSecret, grants []*model.SecretGrant) (*model.Sandbox, error) {
+func (s *Service) createSandboxIntent(ctx context.Context, sandbox *model.Sandbox, secrets []*model.SandboxSecret, grants resourcesecrets.SandboxGrants) (*model.Sandbox, error) {
 	if s.engine == nil {
 		return nil, errors.New("reconcile engine is required")
 	}
@@ -39,8 +40,13 @@ func (s *Service) createSandboxIntent(ctx context.Context, sandbox *model.Sandbo
 			}
 		}
 		// The grants a create gives the new discobox, stored with it or not at
-		// all (ADR 0140 §4).
-		for _, grant := range grants {
+		// all (ADR 0140 §4) — and, given by a discobox, only while the
+		// delegations they were made under still bound them (ADR
+		// 26-09-30-782 §1).
+		if err := resourcesecrets.HoldDelegations(ctx, txStore, grants); err != nil {
+			return err
+		}
+		for _, grant := range grants.Grants {
 			if err := txStore.CreateSecretGrant(ctx, grant); err != nil {
 				return err
 			}

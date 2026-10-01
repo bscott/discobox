@@ -187,6 +187,17 @@ transaction that stores the discobox, so a create that cannot give them all
 creates nothing. A grant a sandbox makes records the sandbox as its granter
 (`grantedByOf`).
 
+A discobox giving them is held to what it may hand on, as when it approves a
+request
+([ADR 26-09-30-782](../../../../docs/adr/26-09-30-782-a-discobox-answers-its-own-discoboxes-requests-within-what-it-may-delegate.md)
+§1): each grant is made under a live delegation grant it holds of that secret
+covering the host (`delegationsOf`, `chooseDelegation`), its lifetime fitted
+to it or refused if the one it named does not fit, and once every grant has
+passed what can refuse it without the judge, the judge is asked of each
+(`judgeDelegation`, the new discobox as `ForSandboxID`). The create's
+transaction holds each grant to its delegation again (`HoldDelegations`), so
+a delegation revoked in between creates nothing.
+
 ## Delegation grants
 
 A grant's `Purpose` is what it authorizes its holder to do: `use` the

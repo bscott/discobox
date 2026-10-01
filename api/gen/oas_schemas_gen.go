@@ -2184,6 +2184,8 @@ type CredentialVerdict struct {
 	Command []string `json:"command"`
 	// When the verdict was recorded.
 	CreatedAt time.Time `json:"createdAt"`
+	// On a delegation verdict, the discobox the uses were handed on to.
+	ForSandboxId OptString `json:"forSandboxId"`
 	// Grant the use belonged to, when it could still be resolved at record time.
 	GrantId OptString `json:"grantId"`
 	// Harness config the project's judge ran, on a request verdict.
@@ -2261,6 +2263,11 @@ func (s *CredentialVerdict) GetCommand() []string {
 // GetCreatedAt returns the value of CreatedAt.
 func (s *CredentialVerdict) GetCreatedAt() time.Time {
 	return s.CreatedAt
+}
+
+// GetForSandboxId returns the value of ForSandboxId.
+func (s *CredentialVerdict) GetForSandboxId() OptString {
+	return s.ForSandboxId
 }
 
 // GetGrantId returns the value of GrantId.
@@ -2401,6 +2408,11 @@ func (s *CredentialVerdict) SetCommand(val []string) {
 // SetCreatedAt sets the value of CreatedAt.
 func (s *CredentialVerdict) SetCreatedAt(val time.Time) {
 	s.CreatedAt = val
+}
+
+// SetForSandboxId sets the value of ForSandboxId.
+func (s *CredentialVerdict) SetForSandboxId(val OptString) {
+	s.ForSandboxId = val
 }
 
 // SetGrantId sets the value of GrantId.

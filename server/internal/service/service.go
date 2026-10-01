@@ -122,6 +122,9 @@ func New(store *store.Store, engine *reconcile.Engine, options Options) *Service
 	// One service answers both: host trust is the credential broker's act
 	// about a different thing (ADR 0149), and shares its pool-ownership check.
 	secretService := secrets.NewService(store)
+	// A create's grants are prepared by the credential broker, which holds a
+	// discobox giving them to what it was delegated (ADR 26-09-30-782 §1).
+	sandboxService.SetSecrets(secretService)
 	// The project's judge is converged like any other resource (ADR 26-09-22-838 §1):
 	// it exists when the project has a pool for it and a configured default
 	// harness, and is replaced when that harness is.

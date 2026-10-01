@@ -431,3 +431,35 @@ func TestAnApprovalRefusedWithoutTheJudgeDoesNotAskIt(t *testing.T) {
 		t.Fatalf("the judge was asked %d times about an approval refused without it", len(judging.asked))
 	}
 }
+
+// The grants a discobox gives on a create are held to the delegations they
+// were made under once more in the create's transaction: one revoked between
+// preparing the grants and storing them refuses the create (ADR 26-09-30-782 §1).
+func TestACreatesGrantsAreHeldToTheirDelegationsWhenStored(t *testing.T) {
+	ctx := testPrincipalContext()
+	svc, st := newAgentCredentialService(t)
+	svc.SetJudge(&delegationJudge{allow: true})
+	secret := createBoundSecret(ctx, t, svc, "github", "", 86400)
+	delegation := delegate(t, st, secret, "github.com", time.Hour)
+
+	grants, err := svc.PrepareSandboxGrants(asLead(), "project-1", "sbx-new", []apimodel.SandboxGrant{{
+		SecretId: serverapi.NewOptString(secret.ID), EnvVar: serverapi.NewOptString("GH_TOKEN"),
+		Host: serverapi.NewOptString("api.github.com"), Uses: []apimodel.SecretUse{{Description: "read issue 43"}},
+	}})
+	if err != nil {
+		t.Fatalf("prepare grants: %v", err)
+	}
+	if len(grants.Delegations) != 1 || grants.Delegations[0].ID != delegation.ID || grants.Grantor != leadID {
+		t.Fatalf("grants = %+v, want the one made under the lead's delegation", grants)
+	}
+	if err := resourcesecrets.HoldDelegations(ctx, st, grants); err != nil {
+		t.Fatalf("hold a live delegation: %v", err)
+	}
+
+	lapsed := time.Now().UTC().Add(-time.Minute)
+	delegation.ExpiresAt = &lapsed
+	if err := st.UpdateSecretGrant(ctx, delegation); err != nil {
+		t.Fatalf("lapse delegation: %v", err)
+	}
+	requireStatus(t, resourcesecrets.HoldDelegations(ctx, st, grants), http.StatusForbidden)
+}

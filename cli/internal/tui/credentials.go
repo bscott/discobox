@@ -287,8 +287,8 @@ func (m *Model) askAboutGate(req CredentialRequest, secrets []Secret, known well
 		label: "what approving gives it",
 		lines: []line{
 			{text: known.Description, tone: toneDim},
-			{text: "it may give any secret in this project to the discoboxes it creates", tone: toneAlert},
-			{text: "and answer its discoboxes' credential requests, within what you separately delegate to it", tone: toneAlert},
+			{text: "it may create discoboxes, and hand them credentials", tone: toneAlert},
+			{text: "but only within what you separately delegate to it", tone: toneAlert},
 		},
 	})
 	d.answerLabel = "let it in?"

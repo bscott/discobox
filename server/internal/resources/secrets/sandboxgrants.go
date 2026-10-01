@@ -21,6 +21,13 @@ import (
 type SandboxGrants struct {
 	Grants   []*model.SecretGrant
 	Bindings []*model.SandboxSecret
+	// Delegations are, when a discobox gives the uses, the delegation grant
+	// each grant is made under, by index (ADR 26-09-30-782 §1); nil when a
+	// person gives them. The create holds each grant to its delegation again
+	// in its transaction (HoldDelegations).
+	Delegations []*model.SecretGrant
+	// Grantor is the discobox giving the uses, when one is.
+	Grantor string
 }
 
 // PrepareSandboxGrants checks the uses a discobox is being created with and
@@ -31,13 +38,26 @@ type SandboxGrants struct {
 // Each is held to what a person's grant of the same shape is held to: a
 // concrete host within the secret's own binding, a lifetime within its limit,
 // and at least one use. One environment variable carries one credential.
-func PrepareSandboxGrants(ctx context.Context, st *store.Store, projectID, sandboxID string, requested []apimodel.SandboxGrant) (SandboxGrants, error) {
+//
+// A discobox giving them is held to what it may hand on, as when it approves a
+// request (ADR 26-09-30-782 §1): each grant is made under a live delegation
+// grant it holds of that secret, covering the host — the one that lets it last
+// longest, a lifetime it named fitting within it and one it did not fitted to
+// it — and the project's judge must find its uses within that delegation's,
+// asked once every grant has passed what can refuse it without the judge.
+func (s *Service) PrepareSandboxGrants(ctx context.Context, projectID, sandboxID string, requested []apimodel.SandboxGrant) (SandboxGrants, error) {
 	var out SandboxGrants
 	if len(requested) == 0 {
 		return out, nil
 	}
+	st := s.store
 	principal, _ := auth.PrincipalFromContext(ctx)
 	grantedBy := grantedByOf(principal)
+	byDiscobox := principal.Type == auth.PrincipalTypeSandbox
+	if byDiscobox {
+		out.Grantor = principal.SandboxID
+	}
+	var credentials []string
 	boundTo := map[string]string{}
 	for _, in := range requested {
 		secret, envName, host, err := sandboxGrantTarget(ctx, st, projectID, in)
@@ -52,6 +72,24 @@ func PrepareSandboxGrants(ctx context.Context, st *store.Store, projectID, sandb
 			return SandboxGrants{}, err
 		}
 		ttl := in.GrantTTLSeconds.Or(secret.MaxGrantTTL)
+		var delegation *model.SecretGrant
+		if byDiscobox {
+			delegations, err := s.delegationsOf(ctx, projectID, principal.SandboxID, secret.ID, host)
+			if err != nil {
+				return SandboxGrants{}, err
+			}
+			if len(delegations) == 0 {
+				return SandboxGrants{}, apperrors.NewStatusError(http.StatusForbidden, fmt.Sprintf(
+					"no delegation grant this discobox holds hands on %s to %s, so it cannot give it to the discobox it creates; create it without the grant and let it ask", secret.Name, host))
+			}
+			named := in.GrantTTLSeconds.IsSet()
+			if delegation, err = chooseDelegation(delegations, ttl, named); err != nil {
+				return SandboxGrants{}, err
+			}
+			if !named {
+				ttl = fitTTL(delegation, ttl, time.Now().UTC())
+			}
+		}
 		if err := guardGrantTTL(secret, ttl); err != nil {
 			return SandboxGrants{}, err
 		}
@@ -78,6 +116,12 @@ func PrepareSandboxGrants(ctx context.Context, st *store.Store, projectID, sandb
 			grant.ExpiresAt = &expires
 		}
 		out.Grants = append(out.Grants, grant)
+		out.Delegations = append(out.Delegations, delegation)
+		credential := secret.Name
+		if id := strings.TrimSpace(in.WellKnownId.Or("")); id != "" {
+			credential = id
+		}
+		credentials = append(credentials, credential)
 
 		switch previous, bound := boundTo[envName]; {
 		case !bound:
@@ -92,7 +136,38 @@ func PrepareSandboxGrants(ctx context.Context, st *store.Store, projectID, sandb
 				fmt.Sprintf("%s is given two different credentials; one environment variable carries one", envName))
 		}
 	}
+	if byDiscobox {
+		for i, grant := range out.Grants {
+			if err := s.judgeDelegation(ctx, projectID, principal.SandboxID, out.Delegations[i], credentials[i], grant.Host, grant.Uses, "", sandboxID); err != nil {
+				return SandboxGrants{}, err
+			}
+		}
+	}
 	return out, nil
+}
+
+// HoldDelegations holds each grant a discobox gives on a create to the
+// delegation it was made under, read again in the create's transaction: still
+// the grantor's, live, covering the host, with the uses the judge read, and
+// lasting at least as long as the grant. A delegation revoked or changed since
+// the grants were prepared refuses the create, which then creates nothing.
+func HoldDelegations(ctx context.Context, txStore *store.Store, grants SandboxGrants) error {
+	now := time.Now().UTC()
+	for i, chosen := range grants.Delegations {
+		if chosen == nil {
+			continue
+		}
+		grant := grants.Grants[i]
+		delegation, ok := heldDelegation(ctx, txStore, grant.ProjectID, grants.Grantor, chosen, grant.SecretID, grant.Host, now)
+		if !ok {
+			return apperrors.NewStatusError(http.StatusForbidden,
+				"a delegation grant this create's grants were made under is gone or no longer covers them; create it again, or without the grants")
+		}
+		if delegation.ExpiresAt != nil && (grant.ExpiresAt == nil || grant.ExpiresAt.After(*delegation.ExpiresAt)) {
+			return outlastsDelegation()
+		}
+	}
+	return nil
 }
 
 // sandboxGrantTarget is the secret, variable, and host one grant for a new

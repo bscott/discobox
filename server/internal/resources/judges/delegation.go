@@ -74,6 +74,7 @@ func (s *Service) JudgeDelegation(ctx context.Context, projectID string, ask ser
 		SandboxID:       ask.ApproverID,
 		GrantID:         ask.DelegationGrantID,
 		SecretRequestID: ask.RequestID,
+		ForSandboxID:    ask.ForSandboxID,
 		Round:           job.Round,
 		Allow:           decided.Allow,
 		Need:            decided.Need,

@@ -8,14 +8,18 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	serverapi "github.com/discobox-ai/discobox/api/gen"
+	"github.com/discobox-ai/discobox/judge"
 	"github.com/discobox-ai/discobox/server/internal/apperrors"
 	"github.com/discobox-ai/discobox/server/internal/auth"
 	"github.com/discobox-ai/discobox/server/internal/model"
 	"github.com/discobox-ai/discobox/server/internal/resources/sandboxes"
+	"github.com/discobox-ai/discobox/server/internal/resources/secrets"
 	"github.com/discobox-ai/discobox/server/internal/service"
 	services "github.com/discobox-ai/discobox/server/internal/services"
+	"github.com/discobox-ai/discobox/server/internal/store"
 	"github.com/discobox-ai/discobox/wellknown"
 )
 
@@ -73,12 +77,57 @@ func TestADiscoboxIsCreatedWithTheUsesItIsGiven(t *testing.T) {
 	}
 }
 
+// grantJudge stands in for the project's judge on the delegation a create's
+// grants are made under, answering as it is told.
+type grantJudge struct {
+	allow bool
+	asked []services.DelegationAsk
+}
+
+func (j *grantJudge) Judge(context.Context, string, services.JudgeAsk) (judge.Answer, error) {
+	return judge.Answer{}, errors.New("not a request judge")
+}
+
+func (j *grantJudge) JudgeDelegation(_ context.Context, _ string, ask services.DelegationAsk) (judge.Answer, error) {
+	j.asked = append(j.asked, ask)
+	return judge.Answer{Allow: j.allow, Reason: "decided"}, nil
+}
+
+// judgedBy makes judging the service's grants that answer.
+func judgedBy(svc *service.Service, judging *grantJudge) {
+	svc.SecretService.(*secrets.Service).SetJudge(judging)
+}
+
+// delegateToLead gives the lead a delegation grant of secret to github.com,
+// lapsing after lifetime (none when zero).
+func delegateToLead(t *testing.T, st *store.Store, projectID string, secret *model.Secret, lifetime time.Duration) *model.SecretGrant {
+	t.Helper()
+	grant := &model.SecretGrant{
+		ProjectID: projectID, SecretID: secret.ID, Scope: model.SecretGrantScopeSandbox, ScopeKey: "sbx-lead",
+		Host: "github.com", GrantedBy: "user-1", Purpose: model.SecretGrantPurposeDelegate,
+		Uses: []model.SecretUse{{UseID: "use-delegated", Description: "push branches to org/repo, for the discoboxes I create"}},
+	}
+	if lifetime > 0 {
+		expires := time.Now().UTC().Add(lifetime)
+		grant.ExpiresAt = &expires
+	}
+	if err := st.CreateSecretGrant(context.Background(), grant); err != nil {
+		t.Fatalf("create delegation grant: %v", err)
+	}
+	return grant
+}
+
 // What a sandbox creates it creates as the user who created it, and the grants
-// it gives are recorded as its own doing. It gives uses, never values.
+// it gives are recorded as its own doing. It gives uses, never values, and only
+// under a delegation it holds that the judge finds them within (ADR
+// 26-09-30-782 §1).
 func TestADiscoboxCreatedByASandboxIsItsUsersAndItsGrantsAreTheSandboxs(t *testing.T) {
 	ctx := context.Background()
-	svc, _, _, projectID := newSandboxTestService(t, nil)
+	svc, _, st, projectID := newSandboxTestService(t, nil)
 	secret := createGitHubSecret(ctx, t, svc, projectID)
+	delegation := delegateToLead(t, st, projectID, secret, time.Hour)
+	judging := &grantJudge{allow: true}
+	judgedBy(svc, judging)
 	lead := auth.WithPrincipal(ctx, auth.Principal{
 		Type: auth.PrincipalTypeSandbox, SandboxID: "sbx-lead", ProjectID: projectID, UserID: "user-lead",
 	})
@@ -98,8 +147,21 @@ func TestADiscoboxCreatedByASandboxIsItsUsersAndItsGrantsAreTheSandboxs(t *testi
 		t.Fatalf("created by sandbox %v, want the lead (ADR 26-09-24-630 §1)", created.CreatedBySandboxID)
 	}
 	grants, err := svc.ListSecretGrants(ctx, projectID, secret.ID)
-	if err != nil || len(grants) != 1 || grants[0].GrantedBy != "sbx-lead" || grants[0].ScopeKey != created.ID {
-		t.Fatalf("grants = %+v, %v; want one for the worker, granted by the lead", grants, err)
+	var given []model.SecretGrant
+	for _, grant := range grants {
+		if grant.Purpose == model.SecretGrantPurposeUse {
+			given = append(given, grant)
+		}
+	}
+	if err != nil || len(given) != 1 || given[0].GrantedBy != "sbx-lead" || given[0].ScopeKey != created.ID {
+		t.Fatalf("grants = %+v, %v; want one for the worker, granted by the lead", given, err)
+	}
+	if given[0].ExpiresAt == nil || given[0].ExpiresAt.After(*delegation.ExpiresAt) {
+		t.Fatalf("grant expires %v, want no later than the delegation it was made under", given[0].ExpiresAt)
+	}
+	if len(judging.asked) != 1 || judging.asked[0].DelegationGrantID != delegation.ID ||
+		judging.asked[0].ForSandboxID != created.ID || judging.asked[0].RequestID != "" {
+		t.Fatalf("judge asked %+v, want the delegation, for the new discobox, with no request", judging.asked)
 	}
 
 	_, err = svc.CreateSandbox(lead, projectID, services.CreateSandboxBody{
@@ -353,5 +415,55 @@ func TestASandboxsOriginDoesNotDecideDelivery(t *testing.T) {
 	remote.Config.Source = serverapi.NewOptGitSource(hostURL("https://github.com/org/repo.git"))
 	if _, err := svc.CreateSandbox(lead, projectID, remote); err != nil {
 		t.Fatalf("create from a network URL: %v", err)
+	}
+}
+
+// A discobox gives on a create only what it was delegated, and only uses the
+// judge finds within it; a grant it may not give refuses the whole create,
+// which then creates nothing (ADR 26-09-30-782 §1). A person's create is not
+// held to any of it.
+func TestADiscoboxGivesOnACreateOnlyWhatItWasDelegated(t *testing.T) {
+	ctx := context.Background()
+	svc, _, st, projectID := newSandboxTestService(t, nil)
+	secret := createGitHubSecret(ctx, t, svc, projectID)
+	lead := auth.WithPrincipal(ctx, auth.Principal{
+		Type: auth.PrincipalTypeSandbox, SandboxID: "sbx-lead", ProjectID: projectID, UserID: "user-lead",
+	})
+	create := func(as context.Context, name string) error {
+		_, err := svc.CreateSandbox(as, projectID, services.CreateSandboxBody{
+			HarnessName: serverapi.NewOptString("shell"),
+			Config:      serverapi.SandboxCreateConfig{Name: name},
+			Grants:      []serverapi.SandboxGrant{githubGrant(secret.ID)},
+		})
+		return err
+	}
+	created := func(name string) bool {
+		list, err := st.ListSandboxes(ctx, projectID, "", nil)
+		if err != nil {
+			t.Fatalf("list sandboxes: %v", err)
+		}
+		for _, sandbox := range list {
+			if sandbox.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+
+	judgedBy(svc, &grantJudge{allow: true})
+	requireStatus(t, create(lead, "undelegated"), http.StatusForbidden)
+	if created("undelegated") {
+		t.Fatal("a create refused for a grant it could not give created a discobox")
+	}
+
+	delegateToLead(t, st, projectID, secret, time.Hour)
+	judgedBy(svc, &grantJudge{allow: false})
+	requireStatus(t, create(lead, "judged-out"), http.StatusForbidden)
+	if created("judged-out") {
+		t.Fatal("a create whose grant the judge refused created a discobox")
+	}
+
+	if err := create(ctx, "a-persons"); err != nil {
+		t.Fatalf("a person's create with a grant: %v", err)
 	}
 }

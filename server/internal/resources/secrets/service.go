@@ -504,7 +504,11 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 				return nil, err
 			}
 		}
-		if err := s.judgeDelegation(ctx, projectID, principal.SandboxID, delegation, secret, req, host, approvedUses); err != nil {
+		credential := secret.Name
+		if req.WellKnownID != "" {
+			credential = req.WellKnownID
+		}
+		if err := s.judgeDelegation(ctx, projectID, principal.SandboxID, delegation, credential, host, approvedUses, req.ID, req.SandboxID); err != nil {
 			return nil, err
 		}
 	}

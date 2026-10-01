@@ -112,11 +112,38 @@ func (s *Service) delegationFor(ctx context.Context, projectID, approverID strin
 	for _, only := range fits {
 		secret = only
 	}
-	delegation := longestLived(bySecret[secret.ID])
-	if named && !outlastedBy(delegation, ttl, time.Now().UTC()) {
-		return nil, nil, outlastsDelegation()
+	delegation, err := chooseDelegation(bySecret[secret.ID], ttl, named)
+	if err != nil {
+		return nil, nil, err
 	}
 	return delegation, secret, nil
+}
+
+// chooseDelegation is the delegation, of those that fit, a grant is made
+// under: the one that lets it last longest, which a lifetime the grantor
+// named must fit within.
+func chooseDelegation(delegations []*model.SecretGrant, ttl int64, named bool) (*model.SecretGrant, error) {
+	delegation := longestLived(delegations)
+	if named && !outlastedBy(delegation, ttl, time.Now().UTC()) {
+		return nil, outlastsDelegation()
+	}
+	return delegation, nil
+}
+
+// delegationsOf are the live delegations a discobox holds of one secret that
+// cover a host: what it may hand that secret on under, there.
+func (s *Service) delegationsOf(ctx context.Context, projectID, approverID, secretID, host string) ([]*model.SecretGrant, error) {
+	delegations, err := s.store.ListLiveDelegationGrants(ctx, projectID, approverID)
+	if err != nil {
+		return nil, err
+	}
+	var out []*model.SecretGrant
+	for i := range delegations {
+		if delegations[i].SecretID == secretID && hostscope.Covers(delegations[i].Host, host) {
+			out = append(out, &delegations[i])
+		}
+	}
+	return out, nil
 }
 
 // delegatedTTL checks, in the approval's transaction, that the delegation the
@@ -129,23 +156,13 @@ func (s *Service) delegationFor(ctx context.Context, projectID, approverID strin
 func delegatedTTL(ctx context.Context, txStore *store.Store, projectID, approverID string, chosen *model.SecretGrant, secretID, host string, ttl int64, named bool) (int64, error) {
 	gone := apperrors.NewStatusError(http.StatusForbidden,
 		"the delegation grant this approval was made under is gone or no longer covers it; approve again, or leave the request for a person")
-	delegation, err := txStore.GetSecretGrant(ctx, projectID, chosen.ID)
-	if err != nil {
-		return 0, gone
-	}
 	now := time.Now().UTC()
-	if delegation.Purpose != model.SecretGrantPurposeDelegate || delegation.Scope != model.SecretGrantScopeSandbox ||
-		delegation.ScopeKey != approverID || delegation.SecretID != secretID || !hostscope.Covers(delegation.Host, host) ||
-		(delegation.ExpiresAt != nil && !delegation.ExpiresAt.After(now)) ||
-		!slices.Equal(useDescriptions(delegation.Uses), useDescriptions(chosen.Uses)) {
+	delegation, ok := heldDelegation(ctx, txStore, projectID, approverID, chosen, secretID, host, now)
+	if !ok {
 		return 0, gone
 	}
-	if delegation.ExpiresAt == nil {
-		return ttl, nil
-	}
-	remaining := int64(delegation.ExpiresAt.Sub(now) / time.Second)
 	if !named {
-		return min(ttl, remaining), nil
+		return fitTTL(delegation, ttl, now), nil
 	}
 	if !outlastedBy(delegation, ttl, now) {
 		return 0, outlastsDelegation()
@@ -153,23 +170,53 @@ func delegatedTTL(ctx context.Context, txStore *store.Store, projectID, approver
 	return ttl, nil
 }
 
+// heldDelegation reads the delegation a grant was chosen under again, and
+// reports whether it still bounds it: still the grantor's delegation, live, of
+// the same secret, covering the host, with the uses the judge read.
+func heldDelegation(ctx context.Context, txStore *store.Store, projectID, approverID string, chosen *model.SecretGrant, secretID, host string, now time.Time) (*model.SecretGrant, bool) {
+	delegation, err := txStore.GetSecretGrant(ctx, projectID, chosen.ID)
+	if err != nil {
+		return nil, false
+	}
+	if delegation.Purpose != model.SecretGrantPurposeDelegate || delegation.Scope != model.SecretGrantScopeSandbox ||
+		delegation.ScopeKey != approverID || delegation.SecretID != secretID || !hostscope.Covers(delegation.Host, host) ||
+		(delegation.ExpiresAt != nil && !delegation.ExpiresAt.After(now)) ||
+		!slices.Equal(useDescriptions(delegation.Uses), useDescriptions(chosen.Uses)) {
+		return nil, false
+	}
+	return delegation, true
+}
+
+// fitTTL is a lifetime nobody named, fitted to what a delegation has left. Zero
+// is forever, which no delegation that lapses can give.
+func fitTTL(delegation *model.SecretGrant, ttl int64, now time.Time) int64 {
+	if delegation.ExpiresAt == nil {
+		return ttl
+	}
+	remaining := int64(delegation.ExpiresAt.Sub(now) / time.Second)
+	if ttl <= 0 || ttl > remaining {
+		return remaining
+	}
+	return ttl
+}
+
 // judgeDelegation asks the project's judge whether the uses a discobox is
 // about to hand on fall within the uses of the delegation it approves under,
 // and refuses unless the judge says yes (ADR 26-09-30-782 §3). No judge, a judge
 // that cannot answer, and a judge that asks for something it cannot be shown
 // all refuse: the request then waits for a person.
-func (s *Service) judgeDelegation(ctx context.Context, projectID, approverID string, delegation *model.SecretGrant, secret *model.Secret, req *model.SecretRequest, host string, uses []model.SecretUse) error {
+//
+// requestID is the request being approved, empty for a grant given on a
+// create; forSandboxID is the discobox the uses go to either way.
+func (s *Service) judgeDelegation(ctx context.Context, projectID, approverID string, delegation *model.SecretGrant, credential, host string, uses []model.SecretUse, requestID, forSandboxID string) error {
 	if s.judge == nil {
 		return apperrors.NewStatusError(http.StatusForbidden,
-			"no judge can say whether these uses are within what this discobox was delegated, so it hands nothing on; leave the request for a person")
-	}
-	credential := secret.Name
-	if req.WellKnownID != "" {
-		credential = req.WellKnownID
+			"no judge can say whether these uses are within what this discobox was delegated, so it hands nothing on; leave it for a person")
 	}
 	answer, err := s.judge.JudgeDelegation(ctx, projectID, services.DelegationAsk{
 		ApproverID:        approverID,
-		RequestID:         req.ID,
+		RequestID:         requestID,
+		ForSandboxID:      forSandboxID,
 		DelegationGrantID: delegation.ID,
 		Delegated:         useDescriptions(delegation.Uses),
 		Uses:              useDescriptions(uses),
@@ -185,7 +232,7 @@ func (s *Service) judgeDelegation(ctx context.Context, projectID, approverID str
 			reason = "it gave no reason"
 		}
 		return apperrors.NewStatusError(http.StatusForbidden, fmt.Sprintf(
-			"the judge did not find these uses within what this discobox was delegated: %s; narrow them with --use, or leave the request for a person", reason))
+			"the judge did not find these uses within what this discobox was delegated: %s; narrow them, or leave it for a person", reason))
 	}
 	return nil
 }

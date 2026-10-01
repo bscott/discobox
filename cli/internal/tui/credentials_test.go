@@ -1172,7 +1172,7 @@ func TestAGateIsApprovedWithoutASecret(t *testing.T) {
 		t.Fatalf("dialog = %s, want only approve and deny", describe(m.dialog))
 	}
 	// It says what it hands over before it is agreed to.
-	if card := dialogText(m); !strings.Contains(card, "what approving gives it") || !strings.Contains(card, "any secret in this project") {
+	if card := dialogText(m); !strings.Contains(card, "what approving gives it") || !strings.Contains(card, "within what you separately delegate") {
 		t.Fatalf("card = %q, want it to say what approving gives the discobox", card)
 	}
 	drain(t, m, m.dialog.action("gate"), 0)

@@ -373,10 +373,10 @@ never has to hold a token that was already typed.
 credential with nothing behind it — the discobox API, `ai.discobox.sandbox` —
 has no secret to choose and no value to type, so its card offers Approve and
 Deny alone, then the lifetime, and the approval names no secret. It says what
-approving gives the discobox — the power to give any project secret onward on a
-create, and to answer its own discoboxes' requests within what it is separately
-delegated — because the ordinary card describes one credential, and this is
-every one of them.
+approving gives the discobox — the power to create discoboxes and hand them
+credentials, on a create or by answering their requests, but only within what
+it is separately delegated — because the ordinary card describes one
+credential, and this is every one it is delegated.
 
 **A new credential is named only when it has to be** (`startNewCredential`,
 `askStoredAs`). It is stored as what the agent asked for, and the project's

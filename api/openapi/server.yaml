@@ -3279,6 +3279,9 @@ components:
                     description: When the verdict was recorded
                     format: date-time
                     type: string
+                forSandboxId:
+                    description: On a delegation verdict, the discobox the uses were handed on to.
+                    type: string
                 grantId:
                     description: Grant the use belonged to, when it could still be resolved at record time
                     type: string

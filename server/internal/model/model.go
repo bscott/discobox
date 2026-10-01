@@ -1467,6 +1467,10 @@ type CredentialVerdict struct {
 	// Empty on every other verdict, which is what every row written before
 	// delegation verdicts existed already is.
 	SecretRequestID string `gorm:"column:secret_request_id;not null;type:text;default:'';index" json:"secretRequestId,omitempty" doc:"On a delegation verdict, the secret request the discobox was approving; the request names the grant the approval minted"`
+	// ForSandboxID is, on a delegation verdict, the discobox the uses were
+	// handed on to: the requester of an approval, or the discobox a create
+	// gave them to, which has no request to name it by.
+	ForSandboxID string `gorm:"column:for_sandbox_id;not null;type:text;default:'';index" json:"forSandboxId,omitempty" doc:"On a delegation verdict, the discobox the uses were handed on to"`
 	// Command is serialized JSON rather than a joined string: SecretGrant.Uses
 	// already sets the precedent for a slice column on this model, and keeping
 	// argv elements distinct is what let the judge — and lets a reader of this
