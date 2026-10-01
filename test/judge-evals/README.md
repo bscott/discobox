@@ -9,6 +9,7 @@ call a model, so nothing runs them by default.
 ```bash
 go tool task eval:judge                                          # claude-code's wrapper
 go tool task eval:judge WRAPPER=harness/codex-cli/prompt.sh RUNS=10
+go tool task eval:judge WRAPPER=harness/codex-cli/prompt.sh -- -model gpt-6-sol   # another model than the role maps to
 go tool task eval:judge -- -case 'approve-*' -json /tmp/report.json -logs /tmp/judge-logs
 ```
 
