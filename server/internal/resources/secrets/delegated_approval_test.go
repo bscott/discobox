@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -462,4 +463,90 @@ func TestACreatesGrantsAreHeldToTheirDelegationsWhenStored(t *testing.T) {
 		t.Fatalf("lapse delegation: %v", err)
 	}
 	requireStatus(t, resourcesecrets.HoldDelegations(ctx, st, grants), http.StatusForbidden)
+}
+
+// A secret a discobox gives on a create is resolved among what it was
+// delegated before anything reads it: one it was not delegated — by full ID,
+// by prefix, or by a well-known ID whose secret is not one of them — answers
+// the same as one that does not exist.
+func TestACreatesSecretNotDelegatedAnswersAsIfItDidNotExist(t *testing.T) {
+	ctx := testPrincipalContext()
+	svc, st := newAgentCredentialService(t)
+	svc.SetJudge(&delegationJudge{allow: true})
+	delegated := createBoundSecret(ctx, t, svc, "github", "", 86400)
+	other := createBoundSecret(ctx, t, svc, "github-admin", "api.github.com", 86400)
+	delegate(t, st, delegated, "github.com", time.Hour)
+	grant := func(secretID string) []apimodel.SandboxGrant {
+		return []apimodel.SandboxGrant{{
+			SecretId: serverapi.NewOptString(secretID), EnvVar: serverapi.NewOptString("GH_TOKEN"),
+			Host: serverapi.NewOptString("api.github.com"), Uses: []apimodel.SecretUse{{Description: "read issue 43"}},
+		}}
+	}
+	for _, named := range []string{other.ID, other.ID[:len(other.ID)-3], "sec_doesnotexist"} {
+		_, err := svc.PrepareSandboxGrants(asLead(), "project-1", "sbx-new", grant(named))
+		requireStatus(t, err, http.StatusForbidden)
+	}
+	wellKnown := []apimodel.SandboxGrant{{WellKnownId: serverapi.NewOptString("com.github.api"), Uses: []apimodel.SecretUse{{Description: "read issue 43"}}}}
+	_, err := svc.PrepareSandboxGrants(asLead(), "project-1", "sbx-new", wellKnown)
+	requireStatus(t, err, http.StatusForbidden)
+
+	if _, err := svc.PrepareSandboxGrants(asLead(), "project-1", "sbx-new", grant(delegated.ID[:len(delegated.ID)-3])); err != nil {
+		t.Fatalf("give the delegated secret named by a prefix: %v", err)
+	}
+}
+
+// A delegation with less than a second left fits no lifetime: rounded down it
+// is zero, which is forever, so it is refused rather than minted as a grant
+// that never expires.
+func TestADelegationWithNothingLeftHandsNothingOn(t *testing.T) {
+	ctx := testPrincipalContext()
+	svc, st := newAgentCredentialService(t)
+	svc.SetJudge(&delegationJudge{allow: true})
+	secret := createBoundSecret(ctx, t, svc, "github", "", 0)
+	delegate(t, st, secret, "github.com", 1500*time.Millisecond)
+	req := workerRequest(t, svc, nil)
+	time.Sleep(700 * time.Millisecond) // under a second left, still live
+	_, err := approveAsLead(svc, req, services.ApproveSecretRequestBody{})
+	requireStatus(t, err, http.StatusForbidden)
+}
+
+// Every grant a create gives is put to the judge, at once rather than one
+// after another, and one refusal refuses them all.
+func TestEachGrantACreateGivesIsJudged(t *testing.T) {
+	ctx := testPrincipalContext()
+	svc, st := newAgentCredentialService(t)
+	secret := createBoundSecret(ctx, t, svc, "github", "", 86400)
+	delegate(t, st, secret, "github.com", time.Hour)
+	grants := []apimodel.SandboxGrant{
+		{SecretId: serverapi.NewOptString(secret.ID), EnvVar: serverapi.NewOptString("GH_TOKEN"),
+			Host: serverapi.NewOptString("api.github.com"), Uses: []apimodel.SecretUse{{Description: "read issue 43"}}},
+		{SecretId: serverapi.NewOptString(secret.ID), EnvVar: serverapi.NewOptString("GH_TOKEN"),
+			Host: serverapi.NewOptString("api.github.com"), Uses: []apimodel.SecretUse{{Description: "read issue 44"}}},
+	}
+	judging := &countingJudge{allow: true}
+	svc.SetJudge(judging)
+	if _, err := svc.PrepareSandboxGrants(asLead(), "project-1", "sbx-new", grants); err != nil {
+		t.Fatalf("prepare two grants: %v", err)
+	}
+	if judging.asked.Load() != 2 {
+		t.Fatalf("judge asked %d times, want once per grant", judging.asked.Load())
+	}
+	svc.SetJudge(&countingJudge{allow: false})
+	_, err := svc.PrepareSandboxGrants(asLead(), "project-1", "sbx-new", grants)
+	requireStatus(t, err, http.StatusForbidden)
+}
+
+// countingJudge is safe to ask from several goroutines at once.
+type countingJudge struct {
+	allow bool
+	asked atomic.Int32
+}
+
+func (j *countingJudge) Judge(context.Context, string, services.JudgeAsk) (judge.Answer, error) {
+	return judge.Answer{}, errors.New("not a request judge")
+}
+
+func (j *countingJudge) JudgeDelegation(context.Context, string, services.DelegationAsk) (judge.Answer, error) {
+	j.asked.Add(1)
+	return judge.Answer{Allow: j.allow, Reason: "decided"}, nil
 }

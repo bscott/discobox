@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/discobox-ai/discobox/server/internal/model"
 	"github.com/discobox-ai/discobox/server/internal/store"
 	"github.com/discobox-ai/discobox/wellknown"
+	"golang.org/x/sync/errgroup"
 )
 
 // SandboxGrants are the use grants a discobox is created with and the agent
@@ -60,6 +62,12 @@ func (s *Service) PrepareSandboxGrants(ctx context.Context, projectID, sandboxID
 	var credentials []string
 	boundTo := map[string]string{}
 	for _, in := range requested {
+		if byDiscobox {
+			var err error
+			if in, err = s.delegatedGrant(ctx, projectID, principal.SandboxID, in); err != nil {
+				return SandboxGrants{}, err
+			}
+		}
 		secret, envName, host, err := sandboxGrantTarget(ctx, st, projectID, in)
 		if err != nil {
 			return SandboxGrants{}, err
@@ -87,7 +95,9 @@ func (s *Service) PrepareSandboxGrants(ctx context.Context, projectID, sandboxID
 				return SandboxGrants{}, err
 			}
 			if !named {
-				ttl = fitTTL(delegation, ttl, time.Now().UTC())
+				if ttl, err = fitTTL(delegation, ttl, time.Now().UTC()); err != nil {
+					return SandboxGrants{}, err
+				}
 			}
 		}
 		if err := guardGrantTTL(secret, ttl); err != nil {
@@ -137,13 +147,70 @@ func (s *Service) PrepareSandboxGrants(ctx context.Context, projectID, sandboxID
 		}
 	}
 	if byDiscobox {
+		// Asked at once, not one after another: the create is a discobox's own
+		// call, held open by its pool's gate for two minutes, and each ask is
+		// bounded to fit inside that on its own (judges' delegationBound) —
+		// one after another, two slow ones would not. The first refusal
+		// cancels the rest, and is the answer.
+		judging, judgingCtx := errgroup.WithContext(ctx)
 		for i, grant := range out.Grants {
-			if err := s.judgeDelegation(ctx, projectID, principal.SandboxID, out.Delegations[i], credentials[i], grant.Host, grant.Uses, "", sandboxID); err != nil {
-				return SandboxGrants{}, err
-			}
+			judging.Go(func() error {
+				return s.judgeDelegation(judgingCtx, projectID, principal.SandboxID, out.Delegations[i], credentials[i], grant.Host, grant.Uses, "", sandboxID)
+			})
+		}
+		if err := judging.Wait(); err != nil {
+			return SandboxGrants{}, err
 		}
 	}
 	return out, nil
+}
+
+// delegatedGrant resolves the secret a grant a discobox gives names, among the
+// secrets it was delegated and nothing else, before anything reads it: a
+// secret named by ID, or a prefix of one, as IDs are matched elsewhere; a
+// well-known credential by the secret marked for it, which must be one it was
+// delegated. A secret it was not delegated — or one that does not exist —
+// answers with the same refusal, so naming secrets cannot tell it which the
+// project holds, how they are bound, or what they are called (as for an
+// approval's --secret-id).
+func (s *Service) delegatedGrant(ctx context.Context, projectID, grantorID string, in apimodel.SandboxGrant) (apimodel.SandboxGrant, error) {
+	notDelegated := apperrors.NewStatusError(http.StatusForbidden,
+		"this discobox holds no delegation grant of that credential, so it cannot give it to the discobox it creates; create it without the grant and let it ask")
+	delegations, err := s.store.ListLiveDelegationGrants(ctx, projectID, grantorID)
+	if err != nil {
+		return in, err
+	}
+	delegated := map[string]bool{}
+	for i := range delegations {
+		delegated[delegations[i].SecretID] = true
+	}
+	if id := strings.TrimSpace(in.WellKnownId.Or("")); id != "" {
+		marked, err := s.store.FindSecretByWellKnownID(ctx, projectID, id)
+		if err != nil || !delegated[marked.ID] {
+			return in, notDelegated
+		}
+		return in, nil
+	}
+	named := strings.TrimSpace(in.SecretId.Or(""))
+	if named == "" {
+		return in, nil
+	}
+	var matches []string
+	for secretID := range delegated {
+		if strings.HasPrefix(secretID, named) {
+			matches = append(matches, secretID)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return in, notDelegated
+	case 1:
+		in.SecretId.SetTo(matches[0])
+		return in, nil
+	}
+	sort.Strings(matches)
+	return in, apperrors.NewStatusError(http.StatusBadRequest, fmt.Sprintf(
+		"%q names more than one secret this discobox was delegated; give more of its ID: %s", named, strings.Join(matches, ", ")))
 }
 
 // HoldDelegations holds each grant a discobox gives on a create to the

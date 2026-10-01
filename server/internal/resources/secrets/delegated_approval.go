@@ -162,7 +162,7 @@ func delegatedTTL(ctx context.Context, txStore *store.Store, projectID, approver
 		return 0, gone
 	}
 	if !named {
-		return fitTTL(delegation, ttl, now), nil
+		return fitTTL(delegation, ttl, now)
 	}
 	if !outlastedBy(delegation, ttl, now) {
 		return 0, outlastsDelegation()
@@ -188,16 +188,22 @@ func heldDelegation(ctx context.Context, txStore *store.Store, projectID, approv
 }
 
 // fitTTL is a lifetime nobody named, fitted to what a delegation has left. Zero
-// is forever, which no delegation that lapses can give.
-func fitTTL(delegation *model.SecretGrant, ttl int64, now time.Time) int64 {
+// is forever, which no delegation that lapses can give — and so is what a
+// delegation with less than a second left would fit to, which is refused
+// rather than minted as a grant that never expires.
+func fitTTL(delegation *model.SecretGrant, ttl int64, now time.Time) (int64, error) {
 	if delegation.ExpiresAt == nil {
-		return ttl
+		return ttl, nil
 	}
 	remaining := int64(delegation.ExpiresAt.Sub(now) / time.Second)
-	if ttl <= 0 || ttl > remaining {
-		return remaining
+	if remaining < 1 {
+		return 0, apperrors.NewStatusError(http.StatusForbidden,
+			"the delegation grant this would be made under is lapsing, with nothing left to hand on; leave it for a person")
 	}
-	return ttl
+	if ttl <= 0 || ttl > remaining {
+		return remaining, nil
+	}
+	return ttl, nil
 }
 
 // judgeDelegation asks the project's judge whether the uses a discobox is
