@@ -623,6 +623,13 @@ tasks:
     cmds:
       - test/performance/terminal-latency/run.sh
 
+  eval:judge:
+    desc: "Ask a harness's judge about the recorded cases in test/judge-evals and score it (WRAPPER=harness/codex-cli/prompt.sh, RUNS=5; extra flags after --)"
+    cmds:
+      # It calls a real model through the harness's own wrapper, with this
+      # environment's CLI and credentials, so it is never part of test:all.
+      - go run ./internal/cmd/discobox-judge-eval -wrapper '{{.WRAPPER | default "harness/claude-code/prompt.sh"}}' -runs {{.RUNS | default "5"}} {{.CLI_ARGS}} test/judge-evals/cases
+
   test:e2e:wslc:
     desc: "Run the wslc (Windows) provider e2e tests. Requires: Windows with WSL Containers"
     cmds:

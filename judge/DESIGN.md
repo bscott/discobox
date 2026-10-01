@@ -90,6 +90,13 @@ whole exchange, because a request is held open while the judge thinks.
 discobox to become reachable, which every hop bounding the exchange allows for. A
 command job is asked once: there is nothing further to show.
 
+**Recorded cases measure a harness's judge.** `test/judge-evals` holds jobs and
+what a correct judge does with each; `go tool task eval:judge` asks a harness's
+own `discobox-prompt` about them with this package's `System`, `Schema`,
+`Prompt`, and `GuidanceFor`, and scores the answers with `Decode` the way the
+control plane acts on them. Change the system prompt, a job's fields, or a
+harness's judge model, and run it against every harness that judges.
+
 **A job says beside its request whether the judge may still ask.** `Prompt`
 derives `BodyCanBeShown` and `AsksLeft` — a request job before its last round,
 with a body not yet shown in full — and replaces whatever a caller set. The
