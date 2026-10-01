@@ -331,6 +331,94 @@ func TestAdjustNeverOverridesExisting(t *testing.T) {
 	}
 }
 
+// A tool that forwards the caller's environment (kind's node containers,
+// `docker run -e HTTP_PROXY`) copies in the sandbox's loopback forwarder,
+// which inside the container is its own loopback. That value is not a user
+// choice, so it is rewritten where a genuinely user-set value would not be.
+func TestAdjustRewritesForwardedLoopbackProxy(t *testing.T) {
+	f := newFixture(t, []string{"debian.pem"},
+		map[string]string{"HTTP_PROXY": "http://127.0.0.1:17008"},
+		[]string{"HTTP_PROXY"},
+	)
+	bundle := writeBundle(t, f.dir, map[string]any{"linux": map[string]any{"namespaces": []any{map[string]any{"type": "network"}}}, "process": map[string]any{"env": []any{
+		"PATH=/usr/bin",
+		"HTTP_PROXY=http://127.0.0.1:17008",
+		"https_proxy=http://127.0.0.1:17008/",
+		"npm_config_proxy=http://127.0.0.1:17008",
+		"NO_PROXY=127.0.0.1,localhost",
+	}}}, "IMAGE-CA\n")
+
+	if _, err := Adjust(bundle, "cid", f.cfg); err != nil {
+		t.Fatalf("Adjust: %v", err)
+	}
+	env := specEnv(t, readSpec(t, bundle))
+	for _, want := range []string{
+		"PATH=/usr/bin",
+		"HTTP_PROXY=http://172.30.0.1:17008",
+		"https_proxy=http://172.30.0.1:17008/",
+		"npm_config_proxy=http://172.30.0.1:17008",
+		"NO_PROXY=127.0.0.1,localhost",
+	} {
+		if !slices.Contains(env, want) {
+			t.Fatalf("missing %q: %v", want, env)
+		}
+	}
+	if n := len(slices.DeleteFunc(slices.Clone(env), func(e string) bool { return !strings.HasPrefix(e, "HTTP_PROXY=") })); n != 1 {
+		t.Fatalf("HTTP_PROXY set %d times: %v", n, env)
+	}
+}
+
+// With no nested forwarder published there is nothing to retarget to, so the
+// value is dropped, as an injected one would be: unreachable hangs, unset fails
+// plainly. Values not naming the forwarder stay.
+func TestAdjustDropsForwardedLoopbackProxyUntilTheBridgeIsPublished(t *testing.T) {
+	f := newFixture(t, []string{"debian.pem"},
+		map[string]string{"HTTP_PROXY": "http://127.0.0.1:17008"},
+		[]string{"HTTP_PROXY"},
+	)
+	f.cfg.NestedBridge = filepath.Join(f.dir, "not-published.json")
+	bundle := writeBundle(t, f.dir, map[string]any{"linux": map[string]any{"namespaces": []any{map[string]any{"type": "network"}}}, "process": map[string]any{"env": []any{
+		"HTTP_PROXY=http://127.0.0.1:17008",
+		"HTTPS_PROXY=http://user-set:3128",
+	}}}, "IMAGE-CA\n")
+
+	if _, err := Adjust(bundle, "cid", f.cfg); err != nil {
+		t.Fatalf("Adjust: %v", err)
+	}
+	env := specEnv(t, readSpec(t, bundle))
+	for _, e := range env {
+		if strings.Contains(e, "127.0.0.1:17008") {
+			t.Fatalf("kept an unreachable proxy address: %v", env)
+		}
+	}
+	if !slices.Contains(env, "HTTPS_PROXY=http://user-set:3128") {
+		t.Fatalf("a value not naming the forwarder was touched: %v", env)
+	}
+}
+
+// A host-network container shares the sandbox's loopback, where the
+// forwarder really is, so the value works as written and is not touched —
+// least of all dropped while the bridge forwarder is unpublished.
+func TestAdjustLeavesLoopbackProxyInAHostNetworkContainer(t *testing.T) {
+	f := newFixture(t, []string{"debian.pem"},
+		map[string]string{"HTTP_PROXY": "http://127.0.0.1:17008"},
+		[]string{"HTTP_PROXY"},
+	)
+	f.cfg.NestedBridge = filepath.Join(f.dir, "not-published.json")
+	bundle := writeBundle(t, f.dir, map[string]any{
+		"linux":   map[string]any{"namespaces": []any{map[string]any{"type": "pid"}, map[string]any{"type": "mount"}}},
+		"process": map[string]any{"env": []any{"HTTP_PROXY=http://127.0.0.1:17008"}},
+	}, "IMAGE-CA\n")
+
+	if _, err := Adjust(bundle, "cid", f.cfg); err != nil {
+		t.Fatalf("Adjust: %v", err)
+	}
+	env := specEnv(t, readSpec(t, bundle))
+	if !slices.Contains(env, "HTTP_PROXY=http://127.0.0.1:17008") {
+		t.Fatalf("host-network container's working proxy was changed: %v", env)
+	}
+}
+
 // The OCI spec is large and evolving; fields this code does not model must
 // round-trip untouched rather than being dropped by a partial struct.
 func TestAdjustPreservesUnknownSpecFields(t *testing.T) {
