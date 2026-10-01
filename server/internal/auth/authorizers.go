@@ -88,7 +88,8 @@ type sandboxRoleRoute struct {
 type ownership int
 
 const (
-	ownsNothing ownership = iota
+	// The zero value asks nothing of what a route names.
+	_ ownership = iota
 	// createdSandbox: the path names a discobox the caller created (ADR
 	// 26-09-24-630 §2).
 	createdSandbox
