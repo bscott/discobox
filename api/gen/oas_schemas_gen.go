@@ -2196,8 +2196,9 @@ type CredentialVerdict struct {
 	ImageDigest OptString `json:"imageDigest"`
 	// The project's judge that answered, on a request verdict. It may no longer exist.
 	JudgeSandboxId OptString `json:"judgeSandboxId"`
-	// What was judged: a command about to run, or a request the proxy observed. A server that predates
-	// request verdicts leaves it out, and every verdict it has is a command verdict.
+	// What was judged: a command about to run, a request the proxy observed, or a discobox about to hand
+	// a credential on by approving another's request. A server that predates request verdicts leaves it
+	// out, and every verdict it has is a command verdict.
 	Kind OptCredentialVerdictKind `json:"kind"`
 	// Round trip from asking the judge to its answer, in milliseconds, timed by whoever asked:
 	// discobox-access around its wrapper for a command verdict, the control plane around the call to the
@@ -2509,13 +2510,15 @@ func (s *CredentialVerdict) SetVolunteered(val bool) {
 	s.Volunteered = val
 }
 
-// What was judged: a command about to run, or a request the proxy observed. A server that predates
-// request verdicts leaves it out, and every verdict it has is a command verdict.
+// What was judged: a command about to run, a request the proxy observed, or a discobox about to hand
+// a credential on by approving another's request. A server that predates request verdicts leaves it
+// out, and every verdict it has is a command verdict.
 type CredentialVerdictKind string
 
 const (
-	CredentialVerdictKindCommand CredentialVerdictKind = "command"
-	CredentialVerdictKindRequest CredentialVerdictKind = "request"
+	CredentialVerdictKindCommand    CredentialVerdictKind = "command"
+	CredentialVerdictKindRequest    CredentialVerdictKind = "request"
+	CredentialVerdictKindDelegation CredentialVerdictKind = "delegation"
 )
 
 // AllValues returns all CredentialVerdictKind values.
@@ -2523,6 +2526,7 @@ func (CredentialVerdictKind) AllValues() []CredentialVerdictKind {
 	return []CredentialVerdictKind{
 		CredentialVerdictKindCommand,
 		CredentialVerdictKindRequest,
+		CredentialVerdictKindDelegation,
 	}
 }
 
@@ -2532,6 +2536,8 @@ func (s CredentialVerdictKind) MarshalText() ([]byte, error) {
 	case CredentialVerdictKindCommand:
 		return []byte(s), nil
 	case CredentialVerdictKindRequest:
+		return []byte(s), nil
+	case CredentialVerdictKindDelegation:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -2546,6 +2552,9 @@ func (s *CredentialVerdictKind) UnmarshalText(data []byte) error {
 		return nil
 	case CredentialVerdictKindRequest:
 		*s = CredentialVerdictKindRequest
+		return nil
+	case CredentialVerdictKindDelegation:
+		*s = CredentialVerdictKindDelegation
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -5995,14 +6004,18 @@ type JudgeJob struct {
 	Guidance []string `json:"guidance"`
 	// The host the use was approved for.
 	Host string `json:"host"`
-	// What is being judged: a command about to run, or a request the proxy observed.
+	// What is being judged: a command about to run, a request the proxy observed, or a discobox about to
+	// hand a credential on by approving another's request.
 	Kind JudgeJobKind `json:"kind"`
-	// The approved use, in the words it was approved in.
+	// The approved use, in the words it was approved in. For a delegation job, the uses the discobox was
+	// delegated, one per line.
 	Purpose string                  `json:"purpose"`
 	Request OptJudgeRequestEvidence `json:"request"`
 	// Which ask this is, from 1. A round after the first exists because the judge asked to be shown the
 	// body.
 	Round int64 `json:"round"`
+	// For a delegation job, the uses the discobox is about to hand on, judged against purpose.
+	Uses []string `json:"uses"`
 }
 
 // GetCommand returns the value of Command.
@@ -6045,6 +6058,11 @@ func (s *JudgeJob) GetRound() int64 {
 	return s.Round
 }
 
+// GetUses returns the value of Uses.
+func (s *JudgeJob) GetUses() []string {
+	return s.Uses
+}
+
 // SetCommand sets the value of Command.
 func (s *JudgeJob) SetCommand(val []string) {
 	s.Command = val
@@ -6085,12 +6103,19 @@ func (s *JudgeJob) SetRound(val int64) {
 	s.Round = val
 }
 
-// What is being judged: a command about to run, or a request the proxy observed.
+// SetUses sets the value of Uses.
+func (s *JudgeJob) SetUses(val []string) {
+	s.Uses = val
+}
+
+// What is being judged: a command about to run, a request the proxy observed, or a discobox about to
+// hand a credential on by approving another's request.
 type JudgeJobKind string
 
 const (
-	JudgeJobKindCommand JudgeJobKind = "command"
-	JudgeJobKindRequest JudgeJobKind = "request"
+	JudgeJobKindCommand    JudgeJobKind = "command"
+	JudgeJobKindRequest    JudgeJobKind = "request"
+	JudgeJobKindDelegation JudgeJobKind = "delegation"
 )
 
 // AllValues returns all JudgeJobKind values.
@@ -6098,6 +6123,7 @@ func (JudgeJobKind) AllValues() []JudgeJobKind {
 	return []JudgeJobKind{
 		JudgeJobKindCommand,
 		JudgeJobKindRequest,
+		JudgeJobKindDelegation,
 	}
 }
 
@@ -6107,6 +6133,8 @@ func (s JudgeJobKind) MarshalText() ([]byte, error) {
 	case JudgeJobKindCommand:
 		return []byte(s), nil
 	case JudgeJobKindRequest:
+		return []byte(s), nil
+	case JudgeJobKindDelegation:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -6121,6 +6149,9 @@ func (s *JudgeJobKind) UnmarshalText(data []byte) error {
 		return nil
 	case JudgeJobKindRequest:
 		*s = JudgeJobKindRequest
+		return nil
+	case JudgeJobKindDelegation:
+		*s = JudgeJobKindDelegation
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -6517,8 +6548,9 @@ func (*ListCredentialVerdictsBody) listCredentialVerdictsRes() {}
 type ListCredentialVerdictsKind string
 
 const (
-	ListCredentialVerdictsKindCommand ListCredentialVerdictsKind = "command"
-	ListCredentialVerdictsKindRequest ListCredentialVerdictsKind = "request"
+	ListCredentialVerdictsKindCommand    ListCredentialVerdictsKind = "command"
+	ListCredentialVerdictsKindRequest    ListCredentialVerdictsKind = "request"
+	ListCredentialVerdictsKindDelegation ListCredentialVerdictsKind = "delegation"
 )
 
 // AllValues returns all ListCredentialVerdictsKind values.
@@ -6526,6 +6558,7 @@ func (ListCredentialVerdictsKind) AllValues() []ListCredentialVerdictsKind {
 	return []ListCredentialVerdictsKind{
 		ListCredentialVerdictsKindCommand,
 		ListCredentialVerdictsKindRequest,
+		ListCredentialVerdictsKindDelegation,
 	}
 }
 
@@ -6535,6 +6568,8 @@ func (s ListCredentialVerdictsKind) MarshalText() ([]byte, error) {
 	case ListCredentialVerdictsKindCommand:
 		return []byte(s), nil
 	case ListCredentialVerdictsKindRequest:
+		return []byte(s), nil
+	case ListCredentialVerdictsKindDelegation:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -6549,6 +6584,9 @@ func (s *ListCredentialVerdictsKind) UnmarshalText(data []byte) error {
 		return nil
 	case ListCredentialVerdictsKindRequest:
 		*s = ListCredentialVerdictsKindRequest
+		return nil
+	case ListCredentialVerdictsKindDelegation:
+		*s = ListCredentialVerdictsKindDelegation
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)

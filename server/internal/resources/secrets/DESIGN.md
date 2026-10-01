@@ -219,10 +219,16 @@ and a discobox that needs both holds two grants.
   the one that lets the grant last longest (`delegationFor`), and that one is
   read again by its ID in the approval's transaction (`delegatedTTL`): still
   live and covering the host, with a lifetime nobody named fitted to its
-  remaining time and one the approver named refused if it does not fit. It is
-  the delegation the approval is traced to, and the one any later question
-  about the approval is asked of. A request that names no uses is a person's, since a
-  grant without uses authorizes everything sent to its host.
+  remaining time and one the approver named refused if it does not fit.
+  Whether the uses handed on — the request's, or the ones the approver
+  narrowed them to — fall within that delegation's uses is a reading, so it is
+  asked of the project's judge (`judgeDelegation`, through
+  `services.JudgeService.JudgeDelegation`) before the transaction, which then
+  refuses a delegation whose uses changed since. Anything but an explicit yes
+  refuses, including no judge at all. The judge's delegation verdict is
+  recorded against the delegation grant, which is what the grant handed on is
+  traced to. A request that names no uses is a person's, since a grant without
+  uses authorizes everything sent to its host.
 
 ## The agent credentials broker
 

@@ -2,18 +2,40 @@ package secrets_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
 
 	serverapi "github.com/discobox-ai/discobox/api/gen"
 	apimodel "github.com/discobox-ai/discobox/api/model"
+	"github.com/discobox-ai/discobox/judge"
 	"github.com/discobox-ai/discobox/server/internal/auth"
 	"github.com/discobox-ai/discobox/server/internal/model"
 	resourcesecrets "github.com/discobox-ai/discobox/server/internal/resources/secrets"
 	services "github.com/discobox-ai/discobox/server/internal/services"
 	"github.com/discobox-ai/discobox/server/internal/store"
 )
+
+// delegationJudge stands in for the project's judge: it records what it was
+// asked about a delegation and answers as it is told.
+type delegationJudge struct {
+	allow bool
+	err   error
+	asked []services.DelegationAsk
+}
+
+func (j *delegationJudge) Judge(context.Context, string, services.JudgeAsk) (judge.Answer, error) {
+	return judge.Answer{}, errors.New("not a request judge")
+}
+
+func (j *delegationJudge) JudgeDelegation(_ context.Context, _ string, ask services.DelegationAsk) (judge.Answer, error) {
+	j.asked = append(j.asked, ask)
+	if j.err != nil {
+		return judge.Answer{}, j.err
+	}
+	return judge.Answer{Allow: j.allow, Reason: "decided"}, nil
+}
 
 // The lead discobox answering its workers' requests in these tests.
 const leadID = "sbx-lead"
@@ -70,6 +92,7 @@ func approveAsLead(svc *resourcesecrets.Service, req *model.SecretRequest, input
 func TestADiscoboxApprovesWithinItsDelegation(t *testing.T) {
 	ctx := testPrincipalContext()
 	svc, st := newAgentCredentialService(t)
+	svc.SetJudge(&delegationJudge{allow: true})
 	secret := createBoundSecret(ctx, t, svc, "github", "", 86400)
 	delegate(t, st, secret, "github.com", 30*time.Minute)
 
@@ -104,6 +127,7 @@ func TestADiscoboxApprovesWithinItsDelegation(t *testing.T) {
 func TestADelegationThatNeverLapsesBoundsNoLifetime(t *testing.T) {
 	ctx := testPrincipalContext()
 	svc, st := newAgentCredentialService(t)
+	svc.SetJudge(&delegationJudge{allow: true})
 	secret := createBoundSecret(ctx, t, svc, "github", "", 86400)
 	delegate(t, st, secret, "github.com", 0)
 	req := workerRequest(t, svc, func(b *services.CreateSandboxCredentialRequestBody) {
@@ -151,6 +175,8 @@ func TestADiscoboxHandsOnNothingItWasNotDelegated(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := testPrincipalContext()
 			svc, st := newAgentCredentialService(t)
+			svc.SetJudge(&delegationJudge{allow: true})
+			svc.SetJudge(&delegationJudge{allow: true})
 			delegated := createBoundSecret(ctx, t, svc, "github", "", 86400)
 			other := createBoundSecret(ctx, t, svc, "github-admin", "", 86400)
 			if tc.setup != nil {
@@ -171,6 +197,7 @@ func TestADiscoboxHandsOnNothingItWasNotDelegated(t *testing.T) {
 func TestADiscoboxDelegatedTwoSecretsNamesWhich(t *testing.T) {
 	ctx := testPrincipalContext()
 	svc, st := newAgentCredentialService(t)
+	svc.SetJudge(&delegationJudge{allow: true})
 	first := createBoundSecret(ctx, t, svc, "github", "", 86400)
 	second := createBoundSecret(ctx, t, svc, "github-bot", "", 86400)
 	delegate(t, st, first, "github.com", time.Hour)
@@ -193,6 +220,7 @@ func TestADiscoboxDelegatedTwoSecretsNamesWhich(t *testing.T) {
 func TestADiscoboxHandsOnAWellKnownCredentialOnlyByItsSecret(t *testing.T) {
 	ctx := testPrincipalContext()
 	svc, st := newAgentCredentialService(t)
+	svc.SetJudge(&delegationJudge{allow: true})
 	unmarked := createBoundSecret(ctx, t, svc, "github", "", 86400)
 	delegate(t, st, unmarked, "github.com", time.Hour)
 	wellKnown := func(b *services.CreateSandboxCredentialRequestBody) {
@@ -215,6 +243,7 @@ func TestADiscoboxHandsOnAWellKnownCredentialOnlyByItsSecret(t *testing.T) {
 func TestADiscoboxNeverApprovesADelegationOrAnUnnamedUse(t *testing.T) {
 	ctx := testPrincipalContext()
 	svc, st := newAgentCredentialService(t)
+	svc.SetJudge(&delegationJudge{allow: true})
 	secret := createBoundSecret(ctx, t, svc, "github", "", 86400)
 	delegate(t, st, secret, "github.com", time.Hour)
 
@@ -242,6 +271,7 @@ func TestADiscoboxNeverApprovesADelegationOrAnUnnamedUse(t *testing.T) {
 func TestADiscoboxApprovesUnderItsLongestLivedDelegation(t *testing.T) {
 	ctx := testPrincipalContext()
 	svc, st := newAgentCredentialService(t)
+	svc.SetJudge(&delegationJudge{allow: true})
 	secret := createBoundSecret(ctx, t, svc, "github", "", 86400)
 	delegate(t, st, secret, "github.com", 0)
 	time.Sleep(10 * time.Millisecond) // granted after it, so newest first
@@ -270,6 +300,7 @@ func TestADiscoboxApprovesUnderItsLongestLivedDelegation(t *testing.T) {
 func TestADiscoboxListsOnlyTheSecretsItWasDelegated(t *testing.T) {
 	ctx := testPrincipalContext()
 	svc, st := newAgentCredentialService(t)
+	svc.SetJudge(&delegationJudge{allow: true})
 	delegated := createBoundSecret(ctx, t, svc, "github", "", 86400)
 	lapsed := createBoundSecret(ctx, t, svc, "gitlab", "", 86400)
 	createBoundSecret(ctx, t, svc, "npm", "", 86400)
@@ -296,6 +327,7 @@ func TestADiscoboxListsOnlyTheSecretsItWasDelegated(t *testing.T) {
 func TestASecretNotDelegatedAnswersAsIfItDidNotExist(t *testing.T) {
 	ctx := testPrincipalContext()
 	svc, st := newAgentCredentialService(t)
+	svc.SetJudge(&delegationJudge{allow: true})
 	delegated := createBoundSecret(ctx, t, svc, "github", "", 86400)
 	other := createBoundSecret(ctx, t, svc, "github-admin", "", 86400)
 	delegate(t, st, delegated, "github.com", time.Hour)
@@ -308,4 +340,75 @@ func TestASecretNotDelegatedAnswersAsIfItDidNotExist(t *testing.T) {
 	if _, err := approveAsLead(svc, workerRequest(t, svc, nil), services.ApproveSecretRequestBody{SecretId: serverapi.NewOptString(delegated.ID[:len(delegated.ID)-3])}); err != nil {
 		t.Fatalf("approve naming the delegated secret by a prefix: %v", err)
 	}
+}
+
+// Whether the uses handed on fall within the delegation's is the judge's to
+// say, asked with the delegation it approves under and the uses it would grant
+// — narrowed, when the approver narrowed them. A refusal, or no judge at all,
+// refuses the approval (ADR 26-09-30-782 §3).
+func TestADiscoboxHandsOnOnlyUsesTheJudgeFindsWithinItsDelegation(t *testing.T) {
+	ctx := testPrincipalContext()
+	svc, st := newAgentCredentialService(t)
+	secret := createBoundSecret(ctx, t, svc, "github", "", 86400)
+	delegation := delegate(t, st, secret, "github.com", time.Hour)
+
+	judging := &delegationJudge{allow: true}
+	svc.SetJudge(judging)
+	narrowed := []apimodel.SecretUse{{Description: "gh api GET repos/org/repo/issues/43"}}
+	if _, err := approveAsLead(svc, workerRequest(t, svc, nil), services.ApproveSecretRequestBody{
+		Uses: serverapi.NewOptNilSecretUseArray(narrowed),
+	}); err != nil {
+		t.Fatalf("approve what the judge allows: %v", err)
+	}
+	if len(judging.asked) != 1 {
+		t.Fatalf("judge asked %d times, want once", len(judging.asked))
+	}
+	asked := judging.asked[0]
+	if asked.ApproverID != leadID || asked.DelegationGrantID != delegation.ID ||
+		len(asked.Delegated) != 1 || asked.Delegated[0] != delegation.Uses[0].Description ||
+		len(asked.Uses) != 1 || asked.Uses[0] != narrowed[0].Description || asked.Host != "api.github.com" {
+		t.Fatalf("asked = %+v, want the delegation it approves under and the narrowed use", asked)
+	}
+
+	svc.SetJudge(&delegationJudge{allow: false})
+	_, err := approveAsLead(svc, workerRequest(t, svc, nil), services.ApproveSecretRequestBody{})
+	requireStatus(t, err, http.StatusForbidden)
+
+	svc.SetJudge(nil)
+	_, err = approveAsLead(svc, workerRequest(t, svc, nil), services.ApproveSecretRequestBody{})
+	requireStatus(t, err, http.StatusForbidden)
+}
+
+// A delegation whose uses changed after the judge read them is not the one
+// the approval was judged under, and the transaction refuses it.
+func TestADelegationChangedAfterJudgingIsNotApprovedUnder(t *testing.T) {
+	ctx := testPrincipalContext()
+	svc, st := newAgentCredentialService(t)
+	secret := createBoundSecret(ctx, t, svc, "github", "", 86400)
+	delegation := delegate(t, st, secret, "github.com", time.Hour)
+	svc.SetJudge(judgeThen(func() {
+		delegation.Uses = []model.SecretUse{{UseID: "use-wider", Description: "anything on github"}}
+		if err := st.UpdateSecretGrant(context.Background(), delegation); err != nil {
+			t.Errorf("widen delegation: %v", err)
+		}
+	}))
+	_, err := approveAsLead(svc, workerRequest(t, svc, nil), services.ApproveSecretRequestBody{})
+	requireStatus(t, err, http.StatusForbidden)
+}
+
+// judgeThen allows, after doing something between the judge's answer and the
+// approval's transaction.
+func judgeThen(then func()) services.JudgeService {
+	return &afterJudge{then: then}
+}
+
+type afterJudge struct{ then func() }
+
+func (j *afterJudge) Judge(context.Context, string, services.JudgeAsk) (judge.Answer, error) {
+	return judge.Answer{}, errors.New("not a request judge")
+}
+
+func (j *afterJudge) JudgeDelegation(context.Context, string, services.DelegationAsk) (judge.Answer, error) {
+	j.then()
+	return judge.Answer{Allow: true, Reason: "within"}, nil
 }

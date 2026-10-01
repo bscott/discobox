@@ -1447,14 +1447,19 @@ type CredentialVerdict struct {
 	ProjectID string `gorm:"column:project_id;not null;type:text;index" json:"projectId" doc:"Project ID"`
 	// Kind and Origin default to what every row written before request
 	// verdicts existed was, so adding the columns is the whole upgrade.
-	Kind      string `gorm:"column:kind;not null;type:text;default:'command';index" json:"kind" doc:"What was judged: command or request" enum:"command,request"`
+	Kind      string `gorm:"column:kind;not null;type:text;default:'command';index" json:"kind" doc:"What was judged: command, request, or delegation" enum:"command,request,delegation"`
 	Origin    string `gorm:"column:origin;not null;type:text;default:'sandbox'" json:"origin" doc:"Who judged: sandbox, for a discobox's own judge, or judge, for the project's" enum:"sandbox,judge"`
 	SandboxID string `gorm:"column:sandbox_id;not null;type:text;index" json:"sandboxId" doc:"Sandbox the command ran in, or the request came from"`
 	// GrantID is resolved from UseID against the sandbox's live grants at
 	// record time, best-effort: a grant revoked in the moment between judging
 	// and recording leaves this empty rather than failing the write, because
 	// the verdict is still complete evidence about the command without it.
-	GrantID string `gorm:"column:grant_id;not null;type:text;default:'';index" json:"grantId,omitempty" doc:"Grant the use belonged to, when it could still be resolved"`
+	//
+	// On a delegation verdict it is the delegation grant the approval was
+	// judged against — what the grant a discobox handed on is traced to
+	// (ADR 26-09-30-782 §3) — and UseID is empty: what was judged is the
+	// delegation's uses against the ones handed on, both in the prompt.
+	GrantID string `gorm:"column:grant_id;not null;type:text;default:'';index" json:"grantId,omitempty" doc:"Grant the use belonged to, when it could still be resolved; on a delegation verdict, the delegation grant judged against"`
 	UseID   string `gorm:"column:use_id;not null;type:text;index" json:"useId" doc:"Approved use the command was judged against"`
 	// Command is serialized JSON rather than a joined string: SecretGrant.Uses
 	// already sets the precedent for a slice column on this model, and keeping
@@ -1509,8 +1514,9 @@ func (CredentialVerdict) TableName() string { return "credential_verdicts" }
 
 // The kinds and origins a CredentialVerdict records.
 const (
-	CredentialVerdictKindCommand = judge.KindCommand
-	CredentialVerdictKindRequest = judge.KindRequest
+	CredentialVerdictKindCommand    = judge.KindCommand
+	CredentialVerdictKindRequest    = judge.KindRequest
+	CredentialVerdictKindDelegation = judge.KindDelegation
 
 	CredentialVerdictOriginSandbox = "sandbox"
 	CredentialVerdictOriginJudge   = "judge"

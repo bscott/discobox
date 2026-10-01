@@ -134,6 +134,10 @@ func New(store *store.Store, engine *reconcile.Engine, options Options) *Service
 	// what the asking pool sent (ADR 26-09-22-838 §4). It is the same service that
 	// answers for host trust, built above.
 	judgeService.SetUses(secretService)
+	// And the other way: a discobox handing a credential on is asked of the
+	// project's judge — whether the uses fall within its delegation — while
+	// the credential broker approves (ADR 26-09-30-782 §3).
+	secretService.SetJudge(judgeService)
 	return &Service{
 		ProjectService:                 projects.NewService(store, providerService, poolService, harnessConfigService),
 		HarnessConfigService:           harnessConfigService,

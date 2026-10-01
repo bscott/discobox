@@ -514,14 +514,18 @@ type JudgeJob struct {
 	Guidance []string `json:"guidance"`
 	// The host the use was approved for.
 	Host string `json:"host"`
-	// What is being judged: a command about to run, or a request the proxy observed.
+	// What is being judged: a command about to run, a request the proxy observed, or a discobox about to
+	// hand a credential on by approving another's request.
 	Kind JudgeJobKind `json:"kind"`
-	// The approved use, in the words it was approved in.
+	// The approved use, in the words it was approved in. For a delegation job, the uses the discobox was
+	// delegated, one per line.
 	Purpose string                  `json:"purpose"`
 	Request OptJudgeRequestEvidence `json:"request"`
 	// Which ask this is, from 1. A round after the first exists because the judge asked to be shown the
 	// body.
 	Round int64 `json:"round"`
+	// For a delegation job, the uses the discobox is about to hand on, judged against purpose.
+	Uses []string `json:"uses"`
 }
 
 // GetCommand returns the value of Command.
@@ -564,6 +568,11 @@ func (s *JudgeJob) GetRound() int64 {
 	return s.Round
 }
 
+// GetUses returns the value of Uses.
+func (s *JudgeJob) GetUses() []string {
+	return s.Uses
+}
+
 // SetCommand sets the value of Command.
 func (s *JudgeJob) SetCommand(val []string) {
 	s.Command = val
@@ -604,12 +613,19 @@ func (s *JudgeJob) SetRound(val int64) {
 	s.Round = val
 }
 
-// What is being judged: a command about to run, or a request the proxy observed.
+// SetUses sets the value of Uses.
+func (s *JudgeJob) SetUses(val []string) {
+	s.Uses = val
+}
+
+// What is being judged: a command about to run, a request the proxy observed, or a discobox about to
+// hand a credential on by approving another's request.
 type JudgeJobKind string
 
 const (
-	JudgeJobKindCommand JudgeJobKind = "command"
-	JudgeJobKindRequest JudgeJobKind = "request"
+	JudgeJobKindCommand    JudgeJobKind = "command"
+	JudgeJobKindRequest    JudgeJobKind = "request"
+	JudgeJobKindDelegation JudgeJobKind = "delegation"
 )
 
 // AllValues returns all JudgeJobKind values.
@@ -617,6 +633,7 @@ func (JudgeJobKind) AllValues() []JudgeJobKind {
 	return []JudgeJobKind{
 		JudgeJobKindCommand,
 		JudgeJobKindRequest,
+		JudgeJobKindDelegation,
 	}
 }
 
@@ -626,6 +643,8 @@ func (s JudgeJobKind) MarshalText() ([]byte, error) {
 	case JudgeJobKindCommand:
 		return []byte(s), nil
 	case JudgeJobKindRequest:
+		return []byte(s), nil
+	case JudgeJobKindDelegation:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -640,6 +659,9 @@ func (s *JudgeJobKind) UnmarshalText(data []byte) error {
 		return nil
 	case JudgeJobKindRequest:
 		*s = JudgeJobKindRequest
+		return nil
+	case JudgeJobKindDelegation:
+		*s = JudgeJobKindDelegation
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)

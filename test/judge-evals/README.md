@@ -29,7 +29,8 @@ case does not accept, and the table says which.
 ## Cases
 
 `cases/*.json` are a `name`, `why` — what happened, or what the case controls
-for — `expect`, and the `job`. A case names what its request was recognized as
+for — `expect`, and the `job`: a request the proxy observed, or a delegation —
+the uses a discobox would hand on, against the uses it was delegated. A case names what its request was recognized as
 (`endpoint`, `protocol`, `parser`); the runner adds the trusted guidance for
 it, as the control plane does. Real refusals come from the proxy's audit
 record and the verdict a judge gave; controls are requests that must stay

@@ -23,7 +23,7 @@ const (
 	Role = "judge"
 	// PromptVersion changes whenever System changes. A stored verdict names
 	// it, so a decision can be read against the words that produced it.
-	PromptVersion = "6"
+	PromptVersion = "7"
 	// Timeout bounds one exchange — every round of it together, not each ask.
 	// A request is being held open while the judge thinks.
 	//
@@ -80,6 +80,12 @@ const (
 	// KindRequest is a request observed by the proxy, judged before the
 	// credentials it carries are resolved.
 	KindRequest = "request"
+	// KindDelegation is a discobox about to hand a credential on by
+	// approving another discobox's request, judged before the grant is
+	// minted: whether the uses it would hand on fall within the uses it was
+	// delegated (ADR 26-09-30-782 §3). Both are authorization, and there is no
+	// request evidence.
+	KindDelegation = "delegation"
 )
 
 // Job is one question, and everything the judge is allowed to see in order to
@@ -111,6 +117,10 @@ type Job struct {
 	Command []string `json:"command,omitempty"`
 	// Request is the request observed by the proxy, for a request job.
 	Request *Request `json:"request,omitempty"`
+	// Uses are the uses a discobox is about to hand on, for a delegation job:
+	// what it would grant, judged against Purpose, which is what it was
+	// delegated.
+	Uses []string `json:"uses,omitempty"`
 	// Guidance is what Discobox knows about what the request was recognized
 	// as (GuidanceFor), set by the trusted side that builds the job and never
 	// by whoever observed the request (ADR 26-09-26-240 §4). It explains; it
@@ -279,6 +289,21 @@ func (j Job) Validate() error {
 		}
 		if j.Round > 1 && !j.Request.Body.Supplied() {
 			return errors.New("a later round answers what the judge asked to be shown")
+		}
+	case KindDelegation:
+		if j.Request != nil || len(j.Command) > 0 {
+			return errors.New("a delegation job carries neither a command nor a request")
+		}
+		if len(j.Uses) == 0 {
+			return errors.New("a delegation job requires the uses about to be handed on")
+		}
+		for _, use := range j.Uses {
+			if strings.TrimSpace(use) == "" {
+				return errors.New("a use about to be handed on says what it is for")
+			}
+		}
+		if j.Round != 1 {
+			return errors.New("a delegation job is asked once: there is nothing further to show")
 		}
 	default:
 		return fmt.Errorf("unknown judge job kind %q", j.Kind)

@@ -80,39 +80,9 @@ func (s *Service) Judge(ctx context.Context, poolID string, ask services.JudgeAs
 	if err != nil {
 		return judge.Answer{}, apperrors.NotFound(err, "project not found")
 	}
-	judgeSandbox, err := s.judge(ctx, project)
+	judgeSandbox, err := s.readyJudge(ctx, project)
 	if err != nil {
 		return judge.Answer{}, err
-	}
-	if judgeSandbox == nil {
-		// Read-only: this is a pool asking, not the convergence deciding.
-		_, why, err := s.wanted(ctx, project, false)
-		if err != nil {
-			return judge.Answer{}, err
-		}
-		if why == "" {
-			why = "the project's judge is not ready yet"
-		}
-		return judge.Answer{}, apperrors.NewStatusError(http.StatusServiceUnavailable, "this project has no judge: "+why)
-	}
-	// A judge that could not be brought up is a refusal with a stable sentence,
-	// and the reason goes to the log rather than back down the wire.
-	//
-	// The judge is in no listing, so this is the only place its failure is
-	// mentioned at all — but it travels to the pool, and from there to the
-	// discobox that asked (ADR 26-09-22-838 §4: the reason is what a discobox learns).
-	// A sandbox's own reconcile error is written for whoever runs the server:
-	// it carries pool host paths, image references and whatever a provider's
-	// API said. That is an operator's to read, in the operator's log.
-	if judgeSandbox.State == model.SandboxStateFailed {
-		detail := ""
-		if judgeSandbox.ErrorMessage != nil {
-			detail = strings.TrimSpace(*judgeSandbox.ErrorMessage)
-		}
-		s.logger.WarnContext(ctx, "the project's judge could not be brought up, so a verdict was refused",
-			"projectId", project.ID, "sandboxId", judgeSandbox.ID, "poolId", judgeSandbox.PoolID, "error", detail)
-		return judge.Answer{}, apperrors.NewStatusError(http.StatusServiceUnavailable,
-			"this project's judge could not be brought up; the server's log says why")
 	}
 
 	// The question is composed once there is something that could answer it:
@@ -153,61 +123,10 @@ func (s *Service) Judge(ctx context.Context, poolID string, ask services.JudgeAs
 	ctx, cancel := context.WithTimeout(ctx, bound)
 	defer cancel()
 
-	// The round trip starts here, before the judge is reached: bringing up a
-	// stopped judge is part of how long it took to answer.
-	start := time.Now()
-	// A judge that is about to be reachable — its pool not yet heard from
-	// since this server started, or its host still coming back — is waited on
-	// rather than refused, for a bound of its own. Every deadline on the
-	// exchange allows for it on top of the judge's own time, so a first round
-	// that waits the whole of it still leaves the judge all of judge.Timeout.
-	reachCtx, cancelReach := context.WithTimeout(ctx, judge.ReachWait)
-	lease, sandboxModel, err := s.leases.AwaitSandboxHTTPClientForServer(reachCtx, project.ID, judgeSandbox.ID, []string{poolagentauth.ScopeJudgeRun})
-	cancelReach()
+	decided, latency, err := s.put(ctx, project, judgeSandbox, job, bound)
 	if err != nil {
 		return judge.Answer{}, err
 	}
-	defer lease.Release()
-
-	target, err := sandboxagentclient.TargetURL(lease.BaseURL, sandboxModel.ProjectID, sandboxModel.PoolID, sandboxModel.ID, "/judge")
-	if err != nil {
-		return judge.Answer{}, err
-	}
-	// Marshaled through the pointer, which is what reaches the generated
-	// MarshalJSON. By value, encoding/json walks the struct itself and asks
-	// each unset optional field to marshal — and an unset one writes nothing,
-	// which fails the whole encode. The generated encoder is the only one that
-	// knows to leave an unset field out.
-	jobBody := judgeJobBody(job)
-	body, err := json.Marshal(&jobBody)
-	if err != nil {
-		return judge.Answer{}, err
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))
-	if err != nil {
-		return judge.Answer{}, err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err := sandboxagentclient.HTTPClient(lease).Do(request)
-	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return judge.Answer{}, apperrors.NewStatusError(http.StatusGatewayTimeout,
-				fmt.Sprintf("the project's judge did not answer inside the %s the request had", bound.Round(time.Second)))
-		}
-		return judge.Answer{}, apperrors.NewStatusError(http.StatusBadGateway,
-			fmt.Sprintf("the project's judge could not be reached: %v", err))
-	}
-	defer response.Body.Close()
-	if response.StatusCode/100 != 2 {
-		return judge.Answer{}, judgeError(response)
-	}
-	var answered sandboxapi.JudgeAnswer
-	if err := json.NewDecoder(io.LimitReader(response.Body, int64(judge.MaxOutput))).Decode(&answered); err != nil {
-		return judge.Answer{}, apperrors.NewStatusError(http.StatusBadGateway,
-			fmt.Sprintf("the project's judge answered with something unreadable: %v", err))
-	}
-	latency := time.Since(start)
-	decided := answer(answered)
 	// Asked again after the verdict, because a verdict takes a while and a
 	// grant can be revoked inside it (ADR 26-09-22-838 §4). The check is the same one
 	// the question was built from, so what it rules out is a use that stopped
@@ -231,6 +150,110 @@ func (s *Service) Judge(ctx context.Context, poolID string, ask services.JudgeAs
 		return judge.Answer{}, err
 	}
 	return decided, nil
+}
+
+// readyJudge is the project's judge when it can answer, and otherwise the
+// refusal that says why: none yet, or one that could not be brought up.
+func (s *Service) readyJudge(ctx context.Context, project *model.Project) (*model.Sandbox, error) {
+	judgeSandbox, err := s.judge(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	if judgeSandbox == nil {
+		// Read-only: this is a verdict being asked for, not the convergence
+		// deciding.
+		_, why, err := s.wanted(ctx, project, false)
+		if err != nil {
+			return nil, err
+		}
+		if why == "" {
+			why = "the project's judge is not ready yet"
+		}
+		return nil, apperrors.NewStatusError(http.StatusServiceUnavailable, "this project has no judge: "+why)
+	}
+	// A judge that could not be brought up is a refusal with a stable sentence,
+	// and the reason goes to the log rather than back down the wire.
+	//
+	// The judge is in no listing, so this is the only place its failure is
+	// mentioned at all — but it travels to the pool, and from there to the
+	// discobox that asked (ADR 26-09-22-838 §4: the reason is what a discobox learns).
+	// A sandbox's own reconcile error is written for whoever runs the server:
+	// it carries pool host paths, image references and whatever a provider's
+	// API said. That is an operator's to read, in the operator's log.
+	if judgeSandbox.State == model.SandboxStateFailed {
+		detail := ""
+		if judgeSandbox.ErrorMessage != nil {
+			detail = strings.TrimSpace(*judgeSandbox.ErrorMessage)
+		}
+		s.logger.WarnContext(ctx, "the project's judge could not be brought up, so a verdict was refused",
+			"projectId", project.ID, "sandboxId", judgeSandbox.ID, "poolId", judgeSandbox.PoolID, "error", detail)
+		return nil, apperrors.NewStatusError(http.StatusServiceUnavailable,
+			"this project's judge could not be brought up; the server's log says why")
+	}
+
+	return judgeSandbox, nil
+}
+
+// put asks the project's judge one job and returns its answer and how long the
+// round trip took, bringing up a judge that is about to be reachable first.
+// ctx bounds the whole exchange; bound is what it was bounded by, for the
+// refusal that says so.
+func (s *Service) put(ctx context.Context, project *model.Project, judgeSandbox *model.Sandbox, job judge.Job, bound time.Duration) (judge.Answer, time.Duration, error) {
+	// The round trip starts here, before the judge is reached: bringing up a
+	// stopped judge is part of how long it took to answer.
+	start := time.Now()
+	// A judge that is about to be reachable — its pool not yet heard from
+	// since this server started, or its host still coming back — is waited on
+	// rather than refused, for a bound of its own. Every deadline on the
+	// exchange allows for it on top of the judge's own time, so a first round
+	// that waits the whole of it still leaves the judge all of judge.Timeout.
+	reachCtx, cancelReach := context.WithTimeout(ctx, judge.ReachWait)
+	lease, sandboxModel, err := s.leases.AwaitSandboxHTTPClientForServer(reachCtx, project.ID, judgeSandbox.ID, []string{poolagentauth.ScopeJudgeRun})
+	cancelReach()
+	if err != nil {
+		return judge.Answer{}, 0, err
+	}
+	defer lease.Release()
+
+	target, err := sandboxagentclient.TargetURL(lease.BaseURL, sandboxModel.ProjectID, sandboxModel.PoolID, sandboxModel.ID, "/judge")
+	if err != nil {
+		return judge.Answer{}, 0, err
+	}
+	// Marshaled through the pointer, which is what reaches the generated
+	// MarshalJSON. By value, encoding/json walks the struct itself and asks
+	// each unset optional field to marshal — and an unset one writes nothing,
+	// which fails the whole encode. The generated encoder is the only one that
+	// knows to leave an unset field out.
+	jobBody := judgeJobBody(job)
+	body, err := json.Marshal(&jobBody)
+	if err != nil {
+		return judge.Answer{}, 0, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))
+	if err != nil {
+		return judge.Answer{}, 0, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := sandboxagentclient.HTTPClient(lease).Do(request)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return judge.Answer{}, 0, apperrors.NewStatusError(http.StatusGatewayTimeout,
+				fmt.Sprintf("the project's judge did not answer inside the %s the request had", bound.Round(time.Second)))
+		}
+		return judge.Answer{}, 0, apperrors.NewStatusError(http.StatusBadGateway,
+			fmt.Sprintf("the project's judge could not be reached: %v", err))
+	}
+	defer response.Body.Close()
+	if response.StatusCode/100 != 2 {
+		return judge.Answer{}, 0, judgeError(response)
+	}
+	var answered sandboxapi.JudgeAnswer
+	if err := json.NewDecoder(io.LimitReader(response.Body, int64(judge.MaxOutput))).Decode(&answered); err != nil {
+		return judge.Answer{}, 0, apperrors.NewStatusError(http.StatusBadGateway,
+			fmt.Sprintf("the project's judge answered with something unreadable: %v", err))
+	}
+	latency := time.Since(start)
+	return answer(answered), latency, nil
 }
 
 // recordTimeout bounds writing one verdict once the judge has answered.
@@ -475,6 +498,7 @@ func judgeJobBody(job judge.Job) sandboxapi.JudgeJob {
 		Round:    int64(job.Round),
 		Command:  job.Command,
 		Guidance: job.Guidance,
+		Uses:     job.Uses,
 	}
 	if job.Credential != "" {
 		body.Credential = sandboxapi.NewOptString(job.Credential)

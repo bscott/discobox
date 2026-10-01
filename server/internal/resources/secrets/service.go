@@ -40,10 +40,20 @@ type Service struct {
 	// See renewedRecently.
 	renewalsMu sync.Mutex
 	renewals   map[string]time.Time
+	// judge is asked whether the uses a discobox hands on fall within what it
+	// was delegated (ADR 26-09-30-782 §3). Without one, a discobox approves
+	// nothing: anything but an explicit yes refuses.
+	judge services.JudgeService
 }
 
 func NewService(store *store.Store) *Service {
 	return &Service{store: store}
+}
+
+// SetJudge gives the service the project's judge to ask about delegation. The
+// judges service is built from this one (SetUses), so it is wired after.
+func (s *Service) SetJudge(judge services.JudgeService) {
+	s.judge = judge
 }
 
 func (s *Service) ListSecrets(ctx context.Context, projectID string) ([]model.Secret, error) {
@@ -470,6 +480,15 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 		}
 		if len(approvedUses) == 0 {
 			return nil, apperrors.NewStatusError(http.StatusBadRequest, "approving an agent credential request requires at least one use")
+		}
+	}
+
+	// Whether the uses a discobox hands on fall within what it was delegated is
+	// the judge's reading, asked before the transaction because it takes a
+	// while; the delegation it was asked about is held to again inside it.
+	if approverIsSandbox {
+		if err := s.judgeDelegation(ctx, projectID, principal.SandboxID, delegation, secret, req, host, approvedUses); err != nil {
+			return nil, err
 		}
 	}
 

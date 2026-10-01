@@ -562,9 +562,34 @@ type Services struct {
 	Judges JudgeService
 }
 
-// JudgeService puts a pool's ask to the judge of the project that owns it.
+// JudgeService puts a question to the judge of a project: a pool's ask about
+// one of its discoboxes' requests, or the server's own about a discobox
+// handing a credential on.
 type JudgeService interface {
 	Judge(ctx context.Context, poolID string, ask JudgeAsk) (judge.Answer, error)
+	JudgeDelegation(ctx context.Context, projectID string, ask DelegationAsk) (judge.Answer, error)
+}
+
+// DelegationAsk is a discobox about to hand a credential on by approving
+// another discobox's request: whether the uses it would grant fall within the
+// uses of the delegation grant it approves under (ADR 26-09-30-782 §3). It is
+// the server's own question, composed from the grant and the request it read,
+// so everything in it is what the server holds rather than what a discobox
+// said.
+type DelegationAsk struct {
+	// ApproverID is the discobox approving.
+	ApproverID string
+	// DelegationGrantID is the delegation grant it approves under, which the
+	// verdict is recorded against.
+	DelegationGrantID string
+	// Delegated are the delegation grant's uses: what it may hand on for.
+	Delegated []string
+	// Uses are the uses it would grant: the request's, or the ones it
+	// narrowed them to.
+	Uses []string
+	// Credential and Host are what is handed on and where it may go.
+	Credential string
+	Host       string
 }
 
 // JudgeAsk is a pool asking about one of its discoboxes' requests: which

@@ -179,6 +179,8 @@ func (s JudgeJobKind) Validate() error {
 		return nil
 	case "request":
 		return nil
+	case "delegation":
+		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}

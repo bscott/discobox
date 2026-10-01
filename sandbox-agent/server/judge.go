@@ -63,6 +63,7 @@ func judgeJob(in *sandboxapi.JudgeJob) judge.Job {
 		Round:      int(in.Round),
 		Command:    in.Command,
 		Guidance:   in.Guidance,
+		Uses:       in.Uses,
 	}
 	evidence, ok := in.Request.Get()
 	if !ok {

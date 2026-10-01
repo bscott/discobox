@@ -606,3 +606,27 @@ func TestHTTPAuditNamesTheSecretsSpent(t *testing.T) {
 	}
 	t.Fatalf("columns %v, want SECRETS", names)
 }
+
+// A delegation verdict is the project's judge's, and what it judged is the
+// delegation grant a discobox handed a credential on under — not a command,
+// and not a request (ADR 26-09-30-782 §3).
+func TestADelegationVerdictSaysWhatItWasJudgedUnder(t *testing.T) {
+	v := apimodel.CredentialVerdict{
+		ID: "verdict-1", SandboxId: "sbx-lead",
+		Kind:    apiclientgen.NewOptCredentialVerdictKind(apiclientgen.CredentialVerdictKindDelegation),
+		GrantId: apiclientgen.NewOptString("grant-delegated"),
+	}
+	if got := verdictRecorded(v); got != "judge" {
+		t.Fatalf("recorded = %q, want judge", got)
+	}
+	if got := verdictJudged(v); got != "handed on under grant-delegated" {
+		t.Fatalf("judged = %q, want the delegation grant", got)
+	}
+	var out strings.Builder
+	if err := writeCredentialVerdictBlocks(&out, []apimodel.CredentialVerdict{v}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "command:") {
+		t.Fatalf("block = %q, want no command line on a delegation verdict", out.String())
+	}
+}

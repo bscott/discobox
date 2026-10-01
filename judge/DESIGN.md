@@ -10,7 +10,7 @@ it.
 
 | File | What it holds |
 | --- | --- |
-| `judge.go` | `Job` — a command or an observed request, judged against one approved use — its bounds, and the JSON prompt it becomes. |
+| `judge.go` | `Job` — a command, an observed request, or a delegation (a discobox about to hand a credential on: the uses it would grant, judged against the uses it was delegated) — its bounds, and the JSON prompt it becomes. |
 | `system.go` | `System`, the words the judge is given, and `PromptVersion`, which changes with them. |
 | `verdict.go` | `Answer`, `Need`, `Schema`, and `Decode`: what Discobox will accept as a verdict. |
 | `standing.go` | `Standing`, `Route`, and `Job.Admits`: an allow the judge asks to let stand for a route, and whether it may. |

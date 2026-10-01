@@ -1263,6 +1263,8 @@ func (s CredentialVerdictKind) Validate() error {
 		return nil
 	case "request":
 		return nil
+	case "delegation":
+		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}
@@ -2322,6 +2324,8 @@ func (s JudgeJobKind) Validate() error {
 		return nil
 	case "request":
 		return nil
+	case "delegation":
+		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}
@@ -2477,6 +2481,8 @@ func (s ListCredentialVerdictsKind) Validate() error {
 	case "command":
 		return nil
 	case "request":
+		return nil
+	case "delegation":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)

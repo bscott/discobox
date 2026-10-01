@@ -393,9 +393,10 @@ Verdicts outlive their discobox. To read a deleted one's, pass its full ID.`,
 				return errors.New("--denied and --allowed cannot be used together")
 			}
 			switch kind {
-			case "", string(apiclientgen.ListCredentialVerdictsKindCommand), string(apiclientgen.ListCredentialVerdictsKindRequest):
+			case "", string(apiclientgen.ListCredentialVerdictsKindCommand), string(apiclientgen.ListCredentialVerdictsKindRequest),
+				string(apiclientgen.ListCredentialVerdictsKindDelegation):
 			default:
-				return fmt.Errorf("--kind %q: want command or request", kind)
+				return fmt.Errorf("--kind %q: want command, request, or delegation", kind)
 			}
 			projectID, err := a.projectIDValue()
 			if err != nil {
@@ -462,7 +463,7 @@ Verdicts outlive their discobox. To read a deleted one's, pass its full ID.`,
 	cmd.Flags().StringVar(&sandboxID, "discobox-id", "", "Only this discobox's verdicts; a deleted one needs its full ID")
 	cmd.Flags().StringVar(&useID, "use-id", "", "Only verdicts on this approved use")
 	cmd.Flags().StringVar(&grantID, "grant-id", "", "Only verdicts on uses of this grant")
-	cmd.Flags().StringVar(&kind, "kind", "", "Only verdicts on a command (a discobox's own judge) or a request (the project's judge)")
+	cmd.Flags().StringVar(&kind, "kind", "", "Only verdicts on a command (a discobox's own judge), a request (the project's judge), or a delegation (the project's judge, on a discobox handing a credential on)")
 	cmd.Flags().BoolVar(&denied, "denied", false, "Only denied verdicts, including a judge asking to see a request's body")
 	cmd.Flags().BoolVar(&allowed, "allowed", false, "Only allowed verdicts")
 	cmd.Flags().StringVar(&since, "since", "", "Only verdicts from this long ago (e.g. 1h) or since this RFC 3339 time")
@@ -580,7 +581,7 @@ func writeCredentialVerdictBlocks(out io.Writer, verdicts []apimodel.CredentialV
 		)
 		// A request is judged on what was observed, and the command the
 		// discobox declared is only context, which it need not have given.
-		if !isRequestVerdict(v) || len(v.Command) > 0 {
+		if (!isRequestVerdict(v) && !isDelegationVerdict(v)) || len(v.Command) > 0 {
 			lines = append(lines, "command:  "+displayArgv(v.Command))
 		}
 		lines = append(lines,
@@ -709,6 +710,14 @@ func isRequestVerdict(v apimodel.CredentialVerdict) bool {
 	return v.Kind.Or(apiclientgen.CredentialVerdictKindCommand) == apiclientgen.CredentialVerdictKindRequest
 }
 
+// isDelegationVerdict reports whether the project's judge decided whether a
+// discobox's handed-on uses fell within its delegation (ADR 26-09-30-782 §3).
+// Its grant is the delegation grant it was judged against, and what was
+// judged is in its prompt.
+func isDelegationVerdict(v apimodel.CredentialVerdict) bool {
+	return v.Kind.Or(apiclientgen.CredentialVerdictKindCommand) == apiclientgen.CredentialVerdictKindDelegation
+}
+
 // verdictWord is what the judge answered. "ask" is a judge that asked to be
 // shown the body instead of deciding, which is not an allow.
 func verdictWord(v apimodel.CredentialVerdict) string {
@@ -731,7 +740,7 @@ func verdictRecorded(v apimodel.CredentialVerdict) string {
 	switch {
 	case v.StandingVerdictId.Or("") != "":
 		return "standing"
-	case isRequestVerdict(v):
+	case isRequestVerdict(v), isDelegationVerdict(v):
 		return "judge"
 	case v.Volunteered:
 		return "report"
@@ -740,11 +749,15 @@ func verdictRecorded(v apimodel.CredentialVerdict) string {
 	}
 }
 
-// verdictJudged is what was judged: the argv of a command, or the method and
-// destination of a request.
+// verdictJudged is what was judged: the argv of a command, the method and
+// destination of a request, or the delegation grant a discobox handed a
+// credential on under.
 func verdictJudged(v apimodel.CredentialVerdict) string {
 	if request, ok := v.Request.Get(); ok && isRequestVerdict(v) {
 		return terminalSafe(request.Method + " " + request.URL)
+	}
+	if isDelegationVerdict(v) {
+		return "handed on under " + terminalSafe(v.GrantId.Or(""))
 	}
 	return displayArgv(v.Command)
 }

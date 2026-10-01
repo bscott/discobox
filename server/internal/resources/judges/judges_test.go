@@ -1245,3 +1245,66 @@ func TestAStandingAllowEndsWithItsTimeItsUseOrItsSentence(t *testing.T) {
 		}
 	})
 }
+
+// A delegation is the server's own question: the judge is put a delegation job
+// — what the discobox was delegated as the purpose, the uses it would hand on
+// beside it, asked once — and the answer is recorded as a delegation verdict
+// against the delegation grant, before it goes back (ADR 26-09-30-782 §3).
+func TestADelegationIsJudgedAndRecordedAgainstItsGrant(t *testing.T) {
+	ctx := context.Background()
+	service, appStore, sandboxes := newJudgeTest(t)
+	defaultHarness(t, appStore, "codex", "sha256:one")
+	if _, err := service.Reconcile(ctx, "project-1"); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	judgeSandbox := sandboxes.created[0]
+	ready(t, appStore, judgeSandbox)
+	fake := newAnsweringJudge(t, sandboxapi.JudgeAnswer{Allow: sandboxapi.NewOptBool(false), Reason: "pushing is not reading issues"})
+	service.SetLeases(fake)
+
+	answer, err := service.JudgeDelegation(ctx, "project-1", services.DelegationAsk{
+		ApproverID: "sbx-lead", DelegationGrantID: "grant-delegated",
+		Delegated:  []string{"read issues in org/repo", "read pull requests in org/repo"},
+		Uses:       []string{"push the branch fix-43 to org/repo"},
+		Credential: "github", Host: "api.github.com",
+	})
+	if err != nil {
+		t.Fatalf("JudgeDelegation() error = %v", err)
+	}
+	if answer.Allow {
+		t.Fatalf("answer = %+v, want the judge's refusal", answer)
+	}
+	jobs := fake.asked()
+	if len(jobs) != 1 {
+		t.Fatalf("the judge was asked %d times, want once", len(jobs))
+	}
+	job := jobs[0]
+	if string(job.Kind) != judge.KindDelegation || job.Purpose != "read issues in org/repo\nread pull requests in org/repo" ||
+		len(job.Uses) != 1 || job.Uses[0] != "push the branch fix-43 to org/repo" || job.Host != "api.github.com" || job.Round != 1 {
+		t.Fatalf("job = %+v, want a delegation job: the delegated uses as the purpose, the handed-on uses beside them", job)
+	}
+	verdicts, err := appStore.ListCredentialVerdicts(ctx, "project-1", store.CredentialVerdictFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(verdicts) != 1 {
+		t.Fatalf("verdicts = %d, want the one delegation verdict", len(verdicts))
+	}
+	row := verdicts[0]
+	if row.Kind != model.CredentialVerdictKindDelegation || row.GrantID != "grant-delegated" || row.SandboxID != "sbx-lead" ||
+		row.Allow || row.Reason != "pushing is not reading issues" || row.JudgeSandboxID != judgeSandbox.ID || row.Prompt == "" {
+		t.Fatalf("verdict = %+v, want a delegation verdict against the delegation grant", row)
+	}
+}
+
+// A server that does not judge cannot say a delegation is within, so it does
+// not answer one: the approval it was asked for refuses.
+func TestAServerThatDoesNotJudgeRefusesADelegation(t *testing.T) {
+	service, _, _ := newJudgeTest(t)
+	service.enabled = false
+	if _, err := service.JudgeDelegation(context.Background(), "project-1", services.DelegationAsk{
+		Delegated: []string{"read issues"}, Uses: []string{"read issue 43"}, Host: "api.github.com",
+	}); err == nil {
+		t.Fatal("a server that does not judge answered a delegation")
+	}
+}

@@ -4974,6 +4974,8 @@ func (s *CredentialVerdictKind) Decode(d *jx.Decoder) error {
 		*s = CredentialVerdictKindCommand
 	case CredentialVerdictKindRequest:
 		*s = CredentialVerdictKindRequest
+	case CredentialVerdictKindDelegation:
+		*s = CredentialVerdictKindDelegation
 	default:
 		*s = CredentialVerdictKind(v)
 	}
@@ -10982,9 +10984,19 @@ func (s *JudgeJob) encodeFields(e *jx.Encoder) {
 		e.FieldStart("round")
 		e.Int64(s.Round)
 	}
+	{
+		if s.Uses != nil {
+			e.FieldStart("uses")
+			e.ArrStart()
+			for _, elem := range s.Uses {
+				e.Str(elem)
+			}
+			e.ArrEnd()
+		}
+	}
 }
 
-var jsonFieldsNameOfJudgeJob = [8]string{
+var jsonFieldsNameOfJudgeJob = [9]string{
 	0: "command",
 	1: "credential",
 	2: "guidance",
@@ -10993,6 +11005,7 @@ var jsonFieldsNameOfJudgeJob = [8]string{
 	5: "purpose",
 	6: "request",
 	7: "round",
+	8: "uses",
 }
 
 // Decode decodes JudgeJob from json.
@@ -11000,7 +11013,7 @@ func (s *JudgeJob) Decode(d *jx.Decoder) error {
 	if s == nil {
 		return errors.New("invalid: unable to decode JudgeJob to nil")
 	}
-	var requiredBitSet [1]uint8
+	var requiredBitSet [2]uint8
 
 	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
 		switch string(k) {
@@ -11108,6 +11121,25 @@ func (s *JudgeJob) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"round\"")
 			}
+		case "uses":
+			if err := func() error {
+				s.Uses = make([]string, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem string
+					v, err := d.Str()
+					elem = string(v)
+					if err != nil {
+						return err
+					}
+					s.Uses = append(s.Uses, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"uses\"")
+			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
 		}
@@ -11117,8 +11149,9 @@ func (s *JudgeJob) Decode(d *jx.Decoder) error {
 	}
 	// Validate required fields.
 	var failures []validate.FieldError
-	for i, mask := range [1]uint8{
+	for i, mask := range [2]uint8{
 		0b10111000,
+		0b00000000,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -11184,6 +11217,8 @@ func (s *JudgeJobKind) Decode(d *jx.Decoder) error {
 		*s = JudgeJobKindCommand
 	case JudgeJobKindRequest:
 		*s = JudgeJobKindRequest
+	case JudgeJobKindDelegation:
+		*s = JudgeJobKindDelegation
 	default:
 		*s = JudgeJobKind(v)
 	}

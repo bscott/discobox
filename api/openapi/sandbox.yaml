@@ -149,13 +149,14 @@ components:
                     description: The host the use was approved for.
                     type: string
                 kind:
-                    description: 'What is being judged: a command about to run, or a request the proxy observed.'
+                    description: 'What is being judged: a command about to run, a request the proxy observed, or a discobox about to hand a credential on by approving another''s request.'
                     enum:
                         - command
                         - request
+                        - delegation
                     type: string
                 purpose:
-                    description: The approved use, in the words it was approved in.
+                    description: The approved use, in the words it was approved in. For a delegation job, the uses the discobox was delegated, one per line.
                     type: string
                 request:
                     $ref: '#/components/schemas/JudgeRequestEvidence'
@@ -163,6 +164,11 @@ components:
                     description: Which ask this is, from 1. A round after the first exists because the judge asked to be shown the body.
                     format: int64
                     type: integer
+                uses:
+                    description: For a delegation job, the uses the discobox is about to hand on, judged against purpose.
+                    items:
+                        type: string
+                    type: array
             required:
                 - kind
                 - purpose

@@ -727,6 +727,7 @@ func TestADiscoboxCannotChangeASecretByApproving(t *testing.T) {
 	// It holds a delegation of the secret, so the refusal is about changing
 	// it and not about what it may hand on.
 	delegate(t, st, secret, "api.github.com", time.Hour)
+	svc.SetJudge(&delegationJudge{allow: true})
 
 	asSandbox := auth.WithPrincipal(context.Background(), auth.Principal{
 		Type: auth.PrincipalTypeSandbox, SandboxID: "sbx-lead", ProjectID: "project-1", UserID: "user-1",

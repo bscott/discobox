@@ -23,6 +23,21 @@ func requestJob() judge.Job {
 // shown is a body's content as the judge is shown it.
 func shown(content string) *string { return &content }
 
+// delegationJob is a discobox about to hand on read access it was delegated.
+func delegationJob() judge.Job {
+	return judge.Job{
+		Kind: judge.KindDelegation, Purpose: "read issues in org/repo, for the discoboxes I create",
+		Host: "api.github.com", Credential: "github", Round: 1,
+		Uses: []string{"gh api GET repos/org/repo/issues/43"},
+	}
+}
+
+func withDelegation(change func(*judge.Job)) judge.Job {
+	job := delegationJob()
+	change(&job)
+	return job
+}
+
 func commandJob() judge.Job {
 	return judge.Job{
 		Kind: judge.KindCommand, Purpose: "open a pull request in org/repo",
@@ -44,6 +59,11 @@ func TestAJobIsJudgeableOrRefusedBeforeAModelReadsIt(t *testing.T) {
 	}{
 		{"a command", commandJob(), true},
 		{"a request", requestJob(), true},
+		{"a delegation", delegationJob(), true},
+		{"a delegation with nothing to hand on", withDelegation(func(j *judge.Job) { j.Uses = nil }), false},
+		{"a delegation handing on a blank use", withDelegation(func(j *judge.Job) { j.Uses = []string{" "} }), false},
+		{"a delegation carrying a request", withDelegation(func(j *judge.Job) { j.Request = requestJob().Request }), false},
+		{"a delegation asked twice", withDelegation(func(j *judge.Job) { j.Round = 2 }), false},
 		{"a request whose body was asked for", withRequest(func(j *judge.Job) {
 			j.Round = 2
 			j.Request.Body.Content = shown(`{"query":"mutation{...}"}`)

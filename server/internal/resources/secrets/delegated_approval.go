@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/discobox-ai/discobox/hostscope"
 	"github.com/discobox-ai/discobox/server/internal/apperrors"
 	"github.com/discobox-ai/discobox/server/internal/model"
+	services "github.com/discobox-ai/discobox/server/internal/services"
 	"github.com/discobox-ai/discobox/server/internal/store"
 )
 
@@ -134,7 +136,8 @@ func delegatedTTL(ctx context.Context, txStore *store.Store, projectID, approver
 	now := time.Now().UTC()
 	if delegation.Purpose != model.SecretGrantPurposeDelegate || delegation.Scope != model.SecretGrantScopeSandbox ||
 		delegation.ScopeKey != approverID || delegation.SecretID != secretID || !hostscope.Covers(delegation.Host, host) ||
-		(delegation.ExpiresAt != nil && !delegation.ExpiresAt.After(now)) {
+		(delegation.ExpiresAt != nil && !delegation.ExpiresAt.After(now)) ||
+		!slices.Equal(useDescriptions(delegation.Uses), useDescriptions(chosen.Uses)) {
 		return 0, gone
 	}
 	if delegation.ExpiresAt == nil {
@@ -148,6 +151,52 @@ func delegatedTTL(ctx context.Context, txStore *store.Store, projectID, approver
 		return 0, outlastsDelegation()
 	}
 	return ttl, nil
+}
+
+// judgeDelegation asks the project's judge whether the uses a discobox is
+// about to hand on fall within the uses of the delegation it approves under,
+// and refuses unless the judge says yes (ADR 26-09-30-782 §3). No judge, a judge
+// that cannot answer, and a judge that asks for something it cannot be shown
+// all refuse: the request then waits for a person.
+func (s *Service) judgeDelegation(ctx context.Context, projectID, approverID string, delegation *model.SecretGrant, secret *model.Secret, req *model.SecretRequest, host string, uses []model.SecretUse) error {
+	if s.judge == nil {
+		return apperrors.NewStatusError(http.StatusForbidden,
+			"no judge can say whether these uses are within what this discobox was delegated, so it hands nothing on; leave the request for a person")
+	}
+	credential := secret.Name
+	if req.WellKnownID != "" {
+		credential = req.WellKnownID
+	}
+	answer, err := s.judge.JudgeDelegation(ctx, projectID, services.DelegationAsk{
+		ApproverID:        approverID,
+		DelegationGrantID: delegation.ID,
+		Delegated:         useDescriptions(delegation.Uses),
+		Uses:              useDescriptions(uses),
+		Credential:        credential,
+		Host:              host,
+	})
+	if err != nil {
+		return err
+	}
+	if !answer.Decided() || !answer.Allow {
+		reason := strings.TrimSpace(answer.Reason)
+		if reason == "" {
+			reason = "it gave no reason"
+		}
+		return apperrors.NewStatusError(http.StatusForbidden, fmt.Sprintf(
+			"the judge did not find these uses within what this discobox was delegated: %s; narrow them with --use, or leave the request for a person", reason))
+	}
+	return nil
+}
+
+// useDescriptions is what a list of uses says, in order: the sentences a
+// person approved, which is all a judge reads of them.
+func useDescriptions(uses []model.SecretUse) []string {
+	out := make([]string, 0, len(uses))
+	for _, use := range uses {
+		out = append(out, use.Description)
+	}
+	return out
 }
 
 // longestLived is the delegation that lets a grant last longest: one that never

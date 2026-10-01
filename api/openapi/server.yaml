@@ -3298,10 +3298,11 @@ components:
                     description: The project's judge that answered, on a request verdict. It may no longer exist.
                     type: string
                 kind:
-                    description: 'What was judged: a command about to run, or a request the proxy observed. A server that predates request verdicts leaves it out, and every verdict it has is a command verdict.'
+                    description: 'What was judged: a command about to run, a request the proxy observed, or a discobox about to hand a credential on by approving another''s request. A server that predates request verdicts leaves it out, and every verdict it has is a command verdict.'
                     enum:
                         - command
                         - request
+                        - delegation
                     type: string
                 latencyMs:
                     description: 'Round trip from asking the judge to its answer, in milliseconds, timed by whoever asked: discobox-access around its wrapper for a command verdict, the control plane around the call to the judge for a request verdict.'
@@ -4252,13 +4253,14 @@ components:
                     description: The host the use was approved for.
                     type: string
                 kind:
-                    description: 'What is being judged: a command about to run, or a request the proxy observed.'
+                    description: 'What is being judged: a command about to run, a request the proxy observed, or a discobox about to hand a credential on by approving another''s request.'
                     enum:
                         - command
                         - request
+                        - delegation
                     type: string
                 purpose:
-                    description: The approved use, in the words it was approved in.
+                    description: The approved use, in the words it was approved in. For a delegation job, the uses the discobox was delegated, one per line.
                     type: string
                 request:
                     $ref: '#/components/schemas/JudgeRequestEvidence'
@@ -4266,6 +4268,11 @@ components:
                     description: Which ask this is, from 1. A round after the first exists because the judge asked to be shown the body.
                     format: int64
                     type: integer
+                uses:
+                    description: For a delegation job, the uses the discobox is about to hand on, judged against purpose.
+                    items:
+                        type: string
+                    type: array
             required:
                 - kind
                 - purpose
@@ -10900,6 +10907,7 @@ paths:
                     enum:
                         - command
                         - request
+                        - delegation
                     type: string
                 - description: Only verdicts recorded for this sandbox, which need not still exist
                   in: query
