@@ -71,7 +71,8 @@ and which one is recorded:
 
 - **the same credential** — the delegation grant's secret, or the well-known
   credential it names; the approver does not choose among project secrets, so
-  the sandbox role loses its secrets list;
+  the sandbox role's secrets list holds only the secrets of its live
+  delegation grants — what it may hand on, and so may name;
 - **a host within** the delegation grant's host;
 - **an expiry no later** than the delegation grant's; with no lifetime given,
   the lifetime the request asked for, capped there;
@@ -143,8 +144,8 @@ needs.
 ## Consequences
 
 - The sandbox role changes: a create's grants are held to the creator's
-  delegation grants; the secrets list leaves it; secret-request routes are
-  scoped to discoboxes the caller created.
+  delegation grants; its secrets list holds only what it was delegated;
+  secret-request routes are scoped to discoboxes the caller created.
 - A lead needs a delegation grant for each credential it will hand on, which a
   person approves once. Without one, its workers' requests wait for a person.
 - `discobox new --grant` and `--json` `"grants"` stay. The in-box skills teach
