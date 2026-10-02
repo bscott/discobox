@@ -13,6 +13,14 @@ go tool task eval:judge WRAPPER=harness/codex-cli/prompt.sh -- -model gpt-6-sol 
 go tool task eval:judge -- -case 'approve-*' -json /tmp/report.json -logs /tmp/judge-logs
 ```
 
+Jev is asked directly, the way a server with `judgeBackend: jev` asks it
+(`judge/jev`), with the key in `DISCOBOX_JEV_API_KEY`:
+
+```bash
+go tool task eval:judge:jev                         # one run per case
+go tool task eval:judge:jev RUNS=3 -- -case 'delegation-*' -jev-model jev-preview
+```
+
 The wrapper runs with this environment: its CLI (`claude`, `codex`) must be
 installed and logged in, or given its key. In a discobox, run it under a use of
 that credential: `discobox-access run --use <id> -- go tool task eval:judge …`.

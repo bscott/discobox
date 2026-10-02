@@ -14,8 +14,10 @@
 //
 // The wrapper is any harness's discobox-prompt — harness/claude-code/prompt.sh,
 // harness/codex-cli/prompt.sh — run with this environment, so its CLI and its
-// credentials are whatever this environment has. It exits 1 when any run
-// answered what its case does not accept.
+// credentials are whatever this environment has. With -jev it asks TypeSafe's
+// Jev instead, the way a server that judges with Jev does (judge/jev), with
+// the key in DISCOBOX_JEV_API_KEY. It exits 1 when any run answered what its
+// case does not accept.
 package main
 
 import (
@@ -34,6 +36,7 @@ import (
 	"time"
 
 	"github.com/discobox-ai/discobox/judge"
+	"github.com/discobox-ai/discobox/judge/jev"
 )
 
 // Expectation is what a correct judge may answer a case with.
@@ -88,6 +91,9 @@ type Run struct {
 	Answer  string        `json:"answer"`
 	Error   string        `json:"error,omitempty"`
 	Elapsed time.Duration `json:"elapsedNanos"`
+	// Unsure is a Jev refusal because Jev could not tell (jev.Verdict.Unsure):
+	// what a judge passing Jev's hard cases to a slower one would pass on.
+	Unsure bool `json:"unsure,omitempty"`
 }
 
 func main() {
@@ -99,6 +105,8 @@ func main() {
 	timeout := flag.Duration("timeout", judge.Timeout, "how long one ask may take")
 	logs := flag.String("logs", "", "keep what the wrapper writes on stderr, one file per run, in this directory")
 	model := flag.String("model", judge.Role, "what the wrapper is asked for with --model: the judge role it maps to its own model, or a model id it passes through, to try another")
+	useJev := flag.Bool("jev", false, "ask Jev instead of a wrapper, with the key in "+jevKeyEnv)
+	jevModel := flag.String("jev-model", jev.DefaultModel, "the Jev model -jev asks")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "usage: %s [flags] CASES_DIR\n", filepath.Base(os.Args[0]))
 		flag.PrintDefaults()
@@ -113,10 +121,27 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	command := strings.Fields(*wrapper)
-	if len(command) == 0 {
-		fmt.Fprintln(os.Stderr, "-wrapper names no command")
-		os.Exit(2)
+	var asker func(context.Context, Case, time.Duration, string) Run
+	version := judge.PromptVersion
+	if *useJev {
+		client, err := jev.New(jev.Config{APIKey: os.Getenv(jevKeyEnv), Model: *jevModel})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v: set %s\n", err, jevKeyEnv)
+			os.Exit(2)
+		}
+		asker = func(ctx context.Context, c Case, timeout time.Duration, _ string) Run {
+			return askJev(ctx, client, c, timeout)
+		}
+		version = jev.QuestionsVersion
+	} else {
+		command := strings.Fields(*wrapper)
+		if len(command) == 0 {
+			fmt.Fprintln(os.Stderr, "-wrapper names no command")
+			os.Exit(2)
+		}
+		asker = func(ctx context.Context, c Case, timeout time.Duration, log string) Run {
+			return askOnce(ctx, command, *model, c, timeout, log)
+		}
 	}
 
 	if *logs != "" {
@@ -125,8 +150,8 @@ func main() {
 			os.Exit(2)
 		}
 	}
-	results := ask(context.Background(), command, *model, cases, *runs, *parallel, *timeout, *logs)
-	failed := summarize(os.Stdout, cases, results)
+	results := ask(context.Background(), asker, cases, *runs, *parallel, *timeout, *logs)
+	failed := summarize(os.Stdout, cases, results, version)
 	if *report != "" {
 		data, err := json.MarshalIndent(results, "", "  ")
 		if err == nil {
@@ -190,8 +215,11 @@ func loadCases(dir, glob string) ([]Case, error) {
 	return cases, nil
 }
 
+// jevKeyEnv is where -jev reads its key: the variable a server reads it from.
+const jevKeyEnv = "DISCOBOX_JEV_API_KEY"
+
 // ask runs every case runs times, parallel at once, and returns each answer.
-func ask(ctx context.Context, command []string, model string, cases []Case, runs, parallel int, timeout time.Duration, logs string) []Run {
+func ask(ctx context.Context, asker func(context.Context, Case, time.Duration, string) Run, cases []Case, runs, parallel int, timeout time.Duration, logs string) []Run {
 	type work struct {
 		c Case
 		n int
@@ -209,7 +237,7 @@ func ask(ctx context.Context, command []string, model string, cases []Case, runs
 				if logs != "" {
 					log = filepath.Join(logs, fmt.Sprintf("%s.%d.log", w.c.Name, w.n))
 				}
-				run := askOnce(ctx, command, model, w.c, timeout, log)
+				run := asker(ctx, w.c, timeout, log)
 				mu.Lock()
 				results = append(results, run)
 				mu.Unlock()
@@ -267,15 +295,49 @@ func askOnce(ctx context.Context, command []string, model string, c Case, timeou
 	return run
 }
 
+// askJev asks Jev about a case the way a server that judges with it does, and
+// scores the verdict decided from what it said.
+func askJev(ctx context.Context, client *jev.Client, c Case, timeout time.Duration) Run {
+	run := Run{Case: c.Name}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	start := time.Now()
+	verdict, err := client.Judge(ctx, c.Job)
+	run.Elapsed = time.Since(start)
+	if err != nil {
+		run.Outcome, run.Error = OutcomeInvalid, err.Error()
+		return run
+	}
+	said, err := json.Marshal(struct {
+		judge.Answer
+		Model         string             `json:"model"`
+		Probabilities map[string]float64 `json:"probabilities"`
+	}{verdict.Answer, verdict.Model, verdict.Probabilities})
+	if err != nil {
+		run.Outcome, run.Error = OutcomeInvalid, err.Error()
+		return run
+	}
+	run.Answer = string(said)
+	run.Unsure = verdict.Unsure
+	run.Outcome = outcomeOfAnswer(c.Job, verdict.Answer)
+	run.Pass = c.Expect.accepts(run.Outcome)
+	return run
+}
+
 // outcomeOf is what the control plane does with an answer: an answer that is
-// not exactly one verdict refuses, as does asking to be shown what cannot show
-// anything more — on the last round, or a body already shown as far as it can
-// be.
+// not exactly one verdict refuses.
 func outcomeOf(job judge.Job, out []byte) Outcome {
 	answer, err := judge.Decode(out)
 	if err != nil {
 		return OutcomeInvalid
 	}
+	return outcomeOfAnswer(job, answer)
+}
+
+// outcomeOfAnswer is what the control plane does with a decoded answer:
+// asking to be shown what cannot show anything more — on the last round, or a
+// body already shown as far as it can be — refuses.
+func outcomeOfAnswer(job judge.Job, answer judge.Answer) Outcome {
 	if answer.Decided() {
 		if answer.Allow {
 			return OutcomeAllow
@@ -296,22 +358,25 @@ func lastLine(s string) string {
 
 // summarize prints a row per case and the totals, and reports whether any run
 // failed its case.
-func summarize(w *os.File, cases []Case, results []Run) bool {
+func summarize(w *os.File, cases []Case, results []Run, version string) bool {
 	byCase := map[string][]Run{}
 	for _, r := range results {
 		byCase[r.Case] = append(byCase[r.Case], r)
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', tabwriter.AlignRight)
-	fmt.Fprintln(tw, "case\texpect\truns\tallow\trefuse\task\tinvalid\tfailed\tp50\t")
-	var failed, total int
+	fmt.Fprintln(tw, "case\texpect\truns\tallow\trefuse\task\tunsure\tinvalid\tfailed\tp50\t")
+	var failed, total, unsure int
 	var errs []string
 	for _, c := range cases {
 		runs := byCase[c.Name]
 		counts := map[Outcome]int{}
 		var elapsed []time.Duration
-		caseFailed := 0
+		caseFailed, caseUnsure := 0, 0
 		for _, r := range runs {
 			counts[r.Outcome]++
+			if r.Unsure {
+				caseUnsure++
+			}
 			elapsed = append(elapsed, r.Elapsed)
 			if !r.Pass {
 				caseFailed++
@@ -326,14 +391,18 @@ func summarize(w *os.File, cases []Case, results []Run) bool {
 			p50 = elapsed[len(elapsed)/2]
 		}
 		failed += caseFailed
+		unsure += caseUnsure
 		total += len(runs)
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%.1fs\t\n", c.Name, c.Expect, len(runs),
-			counts[OutcomeAllow], counts[OutcomeRefuse], counts[OutcomeAsk], counts[OutcomeInvalid], caseFailed, p50.Seconds())
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.1fs\t\n", c.Name, c.Expect, len(runs),
+			counts[OutcomeAllow], counts[OutcomeRefuse], counts[OutcomeAsk], caseUnsure, counts[OutcomeInvalid], caseFailed, p50.Seconds())
 	}
 	if err := tw.Flush(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}
-	fmt.Fprintf(w, "\n%d of %d runs failed their case (prompt version %s)\n", failed, total, judge.PromptVersion)
+	fmt.Fprintf(w, "\n%d of %d runs failed their case (prompt version %s)\n", failed, total, version)
+	if unsure > 0 {
+		fmt.Fprintf(w, "%d of %d runs were refused because Jev was unsure\n", unsure, total)
+	}
 	if len(errs) > 0 {
 		fmt.Fprintln(w, "\nwrapper errors:")
 		for _, e := range dedupe(errs) {

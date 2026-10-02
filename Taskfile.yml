@@ -630,6 +630,13 @@ tasks:
       # environment's CLI and credentials, so it is never part of test:all.
       - go run ./internal/cmd/discobox-judge-eval -wrapper '{{.WRAPPER | default "harness/claude-code/prompt.sh"}}' -runs {{.RUNS | default "5"}} {{.CLI_ARGS}} test/judge-evals/cases
 
+  eval:judge:jev:
+    desc: "Ask Jev about the recorded cases in test/judge-evals the way a server that judges with it does, and score it (needs DISCOBOX_JEV_API_KEY; RUNS=1; extra flags after --)"
+    cmds:
+      # Jev is calibrated and near-deterministic, so one run per case is the
+      # default rather than the five a sampled LLM needs.
+      - go run ./internal/cmd/discobox-judge-eval -jev -runs {{.RUNS | default "1"}} {{.CLI_ARGS}} test/judge-evals/cases
+
   test:e2e:wslc:
     desc: "Run the wslc (Windows) provider e2e tests. Requires: Windows with WSL Containers"
     cmds:
