@@ -70,6 +70,9 @@ const (
 	// fraction of what a body shown on request may be: it is what the
 	// operation is, not what it carries (ADR 26-09-26-240 §3).
 	MaxMetadataBytes = 2 << 10
+	// MaxFacts is the most the control plane may say about one job. Facts
+	// are short and specific; a long list is a context the judge drowns in.
+	MaxFacts = 8
 )
 
 // The kinds of job. Each is judged against one approved use.
@@ -126,6 +129,13 @@ type Job struct {
 	// by whoever observed the request (ADR 26-09-26-240 §4). It explains; it
 	// never authorizes.
 	Guidance []string `json:"guidance,omitempty"`
+	// Facts are what the control plane knows about the job's targets and the
+	// discobox asking, in its own words: that the discobox a request reads
+	// was created by the one asking, say. Like Guidance they are the trusted
+	// side's, set by what builds the job and never by a pool, and they are
+	// facts rather than authority: a fact explains a target, and never
+	// widens Purpose.
+	Facts []string `json:"facts,omitempty"`
 }
 
 // Request is a request as the proxy saw it, before any credential was
@@ -308,6 +318,14 @@ func (j Job) Validate() error {
 	default:
 		return fmt.Errorf("unknown judge job kind %q", j.Kind)
 	}
+	if len(j.Facts) > MaxFacts {
+		return fmt.Errorf("a job carries at most %d facts", MaxFacts)
+	}
+	for _, fact := range j.Facts {
+		if strings.TrimSpace(fact) == "" {
+			return errors.New("a fact says something")
+		}
+	}
 	data, err := json.Marshal(j)
 	if err != nil {
 		return err
@@ -343,10 +361,12 @@ func (b *Body) validate() error {
 	return nil
 }
 
-// bodyCanBeShown reports whether asking to be shown this job's body could
-// still show something: a request job, before its last round, with a body
-// there is something of that has not already been shown in full.
-func (j Job) bodyCanBeShown() bool {
+// CanShowBody reports whether asking to be shown this job's body could still
+// show something: a request job, before its last round, with a body there is
+// something of that has not already been shown in full. Prompt says so beside
+// the request; a judge that decides in code rather than in a model asks it
+// directly.
+func (j Job) CanShowBody() bool {
 	if j.Kind != KindRequest || j.Request == nil || j.Round >= MaxRounds {
 		return false
 	}
@@ -362,7 +382,7 @@ func Prompt(j Job) (string, error) {
 		return "", err
 	}
 	j.BodyCanBeShown, j.AsksLeft = false, 0
-	if j.bodyCanBeShown() {
+	if j.CanShowBody() {
 		j.BodyCanBeShown, j.AsksLeft = true, MaxRounds-j.Round
 	}
 	data, err := json.Marshal(j)
