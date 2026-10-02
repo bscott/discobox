@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -71,7 +72,7 @@ func TestADiscoboxIsCreatedWithTheUsesItIsGiven(t *testing.T) {
 		t.Fatalf("credentials = %#v, want the use it was given", credentials)
 	}
 	got := credentials[0]
-	if got.Assignment.EnvName != "GH_TOKEN" || got.Grant.Host != "github.com" || len(got.Grant.Uses) != 1 ||
+	if got.Assignment.EnvName != "GH_TOKEN" || !slices.Equal(got.Grant.Hosts, []string{"github.com"}) || len(got.Grant.Uses) != 1 ||
 		got.Grant.Uses[0].Description != "push a branch to org/repo" || got.Grant.Purpose != model.SecretGrantPurposeUse {
 		t.Fatalf("credential = %+v, want push to github.com in GH_TOKEN", got)
 	}
@@ -104,7 +105,7 @@ func delegateToLead(t *testing.T, st *store.Store, projectID string, secret *mod
 	t.Helper()
 	grant := &model.SecretGrant{
 		ProjectID: projectID, SecretID: secret.ID, Scope: model.SecretGrantScopeSandbox, ScopeKey: "sbx-lead",
-		Host: "github.com", GrantedBy: "user-1", Purpose: model.SecretGrantPurposeDelegate,
+		Hosts: []string{"github.com"}, GrantedBy: "user-1", Purpose: model.SecretGrantPurposeDelegate,
 		Uses: []model.SecretUse{{UseID: "use-delegated", Description: "push branches to org/repo, for the discoboxes I create"}},
 	}
 	if lifetime > 0 {
@@ -274,7 +275,7 @@ func TestADiscoboxIsGivenAWellKnownCredentialByID(t *testing.T) {
 	if err != nil || len(credentials) != 1 {
 		t.Fatalf("credentials = %#v, %v; want the one it was given", credentials, err)
 	}
-	if got := credentials[0]; got.Assignment.EnvName != "GH_TOKEN" || got.Assignment.SecretID != secret.ID || got.Grant.Host != "api.github.com" {
+	if got := credentials[0]; got.Assignment.EnvName != "GH_TOKEN" || got.Assignment.SecretID != secret.ID || !slices.Equal(got.Grant.Hosts, []string{"api.github.com"}) {
 		t.Fatalf("credential = %+v, want the marked secret in GH_TOKEN, narrowed to api.github.com", got)
 	}
 

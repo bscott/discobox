@@ -582,46 +582,53 @@ func (s *Store) FindPendingSecretRequest(ctx context.Context, projectID, secretI
 	if err != nil {
 		return nil, err
 	}
-	var req model.SecretRequest
+	var found []model.SecretRequest
 	// A refresh request names the same secret and discobox, and asks for
 	// something else: a value, not a grant. It is never the reactive ask.
-	err = read.Where("project_id = ? AND secret_id = ? AND host = ? AND requested_by = ? AND status = ? AND reason = ''",
-		projectID, secretID, host, requestedBy, model.SecretRequestStatusPending).
-		Order("created_at DESC").First(&req).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, ErrNotFound
-	}
+	//
+	// The host is compared in Go: the hosts are a JSON list, and a reactive
+	// request's is the one destination the proxy observed.
+	err = read.Where("project_id = ? AND secret_id = ? AND requested_by = ? AND status = ? AND reason = ''",
+		projectID, secretID, requestedBy, model.SecretRequestStatusPending).
+		Order("created_at DESC").Find(&found).Error
 	if err != nil {
 		return nil, err
 	}
-	return &req, nil
+	for i := range found {
+		if hostscope.SameSet(found[i].Hosts, hostscope.List(host)) {
+			return &found[i], nil
+		}
+	}
+	return nil, ErrNotFound
 }
 
 // FindPendingAgentCredentialRequests returns the open protocol-originated
-// requests for a sandbox's environment variable, destination host, well-known
+// requests for a sandbox's environment variable, destination hosts, well-known
 // ID (empty for an ask that names none), and purpose, newest first. The ID and
 // the purpose are part of the key because each changes what approving the
-// request mints: an ask to delegate is not a retry of an ask to use.
+// request mints: an ask to delegate is not a retry of an ask to use. The hosts
+// are compared as a set (ADR 26-10-02-393 §3): approving either of two asks
+// listing them in another order grants the same thing.
 //
-// It keys on (sandbox, env, host) rather than on the secret the way the
+// It keys on (sandbox, env, hosts) rather than on the secret the way the
 // reactive path does, because a protocol request names no secret: choosing one
 // is part of the approval. Which of them, if any, a new ask repeats is the
 // caller's to decide from what each asks for.
-func (s *Store) FindPendingAgentCredentialRequests(ctx context.Context, projectID, sandboxID, envName, host, wellKnownID, purpose string) ([]model.SecretRequest, error) {
+func (s *Store) FindPendingAgentCredentialRequests(ctx context.Context, projectID, sandboxID, envName string, hosts []string, wellKnownID, purpose string) ([]model.SecretRequest, error) {
 	read, err := s.getRead(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var found []model.SecretRequest
-	err = read.Where("project_id = ? AND sandbox_id = ? AND env_name = ? AND host = ? AND well_known_id = ? AND purpose = ? AND status = ?",
-		projectID, sandboxID, envName, host, wellKnownID, purpose, model.SecretRequestStatusPending).
+	err = read.Where("project_id = ? AND sandbox_id = ? AND env_name = ? AND well_known_id = ? AND purpose = ? AND status = ?",
+		projectID, sandboxID, envName, wellKnownID, purpose, model.SecretRequestStatusPending).
 		Order("created_at DESC").Find(&found).Error
 	if err != nil {
 		return nil, err
 	}
 	out := found[:0]
 	for _, req := range found {
-		if req.FromProtocol() {
+		if req.FromProtocol() && hostscope.SameSet(req.Hosts, hosts) {
 			out = append(out, req)
 		}
 	}

@@ -204,7 +204,7 @@ func (m *Model) askAboutCredential(req CredentialRequest, secrets []Secret) tea.
 	// one is offered. Choosing it asks about the binding instead — the remedy
 	// the server names when it refuses the grant.
 	for _, secret := range secretsForRequest(secrets, req) {
-		detail := secretDetail(secret, req.Host)
+		detail := secretDetail(secret, req.hosts())
 		if req.WellKnownID != "" && secret.WellKnownID == req.WellKnownID {
 			detail = "answers " + req.WellKnownID + " · " + detail
 		}
@@ -450,8 +450,8 @@ func grantSection(a approval) section {
 		fields = append(fields, field{label: "purpose",
 			value: "delegation — may delegate it, never uses it", tone: toneAccent})
 	}
-	if a.req.Host != "" {
-		fields = append(fields, field{label: "may be sent to", value: a.req.Host, tone: toneAccent})
+	if where := a.req.where(); where != "" {
+		fields = append(fields, field{label: "may be sent to", value: where, tone: toneAccent})
 	}
 	return section{label: "the grant", fields: fields}
 }
@@ -500,8 +500,8 @@ func credentialAsk(req CredentialRequest, now time.Time) []section {
 	if req.EnvVar != "" {
 		fields = append(fields, field{label: "delivered as", value: req.EnvVar})
 	}
-	if req.Host != "" {
-		fields = append(fields, field{label: "may be sent to", value: req.Host, tone: toneAccent})
+	if where := req.where(); where != "" {
+		fields = append(fields, field{label: "may be sent to", value: where, tone: toneAccent})
 	}
 	if req.GrantTTL > 0 {
 		fields = append(fields, field{label: "wanted for", value: lifetime.Label(req.GrantTTL)})
@@ -610,20 +610,21 @@ func secretsForRequest(secrets []Secret, req CredentialRequest) []Secret {
 		if answers(out[i]) != answers(out[j]) {
 			return answers(out[i])
 		}
-		return hostRank(out[i].Host, req.Host) < hostRank(out[j].Host, req.Host)
+		return hostRank(out[i].Host, req) < hostRank(out[j].Host, req)
 	})
 	return out
 }
 
-// hostRank orders the picker: the secret bound to exactly this host, then one
-// whose binding covers it, then the unbound ones, then a binding that does not
-// answer for this host at all and will be asked about.
-func hostRank(bound, want string) int {
-	bound, want = normalizeHostName(bound), normalizeHostName(want)
+// hostRank orders the picker: the secret bound to exactly what the request
+// would bind, then one whose binding covers every host it names, then the
+// unbound ones, then a binding that does not answer for all of them and will
+// be asked about (ADR 26-10-02-393 §2).
+func hostRank(bound string, req CredentialRequest) int {
+	bound, want := normalizeHostName(bound), normalizeHostName(req.binding())
 	switch {
 	case bound == want && want != "":
 		return 0
-	case bound != "" && hostscope.Covers(bound, want):
+	case bound != "" && hostscope.CoversEvery([]string{bound}, req.hosts()):
 		return 1
 	case bound == "":
 		return 2
@@ -638,14 +639,14 @@ func normalizeHostName(host string) string { return hostscope.Normalize(host) }
 // being asked about, what choosing it will mean. A credential that caps how
 // long its grants may live says so here, beside the row that would be asked
 // about on the way through if the lifetime on the card is longer.
-func secretDetail(secret Secret, host string) string {
+func secretDetail(secret Secret, hosts []string) string {
 	bound := normalizeHostName(secret.Host)
 	kind := secretKind(secret)
 	detail := kind + " · bound to " + secret.Host + ", asks before using it here"
 	switch {
 	case bound == "":
 		detail = kind + " · any host"
-	case hostscope.Covers(bound, host):
+	case hostscope.CoversEvery([]string{bound}, hosts):
 		detail = kind + " · " + secret.Host
 	}
 	if secret.MaxTTL > 0 {
@@ -670,7 +671,7 @@ func secretKind(secret Secret) string {
 // type, and host — the collision the server refuses the create for, which is
 // advice ("pick another name") nothing here could otherwise follow.
 func (m *Model) startNewCredential(a approval) tea.Cmd {
-	if secretNameTaken(a.secrets, credentialName(a.req), secretType(a.req), a.req.Host) {
+	if secretNameTaken(a.secrets, credentialName(a.req), secretType(a.req), a.req.binding()) {
 		return m.askStoredAs(a, "", m.toRequest(a))
 	}
 	return m.askLifetime(a, m.toRequest(a))
@@ -683,11 +684,11 @@ func (m *Model) askStoredAs(a approval, note string, back func() tea.Cmd) tea.Cm
 	taken := credentialName(a.req)
 	suggestion := a.name
 	if suggestion == "" {
-		suggestion = freeSecretName(a.secrets, taken, secretType(a.req), a.req.Host)
+		suggestion = freeSecretName(a.secrets, taken, secretType(a.req), a.req.binding())
 	}
 	where := "with no host"
-	if a.req.Host != "" {
-		where = "for " + a.req.Host
+	if bound := a.req.binding(); bound != "" {
+		where = "for " + bound
 	}
 	body := note
 	if body == "" {
@@ -698,7 +699,7 @@ func (m *Model) askStoredAs(a approval, note string, back func() tea.Cmd) tea.Cm
 		if value == "" {
 			return m.askStoredAs(a, "a credential is stored under a name; the request is still waiting", back)
 		}
-		if secretNameTaken(a.secrets, value, secretType(a.req), a.req.Host) {
+		if secretNameTaken(a.secrets, value, secretType(a.req), a.req.binding()) {
 			return m.askStoredAs(a, fmt.Sprintf("%q is taken %s too; pick another", value, where), back)
 		}
 		next := a
@@ -706,8 +707,8 @@ func (m *Model) askStoredAs(a approval, note string, back func() tea.Cmd) tea.Cm
 		return m.askLifetime(next, func() tea.Cmd { return m.askStoredAs(next, "", back) })
 	})
 	fields := []field{{label: "answers", value: taken, tone: toneAccent}}
-	if a.req.Host != "" {
-		fields = append(fields, field{label: "bound to", value: a.req.Host, tone: toneAccent})
+	if bound := a.req.binding(); bound != "" {
+		fields = append(fields, field{label: "bound to", value: bound, tone: toneAccent})
 	}
 	d.sections = []section{{label: "the new project secret", fields: fields}}
 	d.answerLabel = "store it as"
@@ -729,8 +730,8 @@ func (m *Model) askStoredAs(a approval, note string, back func() tea.Cmd) tea.Cm
 func (m *Model) askForNewCredential(a approval, back func() tea.Cmd) tea.Cmd {
 	req := a.req
 	fields := []field{{label: "stored as", value: a.storedAs(), tone: toneAccent}}
-	if req.Host != "" {
-		fields = append(fields, field{label: "bound to", value: req.Host, tone: toneAccent})
+	if bound := req.binding(); bound != "" {
+		fields = append(fields, field{label: "bound to", value: bound, tone: toneAccent})
 	}
 	fields = append(fields, field{label: "granted for", value: lifetime.Label(a.ttl), tone: toneAccent})
 	d := inputDialog("New credential", "", "token", "", func(value string) tea.Cmd {
@@ -756,8 +757,8 @@ func (m *Model) askForNewCredential(a approval, back func() tea.Cmd) tea.Cmd {
 func (m *Model) askForRefreshCommand(a approval, back func() tea.Cmd) tea.Cmd {
 	req := a.req
 	fields := []field{{label: "stored as", value: a.storedAs(), tone: toneAccent}}
-	if req.Host != "" {
-		fields = append(fields, field{label: "bound to", value: req.Host, tone: toneAccent})
+	if bound := req.binding(); bound != "" {
+		fields = append(fields, field{label: "bound to", value: bound, tone: toneAccent})
 	}
 	fields = append(fields, field{label: "granted for", value: lifetime.Label(a.ttl), tone: toneAccent})
 	d := inputDialog("From a command", "", "command", refreshcmd.Join(a.command), func(value string) tea.Cmd {
@@ -797,7 +798,7 @@ func (m *Model) createAndApprove(a approval, value string) tea.Cmd {
 		secret, err := m.ds.CreateSecret(m.ctx, req.Server, NewSecret{
 			Name:           a.storedAs(),
 			Type:           req.Type,
-			Host:           req.Host,
+			Host:           req.binding(),
 			Value:          SecretValue{Token: value},
 			RefreshCommand: a.command,
 			// The lifetime the well-known credential says its value really
@@ -908,14 +909,17 @@ func (m *Model) chooseSecret(a approval, secretID string) tea.Cmd {
 // the window asks for exactly that, in the words the server would use.
 func (m *Model) confirmGrantHost(a approval) tea.Cmd {
 	bound := normalizeHostName(a.secret.Host)
-	if bound == "" || hostscope.Covers(bound, a.req.Host) {
+	if bound == "" || hostscope.CoversEvery([]string{bound}, a.req.hosts()) {
 		return m.askLifetime(a, m.toRequest(a))
 	}
 	// The binding that would cover both, when there is one: a credential asked
 	// for at github.com and bound to api.github.com belongs to the site, and
 	// the site covers what is beneath it. Otherwise the only way through is to
 	// release the binding entirely.
-	widened := commonParent(a.secret.Host, a.req.Host)
+	widened := ""
+	if asked := a.req.binding(); asked != "" {
+		widened = commonParent(a.secret.Host, asked)
+	}
 	question := fmt.Sprintf("release %s's binding, so it may be sent anywhere a grant says?", a.secret.Name)
 	if widened != "" {
 		question = fmt.Sprintf("bind %s to %s instead, so it covers both?", a.secret.Name, widened)
@@ -936,7 +940,7 @@ func (m *Model) confirmGrantHost(a approval) tea.Cmd {
 		fields: []field{
 			{label: "secret", value: a.secret.Name},
 			{label: "bound to", value: a.secret.Host, tone: toneAccent},
-			{label: "asked for", value: a.req.Host, tone: toneAccent},
+			{label: "asked for", value: a.req.where(), tone: toneAccent},
 		},
 		lines: []line{{text: "a credential may only be sent to its own host and the hosts beneath it", tone: toneDim}},
 	}}
@@ -1101,7 +1105,7 @@ func (m *Model) viewCredentialBanner(width int) string {
 	} else if pending[0].Refresh != nil {
 		// A token this discobox already has, wanting a new value.
 		what = "refresh request"
-	} else if host := pending[0].Host; host != "" {
+	} else if host := pending[0].where(); host != "" {
 		subject += " for " + host
 	}
 	if len(pending) > 1 {
@@ -1135,8 +1139,8 @@ func credentialErrorSection(req CredentialRequest) section {
 		return section{label: "still waiting", fields: []field{{label: "trust", value: req.Host, tone: toneAccent}}}
 	}
 	fields := []field{{label: "credential", value: credentialName(req), tone: toneAccent}}
-	if req.Host != "" {
-		fields = append(fields, field{label: "for", value: req.Host, tone: toneAccent})
+	if where := req.where(); where != "" {
+		fields = append(fields, field{label: "for", value: where, tone: toneAccent})
 	}
 	return section{label: "still waiting", fields: fields}
 }

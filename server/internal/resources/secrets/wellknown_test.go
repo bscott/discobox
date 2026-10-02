@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"testing"
 
 	serverapi "github.com/discobox-ai/discobox/api/gen"
@@ -46,7 +47,7 @@ func TestAnAskByWellKnownIDCarriesWhatTheIDNames(t *testing.T) {
 	svc, _ := newAgentCredentialService(t)
 
 	req := askFor(ctx, t, svc, wellknown.GitHubAPI)
-	if req.WellKnownID != wellknown.GitHubAPI || req.Name != "github" || req.EnvName != "GH_TOKEN" || req.Host != "github.com" {
+	if req.WellKnownID != wellknown.GitHubAPI || req.Name != "github" || req.EnvName != "GH_TOKEN" || !slices.Equal(req.Hosts, []string{"github.com"}) {
 		t.Fatalf("request = %+v, want com.github.api's name, variable, and host", req)
 	}
 
@@ -56,17 +57,17 @@ func TestAnAskByWellKnownIDCarriesWhatTheIDNames(t *testing.T) {
 	narrower, err := svc.CreateSandboxCredentialRequest(ctx, testPoolID, services.CreateSandboxCredentialRequestBody{
 		SandboxId: testSandboxID,
 		ID:        serverapi.NewOptString(wellknown.GitHubAPI),
-		Host:      "api.github.com",
+		Host:      serverapi.NewOptString("api.github.com"),
 		Uses:      []apimodel.SecretUse{{Description: "read the issues in org/repo"}},
 	})
-	if err != nil || narrower.Host != "api.github.com" || narrower.EnvName != "GH_TOKEN" {
+	if err != nil || !slices.Equal(narrower.Hosts, []string{"api.github.com"}) || narrower.EnvName != "GH_TOKEN" {
 		t.Fatalf("request = %+v, %v; want the narrower host kept", narrower, err)
 	}
 
 	for name, body := range map[string]services.CreateSandboxCredentialRequestBody{
 		"an unknown ID":             {SandboxId: testSandboxID, ID: serverapi.NewOptString("com.example.nothing")},
 		"a variable it contradicts": {SandboxId: testSandboxID, ID: serverapi.NewOptString(wellknown.GitHubAPI), EnvVar: "GITHUB_TOKEN"},
-		"a host it is not sent to":  {SandboxId: testSandboxID, ID: serverapi.NewOptString(wellknown.GitHubAPI), Host: "gitlab.com"},
+		"a host it is not sent to":  {SandboxId: testSandboxID, ID: serverapi.NewOptString(wellknown.GitHubAPI), Host: serverapi.NewOptString("gitlab.com")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			body.Uses = []apimodel.SecretUse{{Description: "open a pull request"}}
@@ -139,7 +140,7 @@ func TestAnAskByIDDoesNotReuseAPlainAsk(t *testing.T) {
 		SandboxId: testSandboxID,
 		Name:      "github",
 		EnvVar:    "GH_TOKEN",
-		Host:      "github.com",
+		Host:      serverapi.NewOptString("github.com"),
 		Uses:      []apimodel.SecretUse{{Description: "read the issues in org/repo"}},
 	})
 	if err != nil {
@@ -165,7 +166,7 @@ func TestTheDiscoboxAPIIsApprovedWithNoSecret(t *testing.T) {
 	github := createBearerSecret(ctx, t, svc)
 
 	req := askFor(ctx, t, svc, wellknown.DiscoboxSandbox)
-	if req.Host != "api.discobox.internal" || req.EnvName != "DISCOBOX_TOKEN" {
+	if !slices.Equal(req.Hosts, []string{"api.discobox.internal"}) || req.EnvName != "DISCOBOX_TOKEN" {
 		t.Fatalf("request = %+v, want the discobox API's host and variable", req)
 	}
 	_, err := svc.ApproveSecretRequest(ctx, "project-1", req.ID, services.ApproveSecretRequestBody{SecretId: serverapi.NewOptString(github.ID)})
@@ -211,7 +212,7 @@ func TestTheDiscoboxAPIsHostIsAskedForOnlyByID(t *testing.T) {
 			SandboxId: testSandboxID,
 			Name:      "discobox",
 			EnvVar:    "DISCOBOX_TOKEN",
-			Host:      host,
+			Host:      serverapi.NewOptString(host),
 			Uses:      []apimodel.SecretUse{{Description: "create a discobox"}},
 		})
 		requireStatus(t, err, http.StatusBadRequest)

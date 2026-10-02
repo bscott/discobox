@@ -790,11 +790,13 @@ func TestMigrateWidensSandboxSecretEnvIndex(t *testing.T) {
 	}
 }
 
-// TestMigrateNormalizesSecretHosts repairs rows written before the secrets
-// service normalized hosts. A grant whose host is not what the proxy reports is
-// an approval nothing can match, so leaving old rows alone would leave the bug
-// in place for exactly the deployments that hit it.
-func TestMigrateNormalizesSecretHosts(t *testing.T) {
+// TestMigrateMovesSecretHostsToLists upgrades requests and grants written when
+// each carried one host (ADR 26-10-02-393 §6): the host becomes the only one
+// in the list, normalized the way the proxy reports a destination, a row with
+// none keeps the wildcard, and the retired column is gone. A grant whose host
+// is not what the proxy reports is an approval nothing can match, so the
+// casing old rows were written in is repaired on the way.
+func TestMigrateMovesSecretHostsToLists(t *testing.T) {
 	ctx := context.Background()
 	db, err := database.New(database.Config{
 		Driver: gormdb.DriverSQLite,
@@ -811,29 +813,62 @@ func TestMigrateNormalizesSecretHosts(t *testing.T) {
 	if err := db.Migrate(ctx); err != nil {
 		t.Fatalf("initial migrate: %v", err)
 	}
-
-	if err := db.Write.WithContext(ctx).Create(&model.Project{ID: "project-1", OwnerUserID: "user-1", Name: "Project"}).Error; err != nil {
+	write := db.Write.WithContext(ctx)
+	if err := write.Create(&model.Project{ID: "project-1", OwnerUserID: "user-1", Name: "Project"}).Error; err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-
-	// Written the way the pre-normalization service would have.
-	if err := db.Write.WithContext(ctx).Exec(
-		"INSERT INTO secret_grants (id, project_id, secret_id, scope, scope_key, host, granted_by, granted_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"grant_shouty", "project-1", "sec-1", model.SecretGrantScopeSandbox, "sbx-1", "API.GitHub.com", "user-1",
-		time.Now().UTC(), time.Now().UTC(), time.Now().UTC()).Error; err != nil {
-		t.Fatalf("seed grant: %v", err)
+	// The column as a database written before the list had it.
+	for _, table := range []string{"secret_requests", "secret_grants"} {
+		if err := write.Exec("ALTER TABLE " + table + " ADD COLUMN host text NOT NULL DEFAULT ''").Error; err != nil {
+			t.Fatalf("restore %s.host: %v", table, err)
+		}
+	}
+	now := time.Now().UTC()
+	for _, grant := range []struct{ id, host string }{{"grant_shouty", "API.GitHub.com"}, {"grant_wildcard", ""}} {
+		if err := write.Exec(
+			"INSERT INTO secret_grants (id, project_id, secret_id, scope, scope_key, host, granted_by, granted_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			grant.id, "project-1", "sec-1", model.SecretGrantScopeSandbox, "sbx-1", grant.host, "user-1", now, now, now).Error; err != nil {
+			t.Fatalf("seed grant: %v", err)
+		}
+	}
+	if err := write.Exec(
+		"INSERT INTO secret_requests (id, project_id, requested_by, type, host, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		"req_old", "project-1", "agent:sbx-1", model.SecretTypeToken, "api.github.com", model.SecretRequestStatusPending, now, now).Error; err != nil {
+		t.Fatalf("seed request: %v", err)
 	}
 
 	if err := db.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	// Twice: the step runs on every start, and the second finds nothing to do.
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatalf("migrate again: %v", err)
+	}
 
-	var host string
-	if err := db.Write.WithContext(ctx).Raw("SELECT host FROM secret_grants WHERE id = ?", "grant_shouty").Scan(&host).Error; err != nil {
+	for _, table := range []string{"secret_requests", "secret_grants"} {
+		if db.Write.Migrator().HasColumn(table, "host") {
+			t.Errorf("%s.host survived the migration", table)
+		}
+	}
+	var shouty, wildcard model.SecretGrant
+	if err := write.First(&shouty, "id = ?", "grant_shouty").Error; err != nil {
 		t.Fatalf("read grant: %v", err)
 	}
-	if host != "api.github.com" {
-		t.Fatalf("host = %q, want it lowercased to what the proxy reports", host)
+	if len(shouty.Hosts) != 1 || shouty.Hosts[0] != "api.github.com" {
+		t.Errorf("hosts = %q, want [api.github.com], lowercased to what the proxy reports", shouty.Hosts)
+	}
+	if err := write.First(&wildcard, "id = ?", "grant_wildcard").Error; err != nil {
+		t.Fatalf("read grant: %v", err)
+	}
+	if len(wildcard.Hosts) != 0 {
+		t.Errorf("a wildcard grant's hosts = %q, want none", wildcard.Hosts)
+	}
+	var req model.SecretRequest
+	if err := write.First(&req, "id = ?", "req_old").Error; err != nil {
+		t.Fatalf("read request: %v", err)
+	}
+	if len(req.Hosts) != 1 || req.Hosts[0] != "api.github.com" {
+		t.Errorf("request hosts = %q, want [api.github.com]", req.Hosts)
 	}
 }
 
@@ -879,8 +914,8 @@ func TestMigrateSecretTypesRenamesAndPrunes(t *testing.T) {
 	}
 	// A grant standing on one of the unusable secrets, which has to go with it.
 	if err := db.Write.WithContext(ctx).Exec(
-		"INSERT INTO secret_grants (id, project_id, secret_id, scope, scope_key, host, granted_by, granted_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"grant_git", "project-1", "sec_git", model.SecretGrantScopeProject, "project-1", "github.com", "user-1", now, now, now).Error; err != nil {
+		"INSERT INTO secret_grants (id, project_id, secret_id, scope, scope_key, hosts, granted_by, granted_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"grant_git", "project-1", "sec_git", model.SecretGrantScopeProject, "project-1", `["github.com"]`, "user-1", now, now, now).Error; err != nil {
 		t.Fatalf("seed grant: %v", err)
 	}
 

@@ -1293,9 +1293,13 @@ type CredentialRequest struct {
 	Server string
 	// Name is the credential the agent asked for ("github"), which is not a
 	// secret ID: choosing which secret answers it is the approval.
-	Name          string
-	EnvVar        string
+	Name   string
+	EnvVar string
+	// Host is the first of Hosts, or a trust's endpoint; Hosts are every host
+	// a credential request asks the credential to be sent to (ADR
+	// 26-10-02-393).
 	Host          string
+	Hosts         []string
 	Type          string
 	Justification string
 	Uses          []string
@@ -1976,4 +1980,43 @@ type DataSource interface {
 
 	// DenyTrustRequest answers a trust request no.
 	DenyTrustRequest(ctx context.Context, server, requestID string) error
+}
+
+// where is where a request asks to reach, as a person reads it: every host a
+// credential request names, or a trust's endpoint.
+func (r CredentialRequest) where() string {
+	if len(r.Hosts) > 0 {
+		return strings.Join(r.Hosts, ", ")
+	}
+	return r.Host
+}
+
+// hosts are the hosts a credential request names, its one host when it names
+// no list.
+func (r CredentialRequest) hosts() []string {
+	if len(r.Hosts) > 0 {
+		return r.Hosts
+	}
+	if r.Host != "" {
+		return []string{r.Host}
+	}
+	return nil
+}
+
+// binding is the one host a secret stored to answer the request is bound to:
+// its host, or the site its hosts share, or none when they share no site — a
+// credential sent to unrelated sites is bound to nothing, and its grant says
+// where it goes (ADR 26-10-02-393 §2).
+func (r CredentialRequest) binding() string {
+	hosts := r.hosts()
+	if len(hosts) == 0 {
+		return ""
+	}
+	bound := hosts[0]
+	for _, host := range hosts[1:] {
+		if bound = commonParent(bound, host); bound == "" {
+			return ""
+		}
+	}
+	return bound
 }

@@ -109,11 +109,22 @@ func (s *Service) describeOAuth(ctx context.Context, secret *model.Secret) {
 //
 // The proxy reports the host it observed lowercased and without a port. Grants
 // and secrets are matched against it in Go through hostscope.Covers, which
-// normalizes both sides, but a pending request is found again by SQL equality
-// on its stored host, and a stored host is what people read back. Normalizing
-// on the way in is what keeps every stored host comparable to the observed one,
-// whichever of the two does the comparing.
+// normalizes both sides, but a secret's host is part of its unique index, and a
+// stored host is what people read back. Normalizing on the way in is what keeps
+// every stored host comparable to the observed one, whichever of the two does
+// the comparing.
 func normalizeHost(host string) string { return hostscope.Normalize(host) }
+
+// askedHosts reads the hosts a request body names. A body may spell them as
+// host, hosts, or both, and they are host followed by hosts: an older writer
+// sends host alone, and asks for the one host it meant (ADR 26-10-02-393 §4).
+//
+// named reports whether the body named any at all. A host given as empty is
+// named, and names none: it is how a body asks for the wildcard, where a body
+// that leaves both out takes whatever default the caller has.
+func askedHosts(host apigen.OptString, hosts []string) (list []string, named bool) {
+	return hostscope.List(append([]string{host.Or("")}, hosts...)...), host.IsSet() || len(hosts) > 0
+}
 
 func (s *Service) CreateSecret(ctx context.Context, projectID string, input services.CreateSecretBody) (*model.Secret, error) {
 	if _, err := s.store.GetProject(ctx, projectID); err != nil {
@@ -289,10 +300,7 @@ func (s *Service) CreateSecretRequest(ctx context.Context, projectID string, inp
 	if !validSecretType(secretType) {
 		return nil, apperrors.NewStatusError(http.StatusBadRequest, "invalid secret type")
 	}
-	host := ""
-	if v, ok := input.Host.Get(); ok {
-		host = normalizeHost(v)
-	}
+	host := normalizeHost(input.Host.Or(""))
 
 	principal, ok := auth.PrincipalFromContext(ctx)
 	if !ok {
@@ -310,7 +318,7 @@ func (s *Service) CreateSecretRequest(ctx context.Context, projectID string, inp
 		ProjectID:   projectID,
 		RequestedBy: requestedBy,
 		Type:        secretType,
-		Host:        host,
+		Hosts:       hostscope.List(host),
 		Status:      model.SecretRequestStatusPending,
 	}
 
@@ -372,7 +380,11 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 	// holds is of, not any the project has.
 	principal, _ := auth.PrincipalFromContext(ctx)
 	approverIsSandbox := principal.Type == auth.PrincipalTypeSandbox
-	host := normalizeHost(input.Host.Or(req.Host))
+	// The hosts the approver named, else the ones the request did.
+	hosts, named := askedHosts(input.Host, input.Hosts)
+	if !named {
+		hosts = req.Hosts
+	}
 	secretID := strings.TrimSpace(input.SecretId.Or(""))
 	var secret *model.Secret
 	// The delegation a discobox's approval is made under: chosen here, held to
@@ -383,7 +395,7 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 			return nil, err
 		}
 		named, namedTTL := input.GrantTTLSeconds.IsSet(), input.GrantTTLSeconds.Or(0)
-		if delegation, secret, err = s.delegationFor(ctx, projectID, principal.SandboxID, req, secretID, host, namedTTL, named); err != nil {
+		if delegation, secret, err = s.delegationFor(ctx, projectID, principal.SandboxID, req, secretID, hosts, namedTTL, named); err != nil {
 			return nil, err
 		}
 	} else if req.WellKnownID != "" {
@@ -462,7 +474,7 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 		return nil, err
 	}
 	if req.FromProtocol() {
-		if host == "" {
+		if len(hosts) == 0 {
 			return nil, apperrors.NewStatusError(http.StatusBadRequest,
 				"approving an agent credential request requires a host; a wildcard grant must be created explicitly with `discobox secret grant create`")
 		}
@@ -496,7 +508,7 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 	// limit are what the transaction will find — so a verdict is the decision
 	// about an approval that would otherwise go through.
 	if approverIsSandbox {
-		if err := guardGrantHost(secret, host); err != nil {
+		if err := guardGrantHosts(secret, hosts); err != nil {
 			return nil, err
 		}
 		if named, ok := input.GrantTTLSeconds.Get(); ok {
@@ -508,7 +520,7 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 		if req.WellKnownID != "" {
 			credential = req.WellKnownID
 		}
-		if err := s.judgeDelegation(ctx, projectID, principal.SandboxID, delegation, credential, host, approvedUses, req.ID, req.SandboxID); err != nil {
+		if err := s.judgeDelegation(ctx, projectID, principal.SandboxID, delegation, credential, hosts, approvedUses, req.ID, req.SandboxID); err != nil {
 			return nil, err
 		}
 	}
@@ -552,11 +564,11 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 				return apperrors.NewStatusError(http.StatusForbidden,
 					"a discobox hands on only what a delegation grant it holds covers, and this approval was made under none")
 			}
-			if ttl, err = delegatedTTL(ctx, txStore, projectID, principal.SandboxID, delegation, secret.ID, host, ttl, named); err != nil {
+			if ttl, err = delegatedTTL(ctx, txStore, projectID, principal.SandboxID, delegation, secret.ID, hosts, ttl, named); err != nil {
 				return err
 			}
 		}
-		grant, err := tx.mintGrantAs(ctx, projectID, secret, scope, scopeKey, host, req.EnvName, ttl, approvedUses, purpose)
+		grant, err := tx.mintGrantAs(ctx, projectID, secret, scope, scopeKey, hosts, req.EnvName, ttl, approvedUses, purpose)
 		if err != nil {
 			return err
 		}
@@ -705,7 +717,7 @@ func (s *Service) ResolveSandboxSecret(ctx context.Context, poolID, sandboxID, s
 			RequestedBy: requestedBy,
 			SandboxID:   assignment.SandboxID,
 			Type:        secret.Type,
-			Host:        host,
+			Hosts:       hostscope.List(host),
 			SecretID:    secret.ID,
 			Status:      model.SecretRequestStatusPending,
 		}
@@ -752,7 +764,11 @@ func (s *Service) CreateSecretGrant(ctx context.Context, projectID string, input
 	if err := validateGrantScope(scope, scopeKey); err != nil {
 		return nil, err
 	}
-	host := normalizeHost(input.Host.Or(secret.Host))
+	// The hosts named, else the secret's own.
+	hosts, named := askedHosts(input.Host, input.Hosts)
+	if !named {
+		hosts = hostscope.List(secret.Host)
+	}
 	// Default to the secret's limit; an explicit value wins, up to that limit.
 	ttl := secret.MaxGrantTTL
 	if v, ok := input.GrantTTLSeconds.Get(); ok {
@@ -766,7 +782,7 @@ func (s *Service) CreateSecretGrant(ctx context.Context, projectID string, input
 	envVar := strings.TrimSpace(input.EnvVar.Or(""))
 	var uses []model.SecretUse
 	if declared, ok := input.Uses.Get(); ok && len(declared) > 0 {
-		if host == "" {
+		if len(hosts) == 0 {
 			return nil, apperrors.NewStatusError(http.StatusBadRequest,
 				"a grant with uses requires a host; a wildcard grant stays an explicit administrative act")
 		}
@@ -790,7 +806,7 @@ func (s *Service) CreateSecretGrant(ctx context.Context, projectID string, input
 	if err != nil {
 		return nil, err
 	}
-	grant, err := s.mintGrantAs(ctx, projectID, secret, scope, scopeKey, host, envVar, ttl, uses, purpose)
+	grant, err := s.mintGrantAs(ctx, projectID, secret, scope, scopeKey, hosts, envVar, ttl, uses, purpose)
 	if err != nil {
 		return nil, err
 	}
@@ -845,45 +861,53 @@ func (s *Service) grantScopeKey(ctx context.Context, projectID, sandboxID, scope
 	}
 }
 
-// guardGrantHost refuses a grant that would send a credential somewhere it does
-// not belong.
+// guardGrantHosts refuses a grant that would send a credential somewhere it
+// does not belong.
 //
-// The grant's host is what the proxy enforces; the secret's own host says which
-// service the credential is *for*. When both are set and they disagree, the
-// grant would swap that credential into requests to another service — an
+// The grant's hosts are what the proxy enforces; the secret's own host says
+// which service the credential is *for*. When both are set and they disagree,
+// the grant would swap that credential into requests to another service — an
 // approval typo becomes the real key leaving for a host that was never supposed
-// to see it, and with the agent credentials flow the host is proposed by the
+// to see it, and with the agent credentials flow the hosts are proposed by the
 // sandbox. A secret carrying no host is unconstrained on purpose: a credential
 // that genuinely spans hosts is expressed by leaving the field empty rather
-// than by widening every grant.
-func guardGrantHost(secret *model.Secret, host string) error {
+// than by widening every grant. So is one a grant sends to several unrelated
+// sites (ADR 26-10-02-393 §2): every one of the grant's hosts must sit inside
+// the binding.
+func guardGrantHosts(secret *model.Secret, hosts []string) error {
 	secretHost := normalizeHost(secret.Host)
-	// The grant has to sit inside the binding, not merely touch it: a secret
-	// for github.com may be granted for api.github.com, and one for
-	// api.github.com may not be granted for github.com — that is a different
-	// host, serving different things, and the binding says the credential does
-	// not belong to it.
-	if secretHost == "" || hostscope.Covers(secretHost, host) {
+	if secretHost == "" {
 		return nil
 	}
 	// The message names the command, the way the wildcard-grant refusal does:
 	// the remedy is a second call, and an error that describes one without
 	// spelling it is an error the reader has to go looking behind.
-	if host == "" {
+	if len(hosts) == 0 {
 		return apperrors.NewStatusError(http.StatusBadRequest, fmt.Sprintf(
 			"secret %s is bound to %s, so it cannot be granted for every host; grant it for %s, or release the binding with `discobox secret update %s --host \"\"`",
 			secret.ID, secretHost, secretHost, secret.ID))
 	}
-	// A binding that covers both is usually the right answer rather than none:
-	// a credential asked for at github.com and api.github.com belongs to the
-	// site, and the site covers what is beneath it.
-	remedy := fmt.Sprintf("`discobox secret update %s --host %s`", secret.ID, hostscope.CommonParent(secretHost, host))
-	if hostscope.CommonParent(secretHost, host) == "" {
-		remedy = fmt.Sprintf("`discobox secret update %s --host \"\"`", secret.ID)
+	for _, host := range hosts {
+		// The grant has to sit inside the binding, not merely touch it: a
+		// secret for github.com may be granted for api.github.com, and one for
+		// api.github.com may not be granted for github.com — that is a
+		// different host, serving different things, and the binding says the
+		// credential does not belong to it.
+		if hostscope.Covers(secretHost, host) {
+			continue
+		}
+		// A binding that covers both is usually the right answer rather than
+		// none: a credential asked for at github.com and api.github.com
+		// belongs to the site, and the site covers what is beneath it.
+		remedy := fmt.Sprintf("`discobox secret update %s --host %s`", secret.ID, hostscope.CommonParent(secretHost, host))
+		if hostscope.CommonParent(secretHost, host) == "" {
+			remedy = fmt.Sprintf("`discobox secret update %s --host \"\"`", secret.ID)
+		}
+		return apperrors.NewStatusError(http.StatusBadRequest, fmt.Sprintf(
+			"secret %s is bound to %s and cannot be granted for %s; pick a secret for %s, or widen the binding with %s",
+			secret.ID, secretHost, host, host, remedy))
 	}
-	return apperrors.NewStatusError(http.StatusBadRequest, fmt.Sprintf(
-		"secret %s is bound to %s and cannot be granted for %s; pick a secret for %s, or widen the binding with %s",
-		secret.ID, secretHost, host, host, remedy))
+	return nil
 }
 
 // guardGrantTTL refuses a grant that would outlive what the secret allows.
@@ -947,9 +971,9 @@ func formatTTL(seconds int64) string {
 //
 // purpose is what the grant authorizes — using the credential, or delegating
 // it — and is checked here with the rest.
-func (s *Service) mintGrantAs(ctx context.Context, projectID string, secret *model.Secret, scope, scopeKey, host, envName string, ttlSeconds int64, uses []model.SecretUse, purpose string) (*model.SecretGrant, error) {
-	host = normalizeHost(host)
-	if err := guardGrantHost(secret, host); err != nil {
+func (s *Service) mintGrantAs(ctx context.Context, projectID string, secret *model.Secret, scope, scopeKey string, hosts []string, envName string, ttlSeconds int64, uses []model.SecretUse, purpose string) (*model.SecretGrant, error) {
+	hosts = hostscope.List(hosts...)
+	if err := guardGrantHosts(secret, hosts); err != nil {
 		return nil, err
 	}
 	if err := guardGrantTTL(secret, ttlSeconds); err != nil {
@@ -965,7 +989,7 @@ func (s *Service) mintGrantAs(ctx context.Context, projectID string, secret *mod
 		SecretID:  secret.ID,
 		Scope:     scope,
 		ScopeKey:  scopeKey,
-		Host:      host,
+		Hosts:     hosts,
 		GrantedBy: grantedBy,
 		Uses:      uses,
 		EnvName:   strings.TrimSpace(envName),

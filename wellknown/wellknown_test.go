@@ -46,14 +46,14 @@ func TestAHostCoversTheHostsBeneathIt(t *testing.T) {
 	if !ok {
 		t.Fatal("com.github.api is not registered")
 	}
-	for _, host := range []string{"github.com", "api.github.com", "uploads.github.com"} {
+	for _, host := range []string{"github.com", "api.github.com", "uploads.github.com", "api.githubcopilot.com"} {
 		if !github.AllowsHost(host) {
 			t.Errorf("AllowsHost(%q) = false, want the site and the hosts beneath it", host)
 		}
 	}
 	for _, host := range []string{"gitlab.com", "github.com.evil.example", "evil-github.com", ""} {
 		if github.AllowsHost(host) {
-			t.Errorf("AllowsHost(%q) = true, want only github.com and below", host)
+			t.Errorf("AllowsHost(%q) = true, want only github.com, githubcopilot.com, and below", host)
 		}
 	}
 }

@@ -77,6 +77,7 @@ GET /v1/credentials
       "name": "github",
       "envVar": "GITHUB_TOKEN",
       "host": "api.github.com",
+      "hosts": ["api.github.com"],
       "uses": [
         {
           "useId": "use_7f3c…",
@@ -90,7 +91,10 @@ GET /v1/credentials
 ```
 
 `list` never returns values. `expiresAt` is when the approval behind the use
-lapses; an absent `expiresAt` means it does not expire on its own.
+lapses; an absent `expiresAt` means it does not expire on its own. `hosts` are
+where the credential may be sent, and `host` is the first of them, for a
+client that reads one; an implementation that predates `hosts` reports `host`
+alone.
 
 ## `request` — ask for something new
 
@@ -136,20 +140,28 @@ not report it and `use` does not take a value under it. Any other value is
 implementation recorded; one that predates purposes reports none, and has
 recorded an ask to use.
 
-`host` is the destination the credential will be sent to. It is required by the
-Discobox implementation, which refuses to mint a host-unscoped approval through
-this flow. Discobox also requires `name`, a valid `envVar`, and at least one use
+`host` is the destination the credential will be sent to, and `hosts` names
+more, for a credential one tool sends to several sites — Copilot CLI sends one
+GitHub token to `api.github.com` and to `githubcopilot.com`. The destinations
+are `host` followed by `hosts`; either alone is fine, and a client that
+predates `hosts` sends `host` and means the one host. Each covers the hosts
+beneath it, and the approval is one grant and one set of uses, spent at any of
+them ([ADR 26-10-02-393](adr/26-10-02-393-a-credential-request-and-its-grant-may-name-several-hosts.md)).
+A destination is required by the Discobox implementation, which refuses to mint
+a host-unscoped approval through this flow. Discobox also requires `name`, a valid `envVar`, and at least one use
 with a description, and answers `invalid` without them. A second ask for the
-same `id`, `envVar`, `host`, and `purpose` while one is still pending returns
+same `id`, `envVar`, hosts (in any order), and `purpose` while one is still pending returns
 that pending request rather than a new one.
 
 `id` is optional: a well-known credential's reverse-DNS ID, such as
-`com.github.api`, in place of `name`, `envVar`, and `host`, which an
+`com.github.api`, in place of `name`, `envVar`, and the hosts, which an
 implementation fills from what it knows the ID to mean. What the ask does spell
 out is passed on as it was sent, so the implementation that knows the ID is the
 one that checks it. An implementation that
 knows no such ID answers `invalid`, and so does one given an ID beside a `name`,
-`envVar`, or `host` the ID does not name. Discobox's registry is the root
+`envVar`, or a host the ID does not name. An ask by ID that names no host is
+for the ID's first host alone; `com.github.api` is `github.com`, and may also
+be asked for at `githubcopilot.com` by naming it. Discobox's registry is the root
 `wellknown` package.
 
 ```json

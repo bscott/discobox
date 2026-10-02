@@ -546,7 +546,7 @@ func (r *secretResolver) uses(req proxy.SecretAuthorizeRequest) []string {
 }
 
 // activation returns the live activation for a resolve request, if the sentinel
-// is one this process minted and the destination matches the host the use was
+// is one this process minted and the destination matches a host the use was
 // approved for.
 //
 // The host check is repeated here rather than left to the control plane's grant
@@ -566,8 +566,10 @@ func (r *secretResolver) activation(req proxy.SecretResolveRequest) (activation,
 	}
 	// The same reading the control plane uses: a use approved for github.com
 	// covers api.github.com, and one approved for api.github.com covers
-	// nothing above it.
-	if !hostscope.Covers(record.Host, req.Host) {
+	// nothing above it. An activation with no host covers nothing: the
+	// control plane mints no hostless use, so one is a server's omission, and
+	// the wildcard is never what it meant.
+	if len(record.Hosts) == 0 || !hostscope.CoversAny(record.Hosts, req.Host) {
 		return activation{}, false
 	}
 	return record, true

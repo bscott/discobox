@@ -2,6 +2,7 @@ package secrets_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestAgentCredentialRequestIsPendingAndRecordsWhatWasAsked(t *testing.T) {
 	if !req.FromProtocol() {
 		t.Fatal("request does not read as protocol-originated; declared uses are what separate it from the proxy's reactive path")
 	}
-	if req.EnvName != "GITHUB_TOKEN" || req.Host != "api.github.com" || req.Justification == "" {
+	if req.EnvName != "GITHUB_TOKEN" || !slices.Equal(req.Hosts, []string{"api.github.com"}) || req.Justification == "" {
 		t.Fatalf("request = %#v, want the ask recorded verbatim", req)
 	}
 	if len(req.Uses) != 1 || req.Uses[0].UseID != "" {
@@ -65,7 +66,7 @@ func TestAgentCredentialRequestForOtherUsesIsItsOwn(t *testing.T) {
 	ask := func(ttl int64, uses ...string) *model.SecretRequest {
 		t.Helper()
 		body := services.CreateSandboxCredentialRequestBody{
-			SandboxId: testSandboxID, Name: "github", EnvVar: "GITHUB_TOKEN", Host: "api.github.com",
+			SandboxId: testSandboxID, Name: "github", EnvVar: "GITHUB_TOKEN", Host: serverapi.NewOptString("api.github.com"),
 		}
 		for _, use := range uses {
 			body.Uses = append(body.Uses, apimodel.SecretUse{Description: use})
@@ -107,7 +108,7 @@ func TestAgentCredentialRequestRecordsTheLifetimeAskedFor(t *testing.T) {
 		SandboxId:       testSandboxID,
 		Name:            "github",
 		EnvVar:          "GITHUB_TOKEN",
-		Host:            "api.github.com",
+		Host:            serverapi.NewOptString("api.github.com"),
 		Uses:            []apimodel.SecretUse{{Description: "open a pull request"}},
 		GrantTTLSeconds: serverapi.NewOptInt64(4 * 3600),
 	})
@@ -132,7 +133,7 @@ func TestAgentCredentialRequestRecordsTheLifetimeAskedFor(t *testing.T) {
 			SandboxId:       testSandboxID,
 			Name:            "npm",
 			EnvVar:          "NPM_TOKEN",
-			Host:            "registry.npmjs.org",
+			Host:            serverapi.NewOptString("registry.npmjs.org"),
 			Uses:            []apimodel.SecretUse{{Description: "publish the package"}},
 			GrantTTLSeconds: serverapi.NewOptInt64(ask),
 		})
@@ -177,8 +178,8 @@ func TestApprovingAnAgentRequestMintsUsesAndAnUninjectedBinding(t *testing.T) {
 	if grant.Scope != model.SecretGrantScopeSandbox || grant.ScopeKey != testSandboxID {
 		t.Fatalf("grant scope = %s/%s, want the asking sandbox", grant.Scope, grant.ScopeKey)
 	}
-	if grant.Host != "api.github.com" {
-		t.Fatalf("grant host = %q, want the requested host; this flow never mints a wildcard", grant.Host)
+	if !slices.Equal(grant.Hosts, []string{"api.github.com"}) {
+		t.Fatalf("grant host = %q, want the requested host; this flow never mints a wildcard", grant.Hosts)
 	}
 	if len(grant.Uses) != 1 || !strings.HasPrefix(grant.Uses[0].UseID, "use_") {
 		t.Fatalf("grant uses = %#v, want one use carrying a minted ID", grant.Uses)
@@ -214,7 +215,7 @@ func TestApprovingAnAskToDelegateMintsADelegationGrant(t *testing.T) {
 		SandboxId: testSandboxID,
 		Name:      "github",
 		EnvVar:    "GITHUB_TOKEN",
-		Host:      "api.github.com",
+		Host:      serverapi.NewOptString("api.github.com"),
 		Uses:      []apimodel.SecretUse{{Description: "triage issues on discobox-ai/discobox"}},
 		Purpose:   serverapi.NewOptCreateSandboxCredentialRequestBodyPurpose(serverapi.CreateSandboxCredentialRequestBodyPurposeDelegate),
 	})
@@ -265,7 +266,7 @@ func TestAnAskToDelegateIsNotAnAskToUse(t *testing.T) {
 		SandboxId: testSandboxID,
 		Name:      "github",
 		EnvVar:    "GITHUB_TOKEN",
-		Host:      "api.github.com",
+		Host:      serverapi.NewOptString("api.github.com"),
 		Uses:      []apimodel.SecretUse{{Description: "open a pull request"}},
 		Purpose:   serverapi.NewOptCreateSandboxCredentialRequestBodyPurpose(serverapi.CreateSandboxCredentialRequestBodyPurposeDelegate),
 	})
@@ -462,7 +463,7 @@ func TestAgentCredentialCallsRefuseAnotherPoolsSandbox(t *testing.T) {
 		SandboxId: testSandboxID,
 		Name:      "github",
 		EnvVar:    "GITHUB_TOKEN",
-		Host:      "api.github.com",
+		Host:      serverapi.NewOptString("api.github.com"),
 		Uses:      []apimodel.SecretUse{{Description: "open a PR"}},
 	})
 	if err == nil {
@@ -536,7 +537,7 @@ func createAgentRequest(ctx context.Context, t *testing.T, svc *resourcesecrets.
 		SandboxId:     testSandboxID,
 		Name:          "github",
 		EnvVar:        "GITHUB_TOKEN",
-		Host:          "api.github.com",
+		Host:          serverapi.NewOptString("api.github.com"),
 		Justification: serverapi.NewOptString("the task asks me to open a PR"),
 		Uses:          []apimodel.SecretUse{{Description: "open a pull request"}},
 	})
@@ -625,8 +626,8 @@ func TestApprovedHostIsNormalizedToWhatTheProxyReports(t *testing.T) {
 			if err != nil {
 				t.Fatalf("get grant: %v", err)
 			}
-			if grant.Host != "api.github.com" {
-				t.Fatalf("grant host = %q, want the host as the proxy reports it", grant.Host)
+			if !slices.Equal(grant.Hosts, []string{"api.github.com"}) {
+				t.Fatalf("grant host = %q, want the host as the proxy reports it", grant.Hosts)
 			}
 			// The point of normalizing: the grant this mints actually resolves.
 			if _, err := st.FindLiveGrant(ctx, "project-1", secret.ID, "api.github.com",
@@ -1016,7 +1017,7 @@ func TestAnApprovalNamingNoLifetimeGrantsWhatWasAsked(t *testing.T) {
 			svc, st := newAgentCredentialService(t)
 			secret := createBoundSecret(ctx, t, svc, "github", "", tc.limit)
 			req, err := svc.CreateSandboxCredentialRequest(ctx, testPoolID, services.CreateSandboxCredentialRequestBody{
-				SandboxId: testSandboxID, Name: "github", EnvVar: "GITHUB_TOKEN", Host: "api.github.com",
+				SandboxId: testSandboxID, Name: "github", EnvVar: "GITHUB_TOKEN", Host: serverapi.NewOptString("api.github.com"),
 				Uses:            []apimodel.SecretUse{{Description: "open a pull request"}},
 				GrantTTLSeconds: serverapi.NewOptInt64(tc.asked),
 			})

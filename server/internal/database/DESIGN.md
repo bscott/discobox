@@ -47,6 +47,8 @@ by what it is looking for and is idempotent:
 3. Post-`AutoMigrate` data migrations, which need the new columns/constraints:
    index widening, value rewrites (secret types and hosts, provider types, the trust stanza in
    a codex harness's captured `config.toml`),
+   moving a secret request's and grant's one `host` into its `hosts` list and
+   dropping the column (`moveSecretHostsToLists`, ADR 26-10-02-393 §6),
    dropping a superseded constraint, dropping retired tables and columns (including the pool prepull condition and
    its `poolImages` dirty rows), the
    sandbox state split (ADR 0034), and re-keying every sandbox origin to where

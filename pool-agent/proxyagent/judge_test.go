@@ -84,7 +84,7 @@ func judgingPoolFunc(t *testing.T, answer func(judgeAsk) response) (*secretResol
 		Sentinel:  testEphemeral,
 		Stable:    testStable,
 		UseID:     "use_abc",
-		Host:      "api.github.com",
+		Hosts:     []string{"api.github.com"},
 		ExpiresAt: time.Now().Add(time.Minute),
 	}
 	plane := &controlPlaneCredentials{contextPath: contextPath, client: server.Client()}
@@ -260,7 +260,7 @@ func unreachablePool(t *testing.T) *secretResolver {
 	live := newActivations()
 	live.byEphemeral[testEphemeral] = activation{
 		SandboxID: "sandbox-1", Sentinel: testEphemeral, Stable: testStable,
-		UseID: "use_abc", Host: "api.github.com", ExpiresAt: time.Now().Add(time.Minute),
+		UseID: "use_abc", Hosts: []string{"api.github.com"}, ExpiresAt: time.Now().Add(time.Minute),
 	}
 	return &secretResolver{
 		contextPath: contextPath,

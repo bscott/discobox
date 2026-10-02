@@ -337,7 +337,10 @@ Everything else follows the request on the server, which is what keeps this and
 including one bound to another host: greying those out left the one secret that
 plainly answers the request unpickable, so the binding is asked about on the
 way through instead (`confirmGrantHost`), in the words the server would refuse
-it with.
+it with. A request may name several hosts (ADR 26-10-02-393): the card shows
+them all, a binding must cover every one, and a credential typed in on the spot
+is bound to the site they share — or to nothing, when they share none
+(`CredentialRequest.binding`).
 
 **How long is a required second step** (`askLifetime`). Choosing a secret opens
 a card of its own — 1 hour, 1 day, 1 week, 1 month, forever, and `custom…` for a

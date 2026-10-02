@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	apigen "github.com/discobox-ai/discobox/api/gen"
+	"github.com/discobox-ai/discobox/hostscope"
 	"github.com/discobox-ai/discobox/server/internal/apperrors"
 	"github.com/discobox-ai/discobox/server/internal/auth"
 	"github.com/discobox-ai/discobox/server/internal/model"
@@ -244,7 +245,7 @@ func (s *Service) openRefreshRequest(ctx context.Context, secret *model.Secret, 
 		RequestedBy:  "sandbox:" + sandboxID,
 		SandboxID:    sandboxID,
 		Type:         secret.Type,
-		Host:         secret.Host,
+		Hosts:        hostscope.List(secret.Host),
 		SecretID:     secret.ID,
 		Name:         secret.Name,
 		Status:       model.SecretRequestStatusPending,

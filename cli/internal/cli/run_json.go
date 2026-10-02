@@ -43,6 +43,7 @@ type runJSONGrant struct {
 	Secret string       `json:"secret"`
 	EnvVar string       `json:"envVar"`
 	Host   string       `json:"host"`
+	Hosts  []string     `json:"hosts"`
 	Uses   []runJSONUse `json:"uses"`
 }
 
@@ -120,6 +121,11 @@ func (req runJSONRequest) grants() ([]apimodel.SandboxGrant, error) {
 		}
 		if host := strings.TrimSpace(in.Host); host != "" {
 			grant.SetHost(apiclientgen.NewOptString(host))
+		}
+		// Only when given: an empty list is still sent, and a server that
+		// predates the field refuses the body for it.
+		if len(in.Hosts) > 0 {
+			grant.SetHosts(in.Hosts)
 		}
 		for _, use := range in.Uses {
 			if description := strings.TrimSpace(use.Description); description != "" {

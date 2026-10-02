@@ -591,9 +591,9 @@ type DelegationAsk struct {
 	// Uses are the uses it would grant: the request's, or the ones it
 	// narrowed them to.
 	Uses []string
-	// Credential and Host are what is handed on and where it may go.
+	// Credential and Hosts are what is handed on and where it may go.
 	Credential string
-	Host       string
+	Hosts      []string
 }
 
 // JudgeAsk is a pool asking about one of its discoboxes' requests: which

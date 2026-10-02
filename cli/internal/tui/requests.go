@@ -127,9 +127,11 @@ func (l *requestList) row(st *styles, r CredentialRequest, i int, focused bool) 
 		}
 		tail += padANSI(text, w)
 	}
-	// The host is what the credential would be allowed to reach, which is the
-	// first thing an approver reads after what is being asked for.
-	addCol("  "+st.name.Render(pad(r.Host, 24)), 26)
+	// The hosts are what the credential would be allowed to reach, which is
+	// the first thing an approver reads after what is being asked for. One cell
+	// short of the column, as the others are, so a list cut short is not run
+	// into the variable beside it.
+	addCol("  "+st.name.Render(pad(r.where(), 23)), 26)
 	addCol(st.dimText.Render(pad(r.EnvVar, 18)), 19)
 	addCol(st.dimText.Render(pad(requesterLabel(r), 22)), 23)
 	addCol(st.dimText.Render(pad(requestAge(r, l.now()), 8)), 9)

@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -181,7 +182,7 @@ func fakeSecretRequest() model.SecretRequest {
 		ProjectID:   "project-1",
 		RequestedBy: "user-1",
 		Type:        model.SecretTypeToken,
-		Host:        "github.com",
+		Hosts:       []string{"api.github.com", "api.githubcopilot.com"},
 		SecretID:    "secret-1",
 		Status:      model.SecretRequestStatusApproved,
 		GrantID:     "grant-1",
@@ -198,7 +199,7 @@ func fakeSecretGrant() model.SecretGrant {
 		SecretID:  "secret-1",
 		Scope:     model.SecretGrantScopeProject,
 		ScopeKey:  "project-1",
-		Host:      "github.com",
+		Hosts:     []string{"api.github.com", "api.githubcopilot.com"},
 		GrantedAt: now,
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -424,5 +425,31 @@ func TestResolveSandboxSecretNamesTheSecret(t *testing.T) {
 	}
 	if body.Status != serverapi.ResolveSandboxSecretResponseStatusApproved || body.SecretId.Or("") != "sec_1" {
 		t.Fatalf("resolution = %+v, want approved and naming sec_1", body)
+	}
+}
+
+// A grant and a request carry their hosts, and host beside them as the first,
+// for a reader that reads one (ADR 26-10-02-393 §4).
+func TestSecretGrantsAndRequestsCarryHostBesideHosts(t *testing.T) {
+	h := New(svcapi.Services{Secrets: fakeSecretService{}})
+	ctx := context.Background()
+	want := []string{"api.github.com", "api.githubcopilot.com"}
+
+	listRes, err := h.ListSecretGrants(ctx, serverapi.ListSecretGrantsParams{ProjectId: "project-1"})
+	if err != nil {
+		t.Fatalf("list grants: %v", err)
+	}
+	grants := listRes.(*serverapi.ListSecretGrantsBody).SecretGrants
+	if len(grants) != 1 || !slices.Equal(grants[0].Hosts, want) || grants[0].Host.Or("") != want[0] {
+		t.Fatalf("grants = %+v, want hosts %q and host %q", grants, want, want[0])
+	}
+
+	getRes, err := h.GetSecretRequest(ctx, serverapi.GetSecretRequestParams{ProjectId: "project-1", RequestId: "request-1"})
+	if err != nil {
+		t.Fatalf("get request: %v", err)
+	}
+	request := getRes.(*serverapi.SecretRequest)
+	if !slices.Equal(request.Hosts, want) || request.Host.Or("") != want[0] {
+		t.Fatalf("request = %+v, want hosts %q and host %q", request, want, want[0])
 	}
 }

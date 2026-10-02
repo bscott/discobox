@@ -16,8 +16,8 @@ import (
 	"github.com/discobox-ai/discobox/hostscope"
 )
 
-// GitHubAPI is GitHub: the site git pushes and pulls over HTTPS, and the REST
-// and GraphQL API beneath it.
+// GitHubAPI is GitHub: the site git pushes and pulls over HTTPS, the REST and
+// GraphQL API beneath it, and the Copilot API a GitHub token is also sent to.
 const GitHubAPI = "com.github.api"
 
 // DiscoboxSandbox is the discobox API, as a discobox calls it through its pool
@@ -34,9 +34,10 @@ type Credential struct {
 	// Description says what the credential is for, in a sentence an agent and
 	// an approver both read.
 	Description string
-	// Hosts are where the credential is sent. A request is for the first, and
-	// each covers the hosts beneath it (hostscope.Covers), so one entry
-	// stands for a site and its subdomains.
+	// Hosts are where the credential may be sent. A request that names none
+	// is for the first alone; one that names hosts may name any beneath
+	// these (ADR 26-10-02-393 §5). Each covers the hosts beneath it
+	// (hostscope.Covers), so one entry stands for a site and its subdomains.
 	Hosts []string
 	// EnvVar is the variable it is delivered in.
 	EnvVar string
@@ -60,19 +61,21 @@ type Credential struct {
 // Host is the host a request for the credential names.
 func (c Credential) Host() string { return c.Hosts[0] }
 
-// AllowsHost reports whether host is one the credential is sent to: one of its
-// hosts, or a host beneath one. An ask may name the narrower host it will
-// actually reach — api.github.com under github.com — and be granted that alone.
+// AllowsHost reports whether host is one the credential may be sent to: one of
+// its hosts, or a host beneath one. An ask may name the narrower hosts it will
+// actually reach — api.github.com under github.com — and be granted those alone.
 func (c Credential) AllowsHost(host string) bool {
 	return slices.ContainsFunc(c.Hosts, func(scope string) bool { return hostscope.Covers(scope, host) })
 }
 
 var registry = []Credential{
 	{
-		ID:             GitHubAPI,
-		Name:           "github",
-		Description:    "GitHub: repositories over HTTPS as git pushes and pulls them, and the REST and GraphQL API beneath the same site, as gh uses it.",
-		Hosts:          []string{"github.com"},
+		ID:          GitHubAPI,
+		Name:        "github",
+		Description: "GitHub: repositories over HTTPS as git pushes and pulls them, the REST and GraphQL API beneath the same site, as gh uses it, and the Copilot API at githubcopilot.com, which Copilot CLI sends the same token to.",
+		// githubcopilot.com is asked for by name: an ask for the ID alone is
+		// for github.com, as it was before Copilot was listed.
+		Hosts:          []string{"github.com", "githubcopilot.com"},
 		EnvVar:         "GH_TOKEN",
 		RefreshCommand: []string{"gh", "auth", "token"},
 		// gh's token is an OAuth app token: it lasts until it is revoked or

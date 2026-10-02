@@ -1192,11 +1192,14 @@ type SecretRequest struct {
 	// ProjectID and SecretID are also the open-refresh index: one pending
 	// refresh request per secret (ADR 26-09-25-122 §4), held by the database
 	// so two resolves at once cannot both open one.
-	ProjectID     string      `gorm:"column:project_id;not null;type:text;index;uniqueIndex:idx_secret_request_open_refresh,priority:1" json:"projectId" doc:"Project ID"`
-	RequestedBy   string      `gorm:"column:requested_by;not null;type:text" json:"requestedBy" doc:"Principal ID of the requestor"`
-	SandboxID     string      `gorm:"column:sandbox_id;not null;type:text;default:'';index" json:"sandboxId,omitempty" doc:"Sandbox that owns the sentinel, for sandbox-originated requests"`
-	Type          string      `gorm:"column:type;not null;type:text" json:"type" doc:"Secret type requested" enum:"token,oauth"`
-	Host          string      `gorm:"column:host;not null;type:text;default:''" json:"host,omitempty" doc:"Host hint provided at request time"`
+	ProjectID   string `gorm:"column:project_id;not null;type:text;index;uniqueIndex:idx_secret_request_open_refresh,priority:1" json:"projectId" doc:"Project ID"`
+	RequestedBy string `gorm:"column:requested_by;not null;type:text" json:"requestedBy" doc:"Principal ID of the requestor"`
+	SandboxID   string `gorm:"column:sandbox_id;not null;type:text;default:'';index" json:"sandboxId,omitempty" doc:"Sandbox that owns the sentinel, for sandbox-originated requests"`
+	Type        string `gorm:"column:type;not null;type:text" json:"type" doc:"Secret type requested" enum:"token,oauth"`
+	// Hosts are where the credential is asked for (ADR 26-10-02-393 §1): the
+	// destination the proxy observed, for a reactive or refresh request, and
+	// every host an agent named, for one from the protocol.
+	Hosts         []string    `gorm:"column:hosts;type:text;serializer:json" json:"hosts,omitempty" doc:"Hosts named at request time"`
 	Name          string      `gorm:"column:name;not null;type:text;default:''" json:"name,omitempty" doc:"Credential name the agent asked for, for protocol-originated requests"`
 	EnvName       string      `gorm:"column:env_name;not null;type:text;default:''" json:"envName,omitempty" doc:"Environment variable the credential is wanted in, for protocol-originated requests"`
 	Justification string      `gorm:"column:justification;not null;type:text;default:''" json:"justification,omitempty" doc:"Why the agent says it needs the credential"`
@@ -1285,6 +1288,15 @@ func (r *SecretRequest) FromProtocol() bool { return len(r.Uses) > 0 }
 
 func (SecretRequest) TableName() string { return "secret_requests" }
 
+// MarshalJSON writes host beside hosts, as SecretGrant's does.
+func (r SecretRequest) MarshalJSON() ([]byte, error) {
+	type plain SecretRequest
+	return json.Marshal(struct {
+		plain
+		Host string `json:"host,omitempty"`
+	}{plain(r), firstHost(r.Hosts)})
+}
+
 func (r *SecretRequest) BeforeCreate(_ *gorm.DB) error {
 	if r.ID == "" {
 		var err error
@@ -1308,12 +1320,15 @@ func (r *SecretRequest) BeforeCreate(_ *gorm.DB) error {
 // unexpired grant whose scope key matches a resolving sandbox lets the proxy
 // return the decrypted value without a pending request.
 type SecretGrant struct {
-	ID        string     `gorm:"primaryKey;type:text" json:"id" doc:"Stable grant ID"`
-	ProjectID string     `gorm:"column:project_id;not null;type:text;index" json:"projectId" doc:"Project ID"`
-	SecretID  string     `gorm:"column:secret_id;not null;type:text;index" json:"secretId" doc:"Granted secret ID"`
-	Scope     string     `gorm:"column:scope;not null;type:text" json:"scope" doc:"How widely the grant applies" enum:"sandbox,harnessConfig,project"`
-	ScopeKey  string     `gorm:"column:scope_key;not null;type:text;index" json:"scopeKey" doc:"Identifier the scope resolves against: sandbox ID, harness config ID, or project ID"`
-	Host      string     `gorm:"column:host;not null;type:text;default:''" json:"host,omitempty" doc:"Host the grant is limited to; empty matches any host"`
+	ID        string `gorm:"primaryKey;type:text" json:"id" doc:"Stable grant ID"`
+	ProjectID string `gorm:"column:project_id;not null;type:text;index" json:"projectId" doc:"Project ID"`
+	SecretID  string `gorm:"column:secret_id;not null;type:text;index" json:"secretId" doc:"Granted secret ID"`
+	Scope     string `gorm:"column:scope;not null;type:text" json:"scope" doc:"How widely the grant applies" enum:"sandbox,harnessConfig,project"`
+	ScopeKey  string `gorm:"column:scope_key;not null;type:text;index" json:"scopeKey" doc:"Identifier the scope resolves against: sandbox ID, harness config ID, or project ID"`
+	// Hosts are where the grant lets the credential go: a destination any of
+	// them covers (hostscope.CoversAny). None at all is the wildcard, which
+	// only an explicit grant create mints (ADR 26-10-02-393 §1).
+	Hosts     []string   `gorm:"column:hosts;type:text;serializer:json" json:"hosts,omitempty" doc:"Hosts the grant is limited to; empty matches any host"`
 	GrantedBy string     `gorm:"column:granted_by;not null;type:text;default:''" json:"grantedBy,omitempty" doc:"Principal ID that created the grant"`
 	GrantedAt time.Time  `gorm:"column:granted_at;autoCreateTime" json:"grantedAt" doc:"Creation timestamp" format:"date-time"`
 	ExpiresAt *time.Time `gorm:"column:expires_at" json:"expiresAt,omitempty" doc:"Expiry time; empty never expires" format:"date-time"`
@@ -1356,6 +1371,25 @@ func (g *SecretGrant) FindUse(useID string) (SecretUse, bool) {
 }
 
 func (SecretGrant) TableName() string { return "secret_grants" }
+
+// MarshalJSON writes host beside hosts: the first of them, for a reader that
+// reads one (ADR 26-10-02-393 §4). It is the API's spelling, and only the API's;
+// nothing here reads it back.
+func (g SecretGrant) MarshalJSON() ([]byte, error) {
+	type plain SecretGrant
+	return json.Marshal(struct {
+		plain
+		Host string `json:"host,omitempty"`
+	}{plain(g), firstHost(g.Hosts)})
+}
+
+// firstHost is the one host a list stands as for a reader that reads one.
+func firstHost(hosts []string) string {
+	if len(hosts) == 0 {
+		return ""
+	}
+	return hosts[0]
+}
 
 func (g *SecretGrant) BeforeCreate(_ *gorm.DB) error {
 	if g.ID == "" {

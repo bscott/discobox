@@ -10,11 +10,13 @@ import (
 	"log/slog"
 	"net/http"
 	neturl "net/url"
+	"slices"
 	"strings"
 	"time"
 
 	serverapi "github.com/discobox-ai/discobox/api/gen"
 	"github.com/discobox-ai/discobox/harness"
+	"github.com/discobox-ai/discobox/hostscope"
 	"github.com/discobox-ai/discobox/server/internal/apperrors"
 	poolagentauth "github.com/discobox-ai/discobox/server/internal/auth/poolagent"
 	"github.com/discobox-ai/discobox/server/internal/model"
@@ -528,7 +530,7 @@ func (s *Service) applyConfigureOutput(ctx context.Context, config *model.Harnes
 			SecretID:  created.ID,
 			Scope:     model.SecretGrantScopeHarnessConfig,
 			ScopeKey:  config.ID,
-			Host:      secret.Host,
+			Hosts:     hostscope.List(secret.Host),
 		}); err != nil {
 			return fmt.Errorf("grant configured secret %q: %w", envName, err)
 		}
@@ -582,10 +584,11 @@ func (s *Service) updateConfiguredGrantHost(ctx context.Context, config *model.H
 		if grant.Scope != model.SecretGrantScopeHarnessConfig || grant.ScopeKey != config.ID {
 			continue
 		}
-		if grant.Host == host {
+		hosts := hostscope.List(host)
+		if slices.Equal(grant.Hosts, hosts) {
 			continue
 		}
-		grant.Host = host
+		grant.Hosts = hosts
 		if err := s.store.UpdateSecretGrant(ctx, grant); err != nil {
 			return err
 		}

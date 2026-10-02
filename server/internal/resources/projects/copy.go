@@ -375,7 +375,7 @@ func (s *Service) copyGrants(ctx context.Context, sourceConfig *model.HarnessCon
 			SecretID:  secretID,
 			Scope:     model.SecretGrantScopeHarnessConfig,
 			ScopeKey:  config.ID,
-			Host:      grant.Host,
+			Hosts:     grant.Hosts,
 			GrantedBy: grant.GrantedBy,
 			ExpiresAt: grant.ExpiresAt,
 		}); err != nil {

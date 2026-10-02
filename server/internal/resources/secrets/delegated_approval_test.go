@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -53,7 +54,7 @@ func delegate(t *testing.T, st *store.Store, secret *model.Secret, host string, 
 	t.Helper()
 	grant := &model.SecretGrant{
 		ProjectID: "project-1", SecretID: secret.ID, Scope: model.SecretGrantScopeSandbox, ScopeKey: leadID,
-		Host: host, GrantedBy: "user-1", Purpose: model.SecretGrantPurposeDelegate,
+		Hosts: []string{host}, GrantedBy: "user-1", Purpose: model.SecretGrantPurposeDelegate,
 		Uses: []model.SecretUse{{UseID: "use-delegated", Description: "read issues, for the discoboxes I create"}},
 	}
 	if lifetime > 0 {
@@ -70,7 +71,7 @@ func delegate(t *testing.T, st *store.Store, secret *model.Secret, host string, 
 func workerRequest(t *testing.T, svc *resourcesecrets.Service, change func(*services.CreateSandboxCredentialRequestBody)) *model.SecretRequest {
 	t.Helper()
 	body := services.CreateSandboxCredentialRequestBody{
-		SandboxId: testSandboxID, Name: "github", EnvVar: "GITHUB_TOKEN", Host: "api.github.com",
+		SandboxId: testSandboxID, Name: "github", EnvVar: "GITHUB_TOKEN", Host: serverapi.NewOptString("api.github.com"),
 		Uses: []apimodel.SecretUse{{Description: "read issue 43"}},
 	}
 	if change != nil {
@@ -225,7 +226,7 @@ func TestADiscoboxHandsOnAWellKnownCredentialOnlyByItsSecret(t *testing.T) {
 	delegate(t, st, unmarked, "github.com", time.Hour)
 	wellKnown := func(b *services.CreateSandboxCredentialRequestBody) {
 		b.ID = serverapi.NewOptString("com.github.api")
-		b.Name, b.EnvVar, b.Host = "", "", ""
+		b.Name, b.EnvVar, b.Host = "", "", serverapi.NewOptString("")
 	}
 	_, err := approveAsLead(svc, workerRequest(t, svc, wellKnown), services.ApproveSecretRequestBody{})
 	requireStatus(t, err, http.StatusForbidden)
@@ -255,7 +256,7 @@ func TestADiscoboxNeverApprovesADelegationOrAnUnnamedUse(t *testing.T) {
 
 	reactive := &model.SecretRequest{
 		ID: "sreq-reactive", ProjectID: "project-1", SandboxID: testSandboxID, RequestedBy: "pool:" + testPoolID,
-		Type: "token", Host: "api.github.com", Status: model.SecretRequestStatusPending,
+		Type: "token", Hosts: []string{"api.github.com"}, Status: model.SecretRequestStatusPending,
 	}
 	if err := st.CreateSecretRequest(ctx, reactive); err != nil {
 		t.Fatalf("create reactive request: %v", err)
@@ -366,7 +367,7 @@ func TestADiscoboxHandsOnOnlyUsesTheJudgeFindsWithinItsDelegation(t *testing.T) 
 	asked := judging.asked[0]
 	if asked.ApproverID != leadID || asked.RequestID == "" || asked.DelegationGrantID != delegation.ID ||
 		len(asked.Delegated) != 1 || asked.Delegated[0] != delegation.Uses[0].Description ||
-		len(asked.Uses) != 1 || asked.Uses[0] != narrowed[0].Description || asked.Host != "api.github.com" {
+		len(asked.Uses) != 1 || asked.Uses[0] != narrowed[0].Description || !slices.Equal(asked.Hosts, []string{"api.github.com"}) {
 		t.Fatalf("asked = %+v, want the delegation it approves under and the narrowed use", asked)
 	}
 

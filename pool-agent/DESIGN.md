@@ -1029,14 +1029,18 @@ proxy would recognize it.
   a refusal that never reaches `get` at all is relayed on its own, through the
   denial-report call ([ADR 0091](../docs/adr/0091-a-credential-is-not-issued-without-a-verdict-on-record.md)).
 - **Activations** (`activations.go`) are in-memory and pool-local: ephemeral
-  sentinel → `{stable sentinel, useId, host, declared command, expiry}`. They are
+  sentinel → `{stable sentinel, useId, hosts, declared command, expiry}`. They are
   disposable by design — a restart costs a dead sentinel and one fresh `get`,
   which fails closed. `activationTTL` is the *use* clock; the grant's expiry on
   the control plane is the *consent* clock, and a value dies at whichever comes
   first.
 - **The resolver checks activations first.** A sentinel it minted is refused
   unless the activation is live, belongs to the calling sandbox, and the
-  destination matches the host its use was approved for; only then is it
+  destination is covered by one of the hosts its use was approved for
+  ([ADR 26-10-02-393](../docs/adr/26-10-02-393-a-credential-request-and-its-grant-may-name-several-hosts.md)).
+  The hosts are the credential's `host` then `hosts`, so a control plane that
+  predates the list pins the activation to its one host, and an activation
+  with no host covers nothing rather than everything; only then is it
   translated to the stable sentinel and resolved normally. The control plane
   never learns ephemeral sentinels exist.
 - **`policyPublisher` owns the proxy's per-client policy**, merging the stable

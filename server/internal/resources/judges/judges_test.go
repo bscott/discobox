@@ -1266,7 +1266,7 @@ func TestADelegationIsJudgedAndRecordedAgainstItsGrant(t *testing.T) {
 		ApproverID: "sbx-lead", RequestID: "sreq-worker", DelegationGrantID: "grant-delegated",
 		Delegated:  []string{"read issues in org/repo", "read pull requests in org/repo"},
 		Uses:       []string{"push the branch fix-43 to org/repo"},
-		Credential: "github", Host: "api.github.com",
+		Credential: "github", Hosts: []string{"api.github.com"},
 	})
 	if err != nil {
 		t.Fatalf("JudgeDelegation() error = %v", err)
@@ -1304,7 +1304,7 @@ func TestAServerThatDoesNotJudgeRefusesADelegation(t *testing.T) {
 	service, _, _ := newJudgeTest(t)
 	service.enabled = false
 	if _, err := service.JudgeDelegation(context.Background(), "project-1", services.DelegationAsk{
-		Delegated: []string{"read issues"}, Uses: []string{"read issue 43"}, Host: "api.github.com",
+		Delegated: []string{"read issues"}, Uses: []string{"read issue 43"}, Hosts: []string{"api.github.com"},
 	}); err == nil {
 		t.Fatal("a server that does not judge answered a delegation")
 	}

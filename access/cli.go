@@ -130,7 +130,13 @@ func usage(w io.Writer) {
       you wait for an answer.
 
       ID names a well-known credential (com.github.api), which says its own
-      name, variable, and host; give only --use and --why.
+      name, variable, and host; give only --use and --why. --host may still
+      name the hosts beneath the ID's you will reach: com.github.api for
+      Copilot CLI is --host api.github.com --host githubcopilot.com.
+
+      A credential sent to several sites is one request: repeat --host, or
+      give "hosts" beside "host" in --json. Each host covers the hosts
+      beneath it.
 
       With --json, the request is read from stdin, which keeps quotes and
       apostrophes in your justification out of the shell's hands:

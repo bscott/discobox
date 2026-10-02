@@ -149,7 +149,10 @@ discobox as it does here. --declared-sources=false leaves them out.
 --grant gives the new discobox a use of a credential: a well-known one by its
 ID, ID[@HOST]=USE, or a project secret, SECRET[@HOST]:ENV_VAR=USE. Its agent
 takes it with discobox-access, one use at a time, and nothing in the discobox
-can read it. Repeat a credential to give it several uses.
+can read it. Repeat a credential to give it several uses. HOST may be several,
+joined by commas, for a credential sent to more than one site, as Copilot CLI
+sends a GitHub token: com.github.api@api.github.com,githubcopilot.com=USE. In
+--json, "hosts" lists them.
 
 --json reads the whole request from stdin as one JSON object instead, creates
 the discobox without attaching, and prints it as JSON. It is for a caller that
@@ -328,7 +331,7 @@ func addRunFlags(cmd *cobra.Command, opts *runCommandOptions) {
 	flags.BoolVar(&opts.declaredSources, "declared-sources", true, "Bring in the sources the repository declares in .discobox/sources.json, using a local checkout beside the source directory when there is one")
 	flags.Var(&opts.prompt.IncludeDirty, "include-dirty", "Carry uncommitted changes in the local source into the discobox: true, false, or auto (ask when the workspace is dirty and this is a terminal). A source directory in no Git repository is uncommitted in its entirety, so this decides whether the directory itself is copied in")
 	flags.Lookup("include-dirty").NoOptDefVal = string(sandboxcreate.IncludeDirtyAlways)
-	flags.StringArrayVar(&opts.grant, "grant", nil, "A use of a credential to give the new discobox, as SECRET[@HOST]:ENV_VAR=USE, or ID[@HOST]=USE for a well-known credential such as com.github.api; repeat for more, and repeat a credential to give it several uses. Its agent takes the credential with discobox-access, one use at a time, and nothing in the discobox can read it")
+	flags.StringArrayVar(&opts.grant, "grant", nil, "A use of a credential to give the new discobox, as SECRET[@HOST[,HOST...]]:ENV_VAR=USE, or ID[@HOST[,HOST...]]=USE for a well-known credential such as com.github.api; repeat for more, and repeat a credential to give it several uses. Its agent takes the credential with discobox-access, one use at a time, and nothing in the discobox can read it")
 	flags.BoolVar(&opts.json, "json", false, "Read the request from stdin as one JSON object instead of from flags, create the discobox without attaching, and print it as JSON")
 	cmd.Flags().AddFlagSet(flags)
 	opts.flags = flags

@@ -57,7 +57,9 @@ ten-year ask a keystroke away from approval, or one large enough to overflow the
 duration the window converts it to and land back at zero.
 
 The proxy's ask is deduplicated to one pending request per sandbox, secret, and
-host. A request made through the API (`CreateSecretRequest`) is the reactive
+host. An agent's ask is deduplicated per sandbox, variable, well-known ID,
+purpose, and set of hosts — the same hosts in another order are the same ask
+(ADR 26-10-02-393 §3). A request made through the API (`CreateSecretRequest`) is the reactive
 species without a sandbox: it names a type and host, and is approved on the spot
 when a project-wide grant on a matching secret already covers it.
 
@@ -65,7 +67,7 @@ Approving a protocol request is stricter than approving a reactive one, and the
 strictness is refused rather than silently relaxed:
 
 - **A concrete host is mandatory.** `FindLiveGrant` matches the destination the
-  proxy actually observed, so the host is what stops a token being swapped
+  proxy actually observed, so the hosts are what stop a token being swapped
   toward somewhere it was not approved for. A wildcard grant stays an explicit
   administrative act via `discobox secret grant create`.
 - **Sandbox scope only.** The agent asked on behalf of one sandbox; approving it
@@ -87,6 +89,24 @@ role changes no secret. It sees and answers only the requests it owns — filed 
 a discobox it created: the sandbox role decides that for one request by its ID,
 and `ListSecretRequests` filters the listing with `store.OwnedBy`
 ([ADR 26-09-30-782](../../../../docs/adr/26-09-30-782-a-discobox-answers-its-own-discoboxes-requests-within-what-it-may-delegate.md) §2).
+
+### A request and its grant name a list of hosts
+
+`SecretRequest.Hosts` and `SecretGrant.Hosts` are lists (ADR 26-10-02-393): one
+credential a tool sends to unrelated sites — Copilot CLI's GitHub token, at
+`api.github.com` and `githubcopilot.com` — is one ask, one grant, one use. A
+grant covers a destination any of its hosts covers (`hostscope.CoversAny`); no
+hosts is the wildcard. Every check reads the list: the grant lookup, the secret
+binding (each host inside it, `guardGrantHosts`), the delegation a discobox
+approves under (`hostscope.CoversEvery`), and `ApprovedUse`, which names the
+one host covering this destination so the judge is told where *this* request
+is approved for.
+
+The API keeps `host` beside `hosts`, because the CLI and pool agent are
+upgraded separately: a body's hosts are `host` then `hosts` (`askedHosts`), and
+a response's `host` is the first (`SecretGrant`/`SecretRequest.MarshalJSON`).
+An empty `host` alone is how a grant or approval names the wildcard; naming
+neither takes the default — the secret's host, or the request's hosts.
 
 ## Two ways to reach the agent credentials shape
 
@@ -120,7 +140,7 @@ Two paths mint that pair, and they mint the same thing:
   agent says what it needs and why, and a person answers.
 - **`CreateSecretGrant` with uses**, the pre-approval: somebody who already
   knows the answer grants it ahead of the asking. It carries the same
-  obligations — a concrete host, use IDs minted here, and an environment
+  obligations — concrete hosts, use IDs minted here, and an environment
   variable naming where the wrapped command receives it — but may sit at any of
   the three scopes. A sandbox-scoped one binds immediately, and a failed binding
   deletes the grant, as a failed approval leaves none; a wider one binds lazily as
@@ -180,7 +200,7 @@ approved the ID chooses that secret. A gate is not given this way: the discobox
 API lets its holder give credentials in turn, so a person grants it.
 `PrepareSandboxGrants` checks each as a person's
 grant of the same shape is checked — a concrete host within the secret's
-binding (`guardGrantHost`), a lifetime within its limit (`guardGrantTTL`), at
+binding (`guardGrantHosts`), a lifetime within its limit (`guardGrantTTL`), at
 least one use, one credential per variable — and builds the use grants and
 agent bindings without storing them; the sandbox create stores them in the
 transaction that stores the discobox, so a create that cannot give them all
@@ -470,14 +490,16 @@ A secret that carries one may be used for that host and the hosts beneath it,
 and nowhere else. That is checked twice, because the two checks answer
 different questions:
 
-- **`guardGrantHost`, when a grant is minted** — refuses an approval that would
-  point the credential outside its binding, which is the typo worth catching
-  while somebody is still looking at it.
+- **`guardGrantHosts`, when a grant is minted** — refuses an approval that
+  would point the credential outside its binding at any of the grant's hosts,
+  which is the typo worth catching while somebody is still looking at it.
 - **`ResolveSandboxSecret`, when the value is handed out** — the same test
   against the destination the proxy observed, so a grant written before the
   binding existed does not outlive it.
 
 A secret with no host is unconstrained by this, and the grant is what scopes it.
+A binding stays one host: a credential sent to unrelated sites is an unbound
+secret whose grants list them (ADR 26-10-02-393 §2).
 
 ## A secret's grant limit is a ceiling, not a default
 
@@ -487,7 +509,7 @@ value a person reads on the row is the value that binds. An approval that names
 no lifetime is fitted within it rather than given it: it grants what the agent
 asked for, else an hour.
 
-`guardGrantTTL` enforces it beside `guardGrantHost`, in `mintGrantAs`, for the
+`guardGrantTTL` enforces it beside `guardGrantHosts`, in `mintGrantAs`, for the
 same reason: the lifetime arrives from an approval, a pre-approval, or the
 in-sandbox flow, and a rule enforced in one of those is a rule the other two
 walk around. Over the limit is refused, and so is a grant that never expires —
@@ -534,7 +556,7 @@ binding said it was not for.
 
 Every check reads it and they must agree: `FindLiveGrant` matching the
 destination the proxy observed, `ResolveSandboxSecret` holding that destination
-inside the secret's binding, `guardGrantHost` refusing a grant outside it, and
+inside the secret's binding, `guardGrantHosts` refusing a grant outside it, and
 the pool agent's activation check. `FindLiveGrant` therefore matches the host
 in Go rather than in SQL, and prefers the narrowest covering grant
 (`hostscope.Specificity`). Hosts are stored through `hostscope.Normalize`

@@ -39,7 +39,7 @@ func runList(ctx context.Context, args []string) int {
 			return
 		}
 		for _, credential := range credentials {
-			fmt.Fprintf(w, "%s (%s → %s)\n", credential.Name, credential.EnvVar, credential.Host)
+			fmt.Fprintf(w, "%s (%s → %s)\n", credential.Name, credential.EnvVar, strings.Join(credential.AllHosts(), ", "))
 			for _, use := range credential.Uses {
 				expiry := ""
 				if use.ExpiresAt != nil {
@@ -62,11 +62,16 @@ func runList(ctx context.Context, args []string) int {
 //
 // Purpose is agentcreds.PurposeUse or agentcreds.PurposeDelegate; the flags
 // spell the second --delegate, and empty asks to use the credential.
+//
+// Host and Hosts are where the credential will be sent, as the protocol reads
+// them: host, then hosts. --host repeats, and its first goes out as host, so a
+// service that predates the list still hears the first host asked for.
 type requestInput struct {
 	ID              string                    `json:"id,omitempty"`
 	Name            string                    `json:"name"`
 	EnvVar          string                    `json:"envVar"`
 	Host            string                    `json:"host"`
+	Hosts           []string                  `json:"hosts,omitempty"`
 	Justification   string                    `json:"justification,omitempty"`
 	Uses            []agentcreds.RequestedUse `json:"uses"`
 	GrantTTLSeconds int64                     `json:"grantTTLSeconds,omitempty"`
@@ -79,6 +84,7 @@ func runRequest(ctx context.Context, args []string) int {
 	var (
 		input      requestInput
 		uses       stringList
+		hosts      stringList
 		structured bool
 		timeout    time.Duration
 		grantTTL   time.Duration
@@ -96,7 +102,7 @@ func runRequest(ctx context.Context, args []string) int {
 	flags.BoolVar(&structured, "json", false, "read the request as JSON on stdin and emit JSON")
 	flags.StringVar(&input.Name, "name", "", "credential name (e.g. github)")
 	flags.StringVar(&input.EnvVar, "env-var", "", "environment variable to deliver it in")
-	flags.StringVar(&input.Host, "host", "", "destination host it will be sent to")
+	flags.Var(&hosts, "host", "destination host it will be sent to (repeatable, for a credential sent to several)")
 	flags.StringVar(&input.Justification, "why", "", "why you need it")
 	flags.Var(&uses, "use", "what you intend to use it for (repeatable)")
 	flags.DurationVar(&grantTTL, "grant-ttl", 0, "how long you ask to keep it (e.g. 30m, 4h); the approver may choose otherwise")
@@ -139,6 +145,9 @@ func runRequest(ctx context.Context, args []string) int {
 		for _, use := range uses {
 			input.Uses = append(input.Uses, agentcreds.RequestedUse{Description: use})
 		}
+		if len(hosts) > 0 {
+			input.Host, input.Hosts = hosts[0], hosts[1:]
+		}
 		// Refused here rather than rounded: a lifetime truncated to zero
 		// seconds would go out as no ask at all.
 		if grantTTL < 0 || grantTTL%time.Second != 0 {
@@ -161,12 +170,19 @@ func runRequest(ctx context.Context, args []string) int {
 		return usageError(out, "a lifetime to ask for runs from 1 second to %d (thirty days); leave it out to ask for nothing in particular", int64(agentcreds.MaxGrantTTLSeconds))
 	}
 
+	// The first host always goes as host, however it was spelled: a service
+	// that predates the list reads host alone, and would otherwise hear an
+	// ask for no host at all (ADR 26-10-02-393 §4).
+	if hosts := (agentcreds.RequestBody{Host: input.Host, Hosts: input.Hosts}).AllHosts(); len(hosts) > 0 {
+		input.Host, input.Hosts = hosts[0], hosts[1:]
+	}
 	client := newClient()
 	status, err := client.Request(ctx, agentcreds.RequestBody{
 		ID:              input.ID,
 		Name:            input.Name,
 		EnvVar:          input.EnvVar,
 		Host:            input.Host,
+		Hosts:           input.Hosts,
 		Justification:   input.Justification,
 		Uses:            input.Uses,
 		GrantTTLSeconds: input.GrantTTLSeconds,

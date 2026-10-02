@@ -183,13 +183,15 @@ func toTUICredentialRequest(r apimodel.SecretRequest) tui.CredentialRequest {
 		SandboxID:     strings.TrimSpace(r.SandboxId.Or("")),
 		Name:          strings.TrimSpace(r.Name.Or("")),
 		EnvVar:        strings.TrimSpace(r.EnvName.Or("")),
-		Host:          strings.TrimSpace(r.Host.Or("")),
 		Type:          string(r.Type),
 		Justification: strings.TrimSpace(r.Justification.Or("")),
 		GrantTTL:      agentcreds.AskedGrantTTL(r.GrantTTLSeconds.Or(0)),
 		Delegate:      r.Purpose.Or("") == apiclientgen.SecretRequestPurposeDelegate,
 		WellKnownID:   strings.TrimSpace(r.WellKnownId.Or("")),
 		Created:       r.CreatedAt,
+	}
+	if hosts := responseHosts(r.Host, r.Hosts); len(hosts) > 0 {
+		req.Host, req.Hosts = hosts[0], hosts
 	}
 	if r.Reason.Or("") == apiclientgen.SecretRequestReasonRefresh {
 		req.Refresh = &tui.RefreshAsk{
@@ -622,7 +624,7 @@ func (d *apiDataSource) Grants(ctx context.Context, server, secretID string) ([]
 			SecretID:  g.SecretId,
 			Scope:     string(g.Scope),
 			ScopeKey:  strings.TrimSpace(g.ScopeKey),
-			Host:      strings.TrimSpace(g.Host.Or("")),
+			Host:      strings.Join(responseHosts(g.Host, g.Hosts), ", "),
 			Delegate:  g.Purpose == apiclientgen.SecretGrantPurposeDelegate,
 			GrantedBy: strings.TrimSpace(g.GrantedBy.Or("")),
 			Granted:   g.GrantedAt,
@@ -687,7 +689,7 @@ func (d *apiDataSource) CreateGrant(ctx context.Context, server string, grant tu
 		SecretID: created.SecretId,
 		Scope:    string(created.Scope),
 		ScopeKey: strings.TrimSpace(created.ScopeKey),
-		Host:     strings.TrimSpace(created.Host.Or("")),
+		Host:     strings.Join(responseHosts(created.Host, created.Hosts), ", "),
 	}, nil
 }
 

@@ -58,3 +58,37 @@ func TestAGrantFlagMayNameAWellKnownID(t *testing.T) {
 		t.Fatalf("narrow grant = %+v, want the ID narrowed to api.github.com", narrow)
 	}
 }
+
+// A credential sent to more than one site names each, joined by commas: the
+// first goes as host and the rest as hosts (ADR 26-10-02-393).
+func TestAGrantMayNameSeveralHosts(t *testing.T) {
+	grants, err := ParseGrants([]string{"com.github.api@api.github.com, githubcopilot.com=run copilot against org/repo"})
+	if err != nil {
+		t.Fatalf("ParseGrants: %v", err)
+	}
+	if len(grants) != 1 {
+		t.Fatalf("grants = %+v, want one", grants)
+	}
+	if g := grants[0]; g.Host.Or("") != "api.github.com" || len(g.Hosts) != 1 || g.Hosts[0] != "githubcopilot.com" {
+		t.Fatalf("grant = host %q, hosts %q; want api.github.com, then githubcopilot.com", g.Host.Or(""), g.Hosts)
+	}
+}
+
+// The same hosts in another order or spacing are one grant, and a single host
+// sends no empty hosts list, which a server that predates the field refuses.
+func TestGrantHostsAreASet(t *testing.T) {
+	grants, err := ParseGrants([]string{
+		"com.github.api@api.github.com,githubcopilot.com=run copilot",
+		"com.github.api@ githubcopilot.com , API.github.com=open a pull request",
+		"github@github.com:GH_TOKEN=push a branch",
+	})
+	if err != nil {
+		t.Fatalf("ParseGrants: %v", err)
+	}
+	if len(grants) != 2 || len(grants[0].Uses) != 2 {
+		t.Fatalf("grants = %+v, want the two spellings of one host set as one grant with two uses", grants)
+	}
+	if grants[1].Hosts != nil {
+		t.Fatalf("a one-host grant carries hosts %q, want none", grants[1].Hosts)
+	}
+}

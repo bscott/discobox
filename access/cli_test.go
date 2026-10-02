@@ -533,3 +533,42 @@ func TestUnknownCommandIsAUsageError(t *testing.T) {
 }
 
 var _ = time.Second
+
+// A credential sent to several sites is one request: --host repeats, its
+// first goes out as host so a service that predates the list still hears it,
+// and --json carries hosts as written (ADR 26-10-02-393 §4).
+func TestRequestNamesSeveralHosts(t *testing.T) {
+	svc := &fakeService{}
+	serve(t, svc)
+
+	args := []string{"request", "com.github.api", "--host", "api.github.com", "--host", "githubcopilot.com", "--use", "run copilot"}
+	if _, stderr, code := capture(t, "", func() int { return Run(args) }); code != exitOK {
+		t.Fatalf("exit = %d, want 0: %s", code, stderr)
+	}
+	if got := svc.gotRequest; got.Host != "api.github.com" || strings.Join(got.Hosts, ",") != "githubcopilot.com" {
+		t.Fatalf("request = host %q, hosts %q; want the first as host and the rest as hosts", got.Host, got.Hosts)
+	}
+
+	svc.gotRequest = agentcreds.RequestBody{}
+	body := `{"name":"github","envVar":"GH_TOKEN","hosts":["api.github.com","githubcopilot.com"],"uses":[{"description":"run copilot"}]}`
+	if _, stderr, code := capture(t, body, func() int { return Run([]string{"request", "--json"}) }); code != exitOK {
+		t.Fatalf("exit = %d, want 0: %s", code, stderr)
+	}
+	if got := svc.gotRequest.AllHosts(); strings.Join(got, ",") != "api.github.com,githubcopilot.com" {
+		t.Fatalf("hosts = %q, want both as written", got)
+	}
+}
+
+// --json naming hosts alone still sends the first as host, which a service
+// that predates the list reads alone.
+func TestRequestJSONWithHostsAloneSendsTheFirstAsHost(t *testing.T) {
+	svc := &fakeService{}
+	serve(t, svc)
+	body := `{"name":"github","envVar":"GH_TOKEN","hosts":["api.github.com","githubcopilot.com"],"uses":[{"description":"run copilot"}]}`
+	if _, stderr, code := capture(t, body, func() int { return Run([]string{"request", "--json"}) }); code != exitOK {
+		t.Fatalf("exit = %d, want 0: %s", code, stderr)
+	}
+	if got := svc.gotRequest; got.Host != "api.github.com" || strings.Join(got.Hosts, ",") != "githubcopilot.com" {
+		t.Fatalf("request = host %q, hosts %q; want the first as host", got.Host, got.Hosts)
+	}
+}

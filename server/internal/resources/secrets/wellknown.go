@@ -20,30 +20,38 @@ import (
 // names one by ID, and the secret that fulfills it when a person approves.
 
 // wellKnownAsk checks an ask that names a well-known credential and returns the
-// name, variable, and host it names. What the ask spells out itself must agree
+// name, variable, and hosts it names. What the ask spells out itself must agree
 // with the ID: an ID is a promise about what is asked for, and an ask that says
 // otherwise is one of the two, not both.
-func wellKnownAsk(id, name, envName, host string) (string, string, string, error) {
+//
+// An ask that names no host is for the ID's first alone, so a credential that
+// lists more places it may go is not widened to them unasked (ADR 26-10-02-393
+// §5); one that names hosts has each checked against the ID's.
+func wellKnownAsk(id, name, envName string, hosts []string) (string, string, []string, error) {
 	known, ok := wellknown.Lookup(strings.TrimSpace(id))
 	if !ok {
-		return "", "", "", apperrors.NewStatusError(http.StatusBadRequest, fmt.Sprintf("%q is not a well-known credential", id))
+		return "", "", nil, apperrors.NewStatusError(http.StatusBadRequest, fmt.Sprintf("%q is not a well-known credential", id))
 	}
 	conflict := func(field, got, want string) error {
 		return apperrors.NewStatusError(http.StatusBadRequest,
 			fmt.Sprintf("%s is %s, whose %s is %q, not %q", id, known.Name, field, want, got))
 	}
 	if name != "" && name != known.Name {
-		return "", "", "", conflict("name", name, known.Name)
+		return "", "", nil, conflict("name", name, known.Name)
 	}
 	if envName != "" && envName != known.EnvVar {
-		return "", "", "", conflict("variable", envName, known.EnvVar)
+		return "", "", nil, conflict("variable", envName, known.EnvVar)
 	}
-	if host == "" {
-		host = known.Host()
-	} else if !known.AllowsHost(host) {
-		return "", "", "", conflict("host", host, known.Host())
+	if len(hosts) == 0 {
+		hosts = []string{known.Host()}
 	}
-	return known.Name, known.EnvVar, host, nil
+	for _, host := range hosts {
+		if !known.AllowsHost(host) {
+			return "", "", nil, apperrors.NewStatusError(http.StatusBadRequest,
+				fmt.Sprintf("%s is %s, which is sent to %s and the hosts beneath them, not %q", id, known.Name, strings.Join(known.Hosts, ", "), host))
+		}
+	}
+	return known.Name, known.EnvVar, hosts, nil
 }
 
 // wellKnownSecret is the secret an approval of a request for a well-known

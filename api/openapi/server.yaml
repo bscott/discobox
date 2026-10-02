@@ -441,8 +441,13 @@ components:
                     description: Environment variable the discobox's agent receives the credential in. Required without wellKnownId.
                     type: string
                 host:
-                    description: Host the credential may be sent to. Defaults to the secret's host, or the well-known credential's; one is required.
+                    description: A host the credential may be sent to, before any in hosts. Naming neither defaults to the secret's host, or the well-known credential's first; one is required.
                     type: string
+                hosts:
+                    description: Hosts the credential may be sent to, after host (ADR 26-10-02-393). Each must sit inside the secret's binding, or the well-known credential's hosts.
+                    items:
+                        type: string
+                    type: array
                 uses:
                     description: What the credential may be used for. Use IDs are minted here; a supplied one is ignored.
                     items:
@@ -3065,8 +3070,13 @@ components:
                     description: Grant authorizing the uses
                     type: string
                 host:
-                    description: Host the credential may be sent to
+                    description: The first of hosts, for a pool agent that reads one; it pins an activation there and refuses the rest
                     type: string
+                hosts:
+                    description: Hosts the credential may be sent to; a destination any of them covers (ADR 26-10-02-393)
+                    items:
+                        type: string
+                    type: array
                 name:
                     description: Credential name
                     type: string
@@ -3126,8 +3136,13 @@ components:
                     minimum: 0
                     type: integer
                 host:
-                    description: Destination host the credential will be sent to. Required, because approving this request may not mint a host-unscoped grant.
+                    description: A destination host the credential will be sent to, before any in hosts. One host, here or in hosts, is required, because approving this request may not mint a host-unscoped grant.
                     type: string
+                hosts:
+                    description: Destination hosts the credential will be sent to, after host (ADR 26-10-02-393).
+                    items:
+                        type: string
+                    type: array
                 purpose:
                     description: What the agent asks the credential for, one or the other and never both. use (the default) asks to use it. delegate asks to delegate it to other discoboxes; approving it mints a delegation grant, which authorizes nothing the asking discobox sends itself.
                     enum:
@@ -3155,7 +3170,6 @@ components:
                 - sandboxId
                 - name
                 - envVar
-                - host
                 - uses
             type: object
         SandboxCredentialRequestStatus:
@@ -4456,8 +4470,13 @@ components:
                     format: int64
                     type: integer
                 host:
-                    description: Host the minted grant is limited to. Defaults to the host the request named. Approving a protocol-originated request with no host at all is rejected; a wildcard grant stays an explicit administrative act.
+                    description: A host the minted grant is limited to, before any in hosts. Naming neither defaults to the hosts the request named, and an empty host alone names none. Approving a protocol-originated request with no host at all is rejected; a wildcard grant stays an explicit administrative act.
                     type: string
+                hosts:
+                    description: Hosts the minted grant is limited to, after host (ADR 26-10-02-393).
+                    items:
+                        type: string
+                    type: array
                 scope:
                     description: How widely the minted grant applies. Defaults to sandbox for sandbox-originated requests, otherwise project.
                     enum:
@@ -4549,8 +4568,13 @@ components:
                     format: int64
                     type: integer
                 host:
-                    description: Host the grant is limited to; empty matches any host and defaults to the secret's host
+                    description: A host the grant is limited to, before any in hosts. Naming neither defaults to the secret's host; an empty host alone matches any host
                     type: string
+                hosts:
+                    description: Hosts the grant is limited to, after host (ADR 26-10-02-393)
+                    items:
+                        type: string
+                    type: array
                 scope:
                     description: How widely the grant applies
                     enum:
@@ -4858,8 +4882,13 @@ components:
                     description: Principal ID that created the grant
                     type: string
                 host:
-                    description: Host the grant is limited to; empty matches any host
+                    description: The first of hosts, for a reader that reads one
                     type: string
+                hosts:
+                    description: Hosts the grant is limited to; a destination any of them covers. Empty matches any host (ADR 26-10-02-393)
+                    items:
+                        type: string
+                    type: array
                 id:
                     description: Stable grant ID
                     type: string
@@ -5079,8 +5108,13 @@ components:
                     format: int64
                     type: integer
                 host:
-                    description: Host hint provided at request time
+                    description: The first of hosts, for a reader that reads one
                     type: string
+                hosts:
+                    description: Hosts named at request time (ADR 26-10-02-393)
+                    items:
+                        type: string
+                    type: array
                 id:
                     description: Stable request ID
                     type: string

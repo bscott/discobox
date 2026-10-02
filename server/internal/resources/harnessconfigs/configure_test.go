@@ -533,7 +533,7 @@ func TestApplyConfigureOutputUpdatesBoundSecretInPlace(t *testing.T) {
 	}
 	if err := st.CreateSecretGrant(ctx, &model.SecretGrant{
 		ProjectID: "project-1", SecretID: previous.ID,
-		Scope: model.SecretGrantScopeHarnessConfig, ScopeKey: config.ID, Host: "old.example.com",
+		Scope: model.SecretGrantScopeHarnessConfig, ScopeKey: config.ID, Hosts: []string{"old.example.com"},
 	}); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
@@ -565,8 +565,8 @@ func TestApplyConfigureOutputUpdatesBoundSecretInPlace(t *testing.T) {
 	if err != nil || grant == nil {
 		t.Fatalf("grant = %v err = %v, want a live grant for the new host", grant, err)
 	}
-	if grant.Host != "new.example.com" {
-		t.Fatalf("grant host = %q, want new.example.com", grant.Host)
+	if len(grant.Hosts) != 1 || grant.Hosts[0] != "new.example.com" {
+		t.Fatalf("grant hosts = %q, want [new.example.com]", grant.Hosts)
 	}
 }
 

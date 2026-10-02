@@ -1,10 +1,10 @@
 package proxyagent
 
 import (
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/discobox-ai/discobox/hostscope"
 	"github.com/discobox-ai/discobox/secretformat"
 )
 
@@ -30,7 +30,9 @@ type activation struct {
 	Sentinel  string // the ephemeral sentinel handed to the sandbox
 	Stable    string // the sandbox's stable sentinel, which the control plane knows
 	UseID     string
-	Host      string
+	// Hosts are where the use was approved for. A request to any of them, or
+	// beneath one, may carry it; none at all is no host, not every host.
+	Hosts     []string
 	Command   []string
 	ExpiresAt time.Time
 }
@@ -90,7 +92,7 @@ func (a *activations) setChangeHandler(onChange func()) {
 // sentinel so it byte-mimics a real key of the same provider — the same rule
 // the stable sentinel was minted under, so nothing downstream can tell the two
 // apart by looking.
-func (a *activations) mint(sandboxID, stableSentinel, useID, host, format string, command []string) (activation, error) {
+func (a *activations) mint(sandboxID, stableSentinel, useID string, hosts []string, format string, command []string) (activation, error) {
 	sentinel, err := secretformat.MintSentinel(format)
 	if err != nil {
 		return activation{}, err
@@ -100,7 +102,7 @@ func (a *activations) mint(sandboxID, stableSentinel, useID, host, format string
 		Sentinel:  sentinel,
 		Stable:    stableSentinel,
 		UseID:     useID,
-		Host:      strings.TrimSpace(host),
+		Hosts:     hostscope.List(hosts...),
 		Command:   append([]string(nil), command...),
 	}
 

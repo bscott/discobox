@@ -15,6 +15,7 @@ package hostscope
 
 import (
 	"net"
+	"slices"
 	"strings"
 )
 
@@ -112,4 +113,73 @@ func CommonParent(a, b string) string {
 		return ""
 	}
 	return strings.Join(shared, ".")
+}
+
+// List is the one reading of a list of hosts a request or grant names (ADR
+// 26-10-02-393 §1): each normalized, empties and repeats dropped, in the order
+// given, so the first stays the first wherever one host has to stand for all.
+func List(hosts ...string) []string {
+	var out []string
+	for _, host := range hosts {
+		if host = Normalize(host); host != "" && !slices.Contains(out, host) {
+			out = append(out, host)
+		}
+	}
+	return out
+}
+
+// CoversAny reports whether any of scopes authorizes traffic to host. No
+// scopes at all is the wildcard, as an empty scope is for Covers.
+func CoversAny(scopes []string, host string) bool {
+	if len(scopes) == 0 {
+		return Covers("", host)
+	}
+	return slices.ContainsFunc(scopes, func(scope string) bool { return Covers(scope, host) })
+}
+
+// CoversEvery reports whether scopes authorize traffic to every one of hosts:
+// what one list of hosts must be of another to sit inside it, as a grant's
+// must be of the delegation it is handed on under. No hosts is the wildcard,
+// which only the wildcard covers.
+func CoversEvery(scopes, hosts []string) bool {
+	if len(hosts) == 0 {
+		return len(scopes) == 0
+	}
+	return !slices.ContainsFunc(hosts, func(host string) bool { return !CoversAny(scopes, host) })
+}
+
+// Covering returns the first of scopes that covers host, and whether one does.
+// It is what names where a request is approved for, when a grant names several
+// places: the one this destination falls under.
+func Covering(scopes []string, host string) (string, bool) {
+	for _, scope := range scopes {
+		if Covers(scope, host) {
+			return Normalize(scope), true
+		}
+	}
+	return "", len(scopes) == 0 && Covers("", host)
+}
+
+// SpecificityAny is Specificity for a list of scopes: that of the closest one.
+// No scopes ranks as the wildcard.
+func SpecificityAny(scopes []string, host string) int {
+	best := Specificity("", host)
+	for _, scope := range scopes {
+		best = min(best, Specificity(scope, host))
+	}
+	return best
+}
+
+// SameSet reports whether two lists name the same hosts, in any order.
+func SameSet(a, b []string) bool {
+	a, b = List(a...), List(b...)
+	if len(a) != len(b) {
+		return false
+	}
+	for _, host := range a {
+		if !slices.Contains(b, host) {
+			return false
+		}
+	}
+	return true
 }

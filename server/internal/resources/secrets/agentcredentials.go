@@ -58,12 +58,12 @@ func (s *Service) CreateSandboxCredentialRequest(ctx context.Context, poolID str
 	}
 	name := strings.TrimSpace(input.Name)
 	envName := strings.TrimSpace(input.EnvVar)
-	host := normalizeHost(input.Host)
-	// A well-known credential names its own name, variable, and host, which an
+	hosts, _ := askedHosts(input.Host, input.Hosts)
+	// A well-known credential names its own name, variable, and hosts, which an
 	// ask must agree with (see wellknown.go).
 	wellKnownID := strings.TrimSpace(input.ID.Or(""))
 	if wellKnownID != "" {
-		if name, envName, host, err = wellKnownAsk(wellKnownID, name, envName, host); err != nil {
+		if name, envName, hosts, err = wellKnownAsk(wellKnownID, name, envName, hosts); err != nil {
 			return nil, err
 		}
 	}
@@ -73,15 +73,17 @@ func (s *Service) CreateSandboxCredentialRequest(ctx context.Context, poolID str
 	if envName == "" || strings.ContainsAny(envName, "=\x00") {
 		return nil, apperrors.NewStatusError(http.StatusBadRequest, "credential request requires a valid environment variable name")
 	}
-	// The host is mandatory here and nowhere else: approving this request mints
+	// A host is mandatory here and nowhere else: approving this request mints
 	// a grant, and a grant minted by this flow may not be host-unscoped
 	// (ADR 0031 §5). Refusing at the ask is better than discovering it at the
 	// approval, where a human has already decided to say yes.
-	if host == "" {
+	if len(hosts) == 0 {
 		return nil, apperrors.NewStatusError(http.StatusBadRequest, "credential request requires a destination host")
 	}
-	if err := reservedHostAsk(wellKnownID, host); err != nil {
-		return nil, err
+	for _, host := range hosts {
+		if err := reservedHostAsk(wellKnownID, host); err != nil {
+			return nil, err
+		}
 	}
 	uses, err := requestedUses(input.Uses)
 	if err != nil {
@@ -111,7 +113,7 @@ func (s *Service) CreateSandboxCredentialRequest(ctx context.Context, poolID str
 	}
 
 	requestedBy := agentRequesterID(sandbox.ID)
-	pending, err := s.store.FindPendingAgentCredentialRequests(ctx, sandbox.ProjectID, sandbox.ID, envName, host, wellKnownID, purpose)
+	pending, err := s.store.FindPendingAgentCredentialRequests(ctx, sandbox.ProjectID, sandbox.ID, envName, hosts, wellKnownID, purpose)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +131,7 @@ func (s *Service) CreateSandboxCredentialRequest(ctx context.Context, poolID str
 		// ResolveSandboxSecret emits Value.Token, so nothing a request can name
 		// is a credential the proxy could not substitute.
 		Type:          model.SecretTypeToken,
-		Host:          host,
+		Hosts:         hosts,
 		Name:          name,
 		EnvName:       envName,
 		Justification: strings.TrimSpace(input.Justification.Or("")),
@@ -352,7 +354,8 @@ func AgentCredentialRequestStatus(req *model.SecretRequest, grant *model.SecretG
 
 // ApprovedUse names what a request carrying this use may be judged against:
 // the sentence a person approved, the credential in the words they read it as,
-// and the host the grant is limited to.
+// and the one of the grant's hosts this request falls under (ADR 26-10-02-393
+// §2) — where it is approved for, not a list the judge must match itself.
 //
 // It is the control plane's to answer and not the pool's to assert (ADR 26-09-22-838
 // §4). It refuses unless the use, the credential, the discobox and the
@@ -383,14 +386,15 @@ func (s *Service) ApprovedUse(ctx context.Context, poolID, sandboxID, useID, hos
 		// The use is live. Whether it covers where this request is going is a
 		// separate question, and the answer is no rather than a different use:
 		// an approved use is approved for somewhere.
-		if !hostscope.Covers(credential.Grant.Host, host) {
+		approvedFor, covered := hostscope.Covering(credential.Grant.Hosts, host)
+		if !covered {
 			return services.ApprovedUse{}, apperrors.NewStatusError(http.StatusForbidden,
 				fmt.Sprintf("that use is not approved for %s", host))
 		}
 		return services.ApprovedUse{
 			Purpose:    use.Description,
 			Credential: credential.Name,
-			Host:       credential.Grant.Host,
+			Host:       approvedFor,
 			GrantID:    credential.Grant.ID,
 		}, nil
 	}

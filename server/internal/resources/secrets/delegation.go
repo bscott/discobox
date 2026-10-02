@@ -24,7 +24,7 @@ func grantPurpose(purpose string) (string, error) {
 
 // guardPurpose refuses a delegation grant that does not hold together. It runs
 // in mintGrantAs, the one place every grant passes through, beside
-// guardGrantHost and guardGrantTTL, for their reason: the checks have to bind
+// guardGrantHosts and guardGrantTTL, for their reason: the checks have to bind
 // every path that mints, not the one that happened to remember them.
 //
 // A delegation grant lets one discobox delegate the credential and lets it do

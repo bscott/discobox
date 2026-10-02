@@ -71,7 +71,7 @@ func pushRequest(body []byte) proxy.SecretAuthorizeRequest {
 // onGitHub moves the test pool's use to github.com, where a push goes.
 func onGitHub(resolver *secretResolver) {
 	live := resolver.activations.byEphemeral[testEphemeral]
-	live.Host = "github.com"
+	live.Hosts = []string{"github.com"}
 	resolver.activations.byEphemeral[testEphemeral] = live
 }
 

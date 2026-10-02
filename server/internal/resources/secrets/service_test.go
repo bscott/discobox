@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -238,8 +239,8 @@ func TestGrantMayNarrowASecretToASubdomain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a grant narrower than the binding was refused: %v", err)
 	}
-	if grant.Host != "api.github.com" {
-		t.Fatalf("grant host = %q", grant.Host)
+	if !slices.Equal(grant.Hosts, []string{"api.github.com"}) {
+		t.Fatalf("grant host = %q", grant.Hosts)
 	}
 
 	// And the other way is still refused: the parent is a different host.
