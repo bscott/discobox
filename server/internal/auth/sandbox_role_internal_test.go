@@ -147,6 +147,53 @@ func TestSandboxRoleDrivesOnlyItsOwnDiscoboxesTerminals(t *testing.T) {
 	}
 }
 
+// A discobox starts, stops, and restarts only discoboxes it created — not a
+// person's, and not itself; archiving, purging, repairing, and upgrading stay
+// out (ADR 26-10-02-478).
+func TestSandboxRolePowersOnlyWhatItCreated(t *testing.T) {
+	authorizer := SandboxRoleAuthorizer{Store: roleStore(t)}
+	lead := Principal{Type: PrincipalTypeSandbox, SandboxID: "sbx-lead", ProjectID: "proj-1", UserID: "user-1"}
+	worker := Principal{Type: PrincipalTypeSandbox, SandboxID: "sbx-worker", ProjectID: "proj-1", UserID: "user-1"}
+	for _, tc := range []struct {
+		name         string
+		caller       Principal
+		method, path string
+		want         int
+	}{
+		{"start its worker", lead, http.MethodPost, "/projects/default/sandboxes/sbx-worker/start", http.StatusOK},
+		{"stop its worker", lead, http.MethodPost, "/api/projects/default/sandboxes/sbx-worker/stop", http.StatusOK},
+		{"restart its worker", lead, http.MethodPost, "/projects/proj-1/sandboxes/sbx-worker/restart", http.StatusOK},
+		{"start a person's discobox", lead, http.MethodPost, "/projects/default/sandboxes/sbx-persons/start", http.StatusForbidden},
+		{"stop a person's discobox", lead, http.MethodPost, "/projects/default/sandboxes/sbx-persons/stop", http.StatusForbidden},
+		{"restart a person's discobox", lead, http.MethodPost, "/projects/default/sandboxes/sbx-persons/restart", http.StatusForbidden},
+		{"stop itself", worker, http.MethodPost, "/projects/default/sandboxes/sbx-worker/stop", http.StatusForbidden},
+		{"start nothing", lead, http.MethodPost, "/projects/default/sandboxes/sbx-none/start", http.StatusNotFound},
+		{"start its worker in another project", lead, http.MethodPost, "/projects/proj-2/sandboxes/sbx-worker/start", http.StatusForbidden},
+		{"archive its worker", lead, http.MethodDelete, "/projects/default/sandboxes/sbx-worker", http.StatusForbidden},
+		{"purge its worker", lead, http.MethodPost, "/projects/default/sandboxes/sbx-worker/purge", http.StatusForbidden},
+		{"repair its worker", lead, http.MethodPost, "/projects/default/sandboxes/sbx-worker/repair", http.StatusForbidden},
+		{"upgrade its worker", lead, http.MethodPost, "/projects/default/sandboxes/sbx-worker/upgrade", http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequestWithContext(WithPrincipal(context.Background(), tc.caller), tc.method, tc.path, nil)
+			ok, err := authorizer.Authorize(r)
+			got := http.StatusOK
+			if err != nil {
+				var status interface{ StatusCode() int }
+				if !errors.As(err, &status) {
+					t.Fatalf("error %v carries no status", err)
+				}
+				got = status.StatusCode()
+			} else if !ok {
+				t.Fatal("the role stepped aside for a sandbox's call; it must answer every one")
+			}
+			if got != tc.want {
+				t.Fatalf("status = %d (%v), want %d", got, err, tc.want)
+			}
+		})
+	}
+}
+
 // A discobox reads and answers only the requests of discoboxes it created
 // (ADR 26-09-30-782 §2). A request from a discobox a person made, from one that
 // is gone, or from no discobox at all is a person's to answer.

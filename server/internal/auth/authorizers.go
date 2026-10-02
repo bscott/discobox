@@ -60,7 +60,8 @@ func (a ProjectAuthorizer) Authorize(r *http.Request) (bool, error) {
 // nothing else. It is decided by the route, and for some routes by what the
 // route names: source delivery only into a discobox the sandbox created (ADR
 // 26-09-24-630 §2), its terminals read and typed into only for a discobox it
-// created (ADR 26-10-01-397 §1), and a secret request only when a discobox it
+// created (ADR 26-10-01-397 §1), its power instructed only for a discobox it
+// created (ADR 26-10-02-478 §1), and a secret request only when a discobox it
 // created filed it (ADR 26-09-30-782 §2). No use's text is read here: what a
 // call is for is the judge's question, asked in the pool.
 //
@@ -92,7 +93,7 @@ const (
 	// The zero value asks nothing of what a route names.
 	_ ownership = iota
 	// createdSandbox: the path names a discobox the caller created (ADR
-	// 26-09-24-630 §2, 26-10-01-397 §1).
+	// 26-09-24-630 §2, 26-10-01-397 §1, 26-10-02-478 §1).
 	createdSandbox
 	// ownedRequest: the path names a secret request filed by a discobox the
 	// caller created — the request's owner (ADR 26-09-30-782 §2).
@@ -119,6 +120,12 @@ var sandboxRole = []sandboxRoleRoute{
 	{method: http.MethodGet, path: "sandboxes/*/execs/*/screen", owner: createdSandbox},
 	{method: http.MethodPost, path: "sandboxes/*/execs/*/wait", owner: createdSandbox},
 	{method: http.MethodPost, path: "sandboxes/*/execs/*/input", owner: createdSandbox},
+	// Starting, stopping, and restarting a discobox the sandbox created (ADR
+	// 26-10-02-478 §1). Archive, purge, repair, and upgrade change what exists,
+	// not whether it runs, and are not here (§2).
+	{method: http.MethodPost, path: "sandboxes/*/start", owner: createdSandbox},
+	{method: http.MethodPost, path: "sandboxes/*/stop", owner: createdSandbox},
+	{method: http.MethodPost, path: "sandboxes/*/restart", owner: createdSandbox},
 	// The secrets it was delegated, and no others (ADR 26-09-30-782 §3): the
 	// listing is filtered to them where it is served, so a discobox can name
 	// what it may hand on and see nothing else of the project's credentials.

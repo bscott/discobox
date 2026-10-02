@@ -108,7 +108,7 @@ getting them wrong is then impossible:
 | ID | What it is for | Delivered in | Sent to |
 | --- | --- | --- | --- |
 | `com.github.api` | GitHub: repositories over HTTPS, and the REST and GraphQL API as `gh` uses it | `GH_TOKEN` | `github.com`, and the hosts beneath it such as `api.github.com` |
-| `ai.discobox.sandbox` | The discobox API: create, list, and get discoboxes, read and type into the terminals of the ones you created, and answer credential requests | `DISCOBOX_TOKEN` | `api.discobox.internal`, through this discobox's pool |
+| `ai.discobox.sandbox` | The discobox API: create, list, and get discoboxes, read and type into the terminals of the ones you created and start and stop them, and answer credential requests | `DISCOBOX_TOKEN` | `api.discobox.internal`, through this discobox's pool |
 
 ```bash
 discobox-access request com.github.api --use "Open a pull request against the current repo" --why "the task asks for a PR" --wait
@@ -244,7 +244,8 @@ discobox-access request --json <<'EOF'
     {"description": "discobox secret request approve <request-id> [--secret-id <secret-id>] [--use <use>]: approve a pending credential request (the server lets me answer only my own discoboxes' requests, within the delegation grants I hold)"},
     {"description": "discobox secret request deny <request-id>: deny a pending credential request"},
     {"description": "discobox admin terminal ls --discobox-id <discobox-id>, discobox admin terminal screen <terminal-id> --discobox-id <discobox-id> [--scrollback N], and discobox admin terminal wait <terminal-id> --discobox-id <discobox-id> [flags]: read what a discobox I created shows in its terminals"},
-    {"description": "discobox admin terminal input <terminal-id> --discobox-id <discobox-id> [--literal] <keys or text>: type keys and messages into the terminal of a discobox I created, to answer its questions or tell it to continue"}
+    {"description": "discobox admin terminal input <terminal-id> --discobox-id <discobox-id> [--literal] <keys or text>: type keys and messages into the terminal of a discobox I created, to answer its questions or tell it to continue"},
+    {"description": "discobox admin box start <discobox-id>, discobox admin box stop <discobox-id>, and discobox admin box restart <discobox-id>: start, stop, or restart a discobox I created"}
   ],
   "grantTTLSeconds": 28800,
   "wait": true
@@ -333,8 +334,22 @@ discobox-access run --use <id> -- discobox admin terminal wait primary --discobo
 request above, as their own uses — reading (`ls`, `screen`, `wait`) and typing
 (`input`) — worded as the commands. Only the discoboxes you created answer.
 
+A worker that has stopped — `discobox admin box ls` shows it, and `screen`
+answers that it is stopped rather than starting it — is started again with
+`discobox admin box start`, and a wedged one with `restart`. Stop a worker
+only when you are done with it: stopping ends whatever it is doing. Its
+workspace and uncommitted work survive either way.
+
+```bash
+discobox-access run --use <id> -- discobox admin box start <discobox-id>
+discobox-access run --use <id> -- discobox admin box stop <discobox-id>
+```
+
+If a start fails, the error says why; a worker it cannot bring back is a
+person's to repair.
+
 Anything outside these commands is refused: you cannot attach to, start a
-command in, stop, or delete a discobox you made.
+command in, archive, or delete a discobox you made.
 
 ## Never do this with the value
 

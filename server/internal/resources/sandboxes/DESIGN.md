@@ -387,11 +387,16 @@ inline secrets, which put a value inside the new discobox where anything in it
 could read it.
 
 The new discobox records its creator (`CreatedBySandboxID`, immutable after
-create), and the creator is authorized by it for two things and no others:
+create), and the creator is authorized by it for these things and no others:
 delivering the new discobox's source
-([ADR 26-09-24-630](../../../../docs/adr/26-09-24-630-a-discobox-delivers-the-source-of-the-discoboxes-it-creates.md) §2),
-and reading and answering the secret requests it files, within what the
-creator was delegated
+([ADR 26-09-24-630](../../../../docs/adr/26-09-24-630-a-discobox-delivers-the-source-of-the-discoboxes-it-creates.md) §2);
+reading and typing into its terminals
+([ADR 26-10-01-397](../../../../docs/adr/26-10-01-397-a-discobox-reads-and-types-into-the-terminals-of-the-discoboxes-it-creates.md));
+starting, stopping, and restarting it
+([ADR 26-10-02-478](../../../../docs/adr/26-10-02-478-a-discobox-starts-and-stops-the-discoboxes-it-creates.md)),
+which are the same power instructions a person sends and need nothing of the
+service beyond the role's ownership check; and reading and answering the
+secret requests it files, within what the creator was delegated
 ([ADR 26-09-30-782](../../../../docs/adr/26-09-30-782-a-discobox-answers-its-own-discoboxes-requests-within-what-it-may-delegate.md)
 §§2–3). Nothing cascades by it: no archive, no purge, no inherited grant.
 
