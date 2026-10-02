@@ -4486,6 +4486,12 @@ func (s *CredentialVerdict) encodeFields(e *jx.Encoder) {
 		}
 	}
 	{
+		if s.Model.Set {
+			e.FieldStart("model")
+			s.Model.Encode(e)
+		}
+	}
+	{
 		if s.Need.Set {
 			e.FieldStart("need")
 			s.Need.Encode(e)
@@ -4495,6 +4501,12 @@ func (s *CredentialVerdict) encodeFields(e *jx.Encoder) {
 		if s.Origin.Set {
 			e.FieldStart("origin")
 			s.Origin.Encode(e)
+		}
+	}
+	{
+		if s.Probabilities.Set {
+			e.FieldStart("probabilities")
+			s.Probabilities.Encode(e)
 		}
 	}
 	{
@@ -4575,7 +4587,7 @@ func (s *CredentialVerdict) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfCredentialVerdict = [29]string{
+var jsonFieldsNameOfCredentialVerdict = [31]string{
 	0:  "$schema",
 	1:  "allow",
 	2:  "command",
@@ -4589,22 +4601,24 @@ var jsonFieldsNameOfCredentialVerdict = [29]string{
 	10: "judgeSandboxId",
 	11: "kind",
 	12: "latencyMs",
-	13: "need",
-	14: "origin",
-	15: "projectId",
-	16: "prompt",
-	17: "promptVersion",
-	18: "reason",
-	19: "request",
-	20: "role",
-	21: "round",
-	22: "sandboxId",
-	23: "secretRequestId",
-	24: "standingRoute",
-	25: "standingUntil",
-	26: "standingVerdictId",
-	27: "useId",
-	28: "volunteered",
+	13: "model",
+	14: "need",
+	15: "origin",
+	16: "probabilities",
+	17: "projectId",
+	18: "prompt",
+	19: "promptVersion",
+	20: "reason",
+	21: "request",
+	22: "role",
+	23: "round",
+	24: "sandboxId",
+	25: "secretRequestId",
+	26: "standingRoute",
+	27: "standingUntil",
+	28: "standingVerdictId",
+	29: "useId",
+	30: "volunteered",
 }
 
 // Decode decodes CredentialVerdict from json.
@@ -4761,6 +4775,16 @@ func (s *CredentialVerdict) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"latencyMs\"")
 			}
+		case "model":
+			if err := func() error {
+				s.Model.Reset()
+				if err := s.Model.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"model\"")
+			}
 		case "need":
 			if err := func() error {
 				s.Need.Reset()
@@ -4781,8 +4805,18 @@ func (s *CredentialVerdict) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"origin\"")
 			}
+		case "probabilities":
+			if err := func() error {
+				s.Probabilities.Reset()
+				if err := s.Probabilities.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"probabilities\"")
+			}
 		case "projectId":
-			requiredBitSet[1] |= 1 << 7
+			requiredBitSet[2] |= 1 << 1
 			if err := func() error {
 				v, err := d.Str()
 				s.ProjectId = string(v)
@@ -4854,7 +4888,7 @@ func (s *CredentialVerdict) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"round\"")
 			}
 		case "sandboxId":
-			requiredBitSet[2] |= 1 << 6
+			requiredBitSet[3] |= 1 << 0
 			if err := func() error {
 				v, err := d.Str()
 				s.SandboxId = string(v)
@@ -4906,7 +4940,7 @@ func (s *CredentialVerdict) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"standingVerdictId\"")
 			}
 		case "useId":
-			requiredBitSet[3] |= 1 << 3
+			requiredBitSet[3] |= 1 << 5
 			if err := func() error {
 				v, err := d.Str()
 				s.UseId = string(v)
@@ -4918,7 +4952,7 @@ func (s *CredentialVerdict) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"useId\"")
 			}
 		case "volunteered":
-			requiredBitSet[3] |= 1 << 4
+			requiredBitSet[3] |= 1 << 6
 			if err := func() error {
 				v, err := d.Bool()
 				s.Volunteered = bool(v)
@@ -4940,9 +4974,9 @@ func (s *CredentialVerdict) Decode(d *jx.Decoder) error {
 	var failures []validate.FieldError
 	for i, mask := range [4]uint8{
 		0b10001010,
-		0b10000000,
-		0b01000000,
-		0b00011000,
+		0b00000000,
+		0b00000010,
+		0b01100001,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -5066,6 +5100,62 @@ func (s CredentialVerdictOrigin) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *CredentialVerdictOrigin) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s CredentialVerdictProbabilities) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields implements json.Marshaler.
+func (s CredentialVerdictProbabilities) encodeFields(e *jx.Encoder) {
+	for k, elem := range s {
+		e.FieldStart(k)
+
+		e.Float64(elem)
+	}
+}
+
+// Decode decodes CredentialVerdictProbabilities from json.
+func (s *CredentialVerdictProbabilities) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CredentialVerdictProbabilities to nil")
+	}
+	m := s.init()
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		var elem float64
+		if err := func() error {
+			v, err := d.Float64()
+			elem = float64(v)
+			if err != nil {
+				return err
+			}
+			return nil
+		}(); err != nil {
+			return errors.Wrapf(err, "decode field %q", k)
+		}
+		m[string(k)] = elem
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode CredentialVerdictProbabilities")
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s CredentialVerdictProbabilities) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CredentialVerdictProbabilities) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -15672,6 +15762,40 @@ func (s OptCredentialVerdictOrigin) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptCredentialVerdictOrigin) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes CredentialVerdictProbabilities as json.
+func (o OptCredentialVerdictProbabilities) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes CredentialVerdictProbabilities from json.
+func (o *OptCredentialVerdictProbabilities) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptCredentialVerdictProbabilities to nil")
+	}
+	o.Set = true
+	o.Value = make(CredentialVerdictProbabilities)
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptCredentialVerdictProbabilities) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptCredentialVerdictProbabilities) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

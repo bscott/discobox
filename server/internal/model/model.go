@@ -1502,7 +1502,14 @@ type CredentialVerdict struct {
 	HarnessConfigID string `gorm:"column:harness_config_id;not null;type:text;default:''" json:"harnessConfigId,omitempty" doc:"Harness config the judge ran"`
 	Image           string `gorm:"column:image;not null;type:text;default:''" json:"image,omitempty" doc:"Image the judge ran"`
 	ImageDigest     string `gorm:"column:image_digest;not null;type:text;default:''" json:"imageDigest,omitempty" doc:"Digest of the image the judge ran"`
-	Volunteered     bool   `gorm:"column:volunteered;not null;default:false" json:"volunteered" doc:"True when the sandbox reported this after a denial the issuing call never saw"`
+	// Model and Probabilities are the judge that answered when it was Jev
+	// rather than a judge discobox (ADR 26-10-01-324 §6): the versioned
+	// model it reported, and the probability of yes it gave each question,
+	// which is what the verdict was decided from. Empty on every other
+	// verdict, which is what every row written before Jev already is.
+	Model         string             `gorm:"column:model;not null;type:text;default:''" json:"model,omitempty" doc:"The Jev model that answered, when the server judges with Jev rather than a judge discobox"`
+	Probabilities map[string]float64 `gorm:"column:probabilities;type:text;serializer:json" json:"probabilities,omitempty" doc:"The probability of yes Jev gave each question the verdict was decided from, by question ID"`
+	Volunteered   bool               `gorm:"column:volunteered;not null;default:false" json:"volunteered" doc:"True when the sandbox reported this after a denial the issuing call never saw"`
 	// StandingRoute and StandingUntil are an allow the judge let stand, as
 	// the control plane admitted it (ADR 26-09-25-428): until then, a request
 	// from the same discobox, under the same use, to the same host, whose

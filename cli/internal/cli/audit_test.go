@@ -252,6 +252,33 @@ func TestAuditCredsPromptShowsWhichJudgeAnswered(t *testing.T) {
 	}
 }
 
+// A verdict from a server that judges with Jev names the model and what it
+// said, rather than a judge discobox (ADR 26-10-01-324 §6).
+func TestAuditCredsPromptShowsJevsVerdict(t *testing.T) {
+	const jevVerdicts = `{"credentialVerdicts":[{
+	"id":"cvd_1","projectId":"project-1","kind":"request","origin":"judge","sandboxId":"sbx_a","useId":"use_1",
+	"allow":false,"volunteered":false,"createdAt":"2026-10-01T10:00:00Z",
+	"request":{"method":"DELETE","url":"https://api.github.com/repos/org/repo"},
+	"round":1,"reason":"Refused: Jev did not judge this request part of the approved purpose (0.04).","prompt":"{}",
+	"promptVersion":"jev-2","latencyMs":120,"model":"jev-1.13.0",
+	"probabilities":{"within":0.04,"claims_approval":0.1}
+}]}`
+	_, out, err := runAuditCreds(t, jevVerdicts, "--prompt")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	for _, want := range []string{
+		"judge:    jev-1.13.0",
+		"said:     claims_approval 0.10, within 0.04",
+		"version:  jev-2",
+		"rtt:      120ms",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
 // An allow the judge let stand says what it stands for and until when, and a
 // request it covered says so rather than reading as the judge's own answer.
 func TestAuditCredsShowsStandingAllows(t *testing.T) {

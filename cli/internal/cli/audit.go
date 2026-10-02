@@ -639,7 +639,16 @@ func requestVerdictLines(v apimodel.CredentialVerdict) []string {
 		}
 		lines = append(lines, "asked:    "+asked)
 	}
-	lines = append(lines, "judge:    "+terminalSafe(v.JudgeSandboxId.Or("")))
+	// A server that judges with Jev names the model that answered and what it
+	// said, where one with a judge discobox names the discobox.
+	if model := v.Model.Or(""); model != "" {
+		lines = append(lines, "judge:    "+terminalSafe(model))
+		if said := describeProbabilities(v.Probabilities.Or(nil)); said != "" {
+			lines = append(lines, "said:     "+said)
+		}
+	} else {
+		lines = append(lines, "judge:    "+terminalSafe(v.JudgeSandboxId.Or("")))
+	}
 	if harness := v.HarnessConfigId.Or(""); harness != "" {
 		lines = append(lines, "harness:  "+terminalSafe(harness))
 	}
@@ -653,6 +662,21 @@ func requestVerdictLines(v apimodel.CredentialVerdict) []string {
 		lines = append(lines, "version:  "+terminalSafe(version))
 	}
 	return lines
+}
+
+// describeProbabilities is what Jev said about each question, in question
+// order, as the probability of yes.
+func describeProbabilities(said map[string]float64) string {
+	ids := make([]string, 0, len(said))
+	for id := range said {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, fmt.Sprintf("%s %.2f", terminalSafe(id), said[id]))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // describeJudgedBody says what the judge was told of a request's body: what it

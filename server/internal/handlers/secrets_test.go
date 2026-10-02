@@ -336,6 +336,30 @@ func TestListCredentialVerdictsReturnsEveryField(t *testing.T) {
 	}
 }
 
+// A Jev verdict's model and probabilities reach the response, since the
+// verdict was decided from them (ADR 26-10-01-324 §6).
+func TestListCredentialVerdictsReturnsAJevVerdictsFields(t *testing.T) {
+	var got store.CredentialVerdictFilter
+	h := New(svcapi.Services{Secrets: capturingVerdictService{filter: &got, rows: []model.CredentialVerdict{{
+		ID: "cv_3", ProjectID: "project-1", Kind: model.CredentialVerdictKindRequest, Origin: model.CredentialVerdictOriginJudge,
+		SandboxID: "sbx_a", UseID: "use_1", Round: 1, Allow: true, Reason: "Allowed", PromptVersion: "jev-1",
+		Model: "jev-1.13.0", Probabilities: map[string]float64{"within": 0.93, "claims_approval": 0.01},
+	}}}})
+	res, err := h.ListCredentialVerdicts(context.Background(), serverapi.ListCredentialVerdictsParams{ProjectId: "project-1"})
+	if err != nil {
+		t.Fatalf("ListCredentialVerdicts() error = %v", err)
+	}
+	body, ok := res.(*serverapi.ListCredentialVerdictsBody)
+	if !ok || len(body.CredentialVerdicts) != 1 {
+		t.Fatalf("response = %#v, want the one verdict", res)
+	}
+	v := body.CredentialVerdicts[0]
+	said := v.Probabilities.Or(nil)
+	if v.Model.Or("") != "jev-1.13.0" || said["within"] != 0.93 || said["claims_approval"] != 0.01 {
+		t.Fatalf("verdict lost Jev's model or what it said: %+v", v)
+	}
+}
+
 // A request verdict's own fields reach the response too: the evidence, the
 // answer that asked rather than decided, and the judge that gave it.
 func TestListCredentialVerdictsReturnsARequestVerdictsFields(t *testing.T) {

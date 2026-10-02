@@ -16,6 +16,7 @@ import (
 
 	"github.com/discobox-ai/discobox/endpoint"
 	"github.com/discobox-ai/discobox/imagecache"
+	"github.com/discobox-ai/discobox/judge/jev"
 	"github.com/discobox-ai/discobox/server/internal/config"
 	"github.com/discobox-ai/discobox/server/internal/database"
 	"github.com/discobox-ai/discobox/server/internal/secrets"
@@ -162,6 +163,16 @@ func Run(ctx context.Context) error {
 		}
 	}
 
+	// Jev is asked by this server itself, so its client is built here, from
+	// the key the configuration already insisted on (ADR 26-10-01-324 §1).
+	var judgeJev *jev.Client
+	if cfg.JudgeBackend == config.JudgeBackendJev {
+		judgeJev, err = jev.New(jev.Config{APIKey: cfg.JevAPIKey, Model: cfg.JevModel})
+		if err != nil {
+			return fmt.Errorf("initialize the Jev judge: %w", err)
+		}
+	}
+
 	// Resolved before the app is built: GET /ssh is an ordinary generated
 	// handler reading services.Services, so the discovery document has to
 	// exist by the time the router does.
@@ -193,6 +204,8 @@ func Run(ctx context.Context) error {
 		ListenEndpoints:                cfg.Listen,
 		ArchiveRetention:               cfg.ArchiveRetention,
 		JudgeCredentials:               cfg.JudgeCredentials,
+		JudgeJev:                       judgeJev,
+		JudgeJevFallback:               cfg.JevUnsure == config.JevUnsureHarness,
 		ServerDefaults: dockerworker.ServerDefaults{
 			PoolImage:      cfg.DockerPoolImage,
 			Release:        cfg.Release,

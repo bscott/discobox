@@ -111,7 +111,7 @@ func newJudgeTest(t *testing.T) (*Service, *store.Store, *fakeSandboxes) {
 	sandboxes := &fakeSandboxes{store: appStore}
 	// Enabled: every test below is about what a server that judges does. The
 	// server that has not opted in is its own test.
-	return New(appStore, sandboxes, nil, true), appStore, sandboxes
+	return New(appStore, sandboxes, nil, true, nil, false), appStore, sandboxes
 }
 
 // harness records a configured harness and makes it the project's default.

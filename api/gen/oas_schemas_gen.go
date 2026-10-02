@@ -2205,12 +2205,19 @@ type CredentialVerdict struct {
 	// Round trip from asking the judge to its answer, in milliseconds, timed by whoever asked:
 	// discobox-access around its wrapper for a command verdict, the control plane around the call to the
 	// judge for a request verdict.
-	LatencyMs OptInt64     `json:"latencyMs"`
-	Need      OptJudgeNeed `json:"need"`
+	LatencyMs OptInt64 `json:"latencyMs"`
+	// The Jev model that answered, as Jev reported it, on a verdict from a server that judges with Jev
+	// rather than a judge discobox. judgeSandboxId, harnessConfigId and image are empty then.
+	Model OptString    `json:"model"`
+	Need  OptJudgeNeed `json:"need"`
 	// Who judged: sandbox, a discobox's own judge, whose verdict is that discobox's word; or judge, the
 	// project's judge, which no sandbox can claim. A server that predates request verdicts leaves it out,
 	//  and every verdict it has is the sandbox's.
 	Origin OptCredentialVerdictOrigin `json:"origin"`
+	// On a Jev verdict, the probability of yes Jev gave each question, by question ID. The verdict was
+	// decided from these against thresholds the server holds; promptVersion names the questions and
+	// thresholds.
+	Probabilities OptCredentialVerdictProbabilities `json:"probabilities"`
 	// Project ID.
 	ProjectId string `json:"projectId"`
 	// The exact prompt the judge was given. On a command verdict it includes the facts block; on a
@@ -2310,6 +2317,11 @@ func (s *CredentialVerdict) GetLatencyMs() OptInt64 {
 	return s.LatencyMs
 }
 
+// GetModel returns the value of Model.
+func (s *CredentialVerdict) GetModel() OptString {
+	return s.Model
+}
+
 // GetNeed returns the value of Need.
 func (s *CredentialVerdict) GetNeed() OptJudgeNeed {
 	return s.Need
@@ -2318,6 +2330,11 @@ func (s *CredentialVerdict) GetNeed() OptJudgeNeed {
 // GetOrigin returns the value of Origin.
 func (s *CredentialVerdict) GetOrigin() OptCredentialVerdictOrigin {
 	return s.Origin
+}
+
+// GetProbabilities returns the value of Probabilities.
+func (s *CredentialVerdict) GetProbabilities() OptCredentialVerdictProbabilities {
+	return s.Probabilities
 }
 
 // GetProjectId returns the value of ProjectId.
@@ -2455,6 +2472,11 @@ func (s *CredentialVerdict) SetLatencyMs(val OptInt64) {
 	s.LatencyMs = val
 }
 
+// SetModel sets the value of Model.
+func (s *CredentialVerdict) SetModel(val OptString) {
+	s.Model = val
+}
+
 // SetNeed sets the value of Need.
 func (s *CredentialVerdict) SetNeed(val OptJudgeNeed) {
 	s.Need = val
@@ -2463,6 +2485,11 @@ func (s *CredentialVerdict) SetNeed(val OptJudgeNeed) {
 // SetOrigin sets the value of Origin.
 func (s *CredentialVerdict) SetOrigin(val OptCredentialVerdictOrigin) {
 	s.Origin = val
+}
+
+// SetProbabilities sets the value of Probabilities.
+func (s *CredentialVerdict) SetProbabilities(val OptCredentialVerdictProbabilities) {
+	s.Probabilities = val
 }
 
 // SetProjectId sets the value of ProjectId.
@@ -2629,6 +2656,20 @@ func (s *CredentialVerdictOrigin) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// On a Jev verdict, the probability of yes Jev gave each question, by question ID. The verdict was
+// decided from these against thresholds the server holds; promptVersion names the questions and
+// thresholds.
+type CredentialVerdictProbabilities map[string]float64
+
+func (s *CredentialVerdictProbabilities) init() CredentialVerdictProbabilities {
+	m := *s
+	if m == nil {
+		m = map[string]float64{}
+		*s = m
+	}
+	return m
 }
 
 // One DNS query a sandbox asked of its pool, which answered it over the sandbox's mTLS channel and
@@ -8174,6 +8215,52 @@ func (o OptCredentialVerdictOrigin) Get() (v CredentialVerdictOrigin, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptCredentialVerdictOrigin) Or(d CredentialVerdictOrigin) CredentialVerdictOrigin {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptCredentialVerdictProbabilities returns new OptCredentialVerdictProbabilities with value set to v.
+func NewOptCredentialVerdictProbabilities(v CredentialVerdictProbabilities) OptCredentialVerdictProbabilities {
+	return OptCredentialVerdictProbabilities{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptCredentialVerdictProbabilities is optional CredentialVerdictProbabilities.
+type OptCredentialVerdictProbabilities struct {
+	Value CredentialVerdictProbabilities
+	Set   bool
+}
+
+// IsSet returns true if OptCredentialVerdictProbabilities was set.
+func (o OptCredentialVerdictProbabilities) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptCredentialVerdictProbabilities) Reset() {
+	var v CredentialVerdictProbabilities
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptCredentialVerdictProbabilities) SetTo(v CredentialVerdictProbabilities) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptCredentialVerdictProbabilities) Get() (v CredentialVerdictProbabilities, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptCredentialVerdictProbabilities) Or(d CredentialVerdictProbabilities) CredentialVerdictProbabilities {
 	if v, ok := o.Get(); ok {
 		return v
 	}

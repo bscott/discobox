@@ -128,6 +128,30 @@
 # Environment: DISCOBOX_JUDGE_CREDENTIALS
 #judgeCredentials: false
 
+# What judges credential use when judgeCredentials is on: auto, jev when
+# jevApiKey is set and harness otherwise; harness, a judge discobox per
+# project running the project's default harness; or jev, TypeSafe's Jev,
+# asked by this server directly, which requires jevApiKey.
+# Environment: DISCOBOX_JUDGE_BACKEND
+#judgeBackend: "auto"
+
+# TypeSafe API key the server asks Jev with. Setting it makes
+# judgeBackend auto choose jev; judgeBackend jev requires it.
+# Environment: DISCOBOX_JEV_API_KEY
+#jevApiKey:
+
+# The Jev model asked when judgeBackend is jev. A version rather than the
+# jev-latest alias, which moves when TypeSafe ships a new one.
+# Environment: DISCOBOX_JEV_MODEL
+#jevModel: "jev-1.13.0"
+
+# What a jev judge does with a request it is unsure about: harness, ask
+# the project's judge discobox (as judgeBackend harness runs one), which
+# then decides, so every project keeps a judge discobox for those
+# requests; or refuse it, and run no judge discobox.
+# Environment: DISCOBOX_JEV_UNSURE
+#jevUnsure: "harness"
+
 # How long an archived sandbox is kept before purging, for projects with
 # no retention of their own, as a Go duration. Defaults to 24h.
 # Example: archiveRetention: 168h

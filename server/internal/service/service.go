@@ -9,6 +9,7 @@ import (
 
 	"github.com/discobox-ai/discobox/devimage"
 	"github.com/discobox-ai/discobox/endpoint"
+	"github.com/discobox-ai/discobox/judge/jev"
 	poolagentauth "github.com/discobox-ai/discobox/server/internal/auth/poolagent"
 	sandboxauth "github.com/discobox-ai/discobox/server/internal/auth/sandbox"
 	"github.com/discobox-ai/discobox/server/internal/reconcile"
@@ -91,6 +92,12 @@ type Options struct {
 	// JudgeCredentials turns the judge on. It is off unless a server opted in,
 	// and while it is off no project has a judge and nothing is asked one.
 	JudgeCredentials bool
+	// JudgeJev, when set, is what judges instead of a judge discobox per
+	// project (ADR 26-10-01-324).
+	JudgeJev *jev.Client
+	// JudgeJevFallback puts what Jev is unsure of to the project's judge
+	// discobox, which every project then keeps, rather than refusing it.
+	JudgeJevFallback bool
 }
 
 func New(store *store.Store, engine *reconcile.Engine, options Options) *Service {
@@ -127,8 +134,9 @@ func New(store *store.Store, engine *reconcile.Engine, options Options) *Service
 	sandboxService.SetSecrets(secretService)
 	// The project's judge is converged like any other resource (ADR 26-09-22-838 §1):
 	// it exists when the project has a pool for it and a configured default
-	// harness, and is replaced when that harness is.
-	judgeService := judges.New(store, sandboxService, nil, options.JudgeCredentials)
+	// harness, and is replaced when that harness is — unless the server judges
+	// with Jev, when no project has a judge discobox (ADR 26-10-01-324 §2).
+	judgeService := judges.New(store, sandboxService, nil, options.JudgeCredentials, options.JudgeJev, options.JudgeJevFallback)
 	// Reaching the judge's own agent is the sandbox service's to do; which
 	// discobox is the judge is this one's (ADR 26-09-22-838 §2).
 	judgeService.SetLeases(sandboxService)

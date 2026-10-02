@@ -28,16 +28,18 @@ func (s *Service) JudgeDelegation(ctx context.Context, projectID string, ask ser
 		return judge.Answer{}, apperrors.NewStatusErrorOfKind(http.StatusServiceUnavailable,
 			apperrors.KindJudgingDisabled, "this server does not judge credential use, so a discobox hands nothing on")
 	}
-	if s.leases == nil {
+	if s.jev == nil && s.leases == nil {
 		return judge.Answer{}, apperrors.NewStatusError(http.StatusServiceUnavailable, "this server cannot reach a judge")
 	}
 	project, err := s.store.GetProject(ctx, projectID)
 	if err != nil {
 		return judge.Answer{}, apperrors.NotFound(err, "project not found")
 	}
-	judgeSandbox, err := s.readyJudge(ctx, project)
-	if err != nil {
-		return judge.Answer{}, err
+	var judgeSandbox *model.Sandbox
+	if s.jev == nil {
+		if judgeSandbox, err = s.readyJudge(ctx, project); err != nil {
+			return judge.Answer{}, err
+		}
 	}
 	job := judge.Job{
 		Kind:       judge.KindDelegation,
@@ -51,10 +53,10 @@ func (s *Service) JudgeDelegation(ctx context.Context, projectID string, ask ser
 		return judge.Answer{}, apperrors.NewStatusError(http.StatusBadRequest, "a delegation cannot be judged: "+err.Error())
 	}
 
-	bound := min(judge.ReachWait+judge.Timeout+judgeRoutingGrace, delegationBound)
+	bound := min(s.judgeBound(), delegationBound)
 	ctx, cancel := context.WithTimeout(ctx, bound)
 	defer cancel()
-	decided, latency, err := s.put(ctx, project, judgeSandbox, job, bound)
+	decided, err := s.put(ctx, project, judgeSandbox, job, bound)
 	if err != nil {
 		return judge.Answer{}, err
 	}
@@ -79,21 +81,13 @@ func (s *Service) JudgeDelegation(ctx context.Context, projectID string, ask ser
 		Allow:           decided.Allow,
 		Need:            decided.Need,
 		Reason:          decided.Reason,
-		Role:            judge.Role,
 		Prompt:          prompt,
-		PromptVersion:   judge.PromptVersion,
-		LatencyMS:       latency.Milliseconds(),
-		JudgeSandboxID:  judgeSandbox.ID,
-		Image:           judgeSandbox.Image,
-		ImageDigest:     judgeSandbox.ImageDigest,
 	}
-	if judgeSandbox.HarnessConfigID != nil {
-		row.HarnessConfigID = *judgeSandbox.HarnessConfigID
-	}
+	decided.stamp(row)
 	if err := s.store.CreateCredentialVerdict(recordCtx, row); err != nil {
 		return judge.Answer{}, err
 	}
-	return decided, nil
+	return decided.Answer, nil
 }
 
 // delegationBound is how long the judge may take over a delegation. The

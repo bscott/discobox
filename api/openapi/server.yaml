@@ -3311,6 +3311,9 @@ components:
                     description: 'Round trip from asking the judge to its answer, in milliseconds, timed by whoever asked: discobox-access around its wrapper for a command verdict, the control plane around the call to the judge for a request verdict.'
                     format: int64
                     type: integer
+                model:
+                    description: The Jev model that answered, as Jev reported it, on a verdict from a server that judges with Jev rather than a judge discobox. judgeSandboxId, harnessConfigId and image are empty then.
+                    type: string
                 need:
                     $ref: '#/components/schemas/JudgeNeed'
                 origin:
@@ -3319,6 +3322,12 @@ components:
                         - sandbox
                         - judge
                     type: string
+                probabilities:
+                    additionalProperties:
+                        format: double
+                        type: number
+                    description: On a Jev verdict, the probability of yes Jev gave each question, by question ID. The verdict was decided from these against thresholds the server holds; promptVersion names the questions and thresholds.
+                    type: object
                 projectId:
                     description: Project ID
                     type: string

@@ -100,6 +100,28 @@ That is what lets a pool whose own discoboxes are whole VMs of another
 operating system judge at all. Every refusal on that path is the same answer —
 no verdict — and the reason travels back so the pool can say why.
 
+A server may judge with Jev instead (ADR 26-10-01-324). `judgeBackend: jev`
+chooses it, and so does the default, `auto`, when `jevApiKey` is set. The
+backend is the server's choice, like judging itself. With `jevUnsure: refuse`
+no project wants a judge discobox, so the convergence makes none and takes away
+any made before the switch. `put` sends the job to Jev (`judge/jev`) rather than to a discobox:
+there is nothing to reach, so the bound is `judge.Timeout` alone. Everything
+around the call is unchanged: the question read from the live grant, standing
+rows (Jev proposes none, but rows a judge discobox left still cover until they
+lapse), the re-check of the use, and the verdict recorded first. A Jev verdict
+names its `Model`, the `Probabilities` it was decided from, and
+`jev.QuestionsVersion` as its prompt version, in place of a discobox, harness
+and image. Jev refusing the key, being too busy, or saying something that is
+not an answer are each no verdict, and what Jev said goes to the log, not to
+the discobox.
+
+With `jevUnsure: harness`, the default, a project keeps its judge discobox, and `put` asks it
+about exactly the jobs Jev refused as unsure (`jev.Verdict.Unsure`). Its
+answer is the verdict, recorded with Jev's model and probabilities beside the
+discobox that decided. The bound is a judge discobox's, since one may have to
+be reached. A judge discobox that cannot be had leaves Jev's refusal standing
+and recorded, rather than no verdict.
+
 Judge-mode discoboxes are left out of listings unless asked for
 (`store.IncludingJudges`, the API's `includeJudge`, `discobox admin box ls
 --include-judge`): a judge runs no terminal and holds no work, so it is not

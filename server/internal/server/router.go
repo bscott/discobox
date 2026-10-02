@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/discobox-ai/discobox/devimage"
+	"github.com/discobox-ai/discobox/judge/jev"
 	"github.com/discobox-ai/discobox/server/internal/auth"
 	poolagentauth "github.com/discobox-ai/discobox/server/internal/auth/poolagent"
 	sandboxauth "github.com/discobox-ai/discobox/server/internal/auth/sandbox"
@@ -103,6 +104,12 @@ type AppOptions struct {
 	// including here: a server judges credential-bearing requests only when
 	// its configuration says to. See config.Config.
 	JudgeCredentials bool
+	// JudgeJev is the Jev a server judges with instead of a judge discobox
+	// per project, or nil for the judge discobox (ADR 26-10-01-324).
+	JudgeJev *jev.Client
+	// JudgeJevFallback puts what Jev is unsure of to the project's judge
+	// discobox rather than refusing it.
+	JudgeJevFallback bool
 }
 
 // DefaultAppOptions returns the production defaults for the app.
@@ -191,6 +198,8 @@ func NewApp(ctx context.Context, writeDB, readDB *gorm.DB, options ...AppOptions
 		ArchiveRetention:               opts.ArchiveRetention,
 		ServerPeerID:                   addressPeerID,
 		JudgeCredentials:               opts.JudgeCredentials,
+		JudgeJev:                       opts.JudgeJev,
+		JudgeJevFallback:               opts.JudgeJevFallback,
 		ServerDefaults:                 opts.ServerDefaults,
 		WSLCCommand:                    opts.WSLCCommand,
 	})

@@ -193,6 +193,37 @@
         "null"
       ]
     },
+    "jevApiKey": {
+      "description": "TypeSafe API key the server asks Jev with. Setting it makes judgeBackend auto choose jev; judgeBackend jev requires it. Environment: DISCOBOX_JEV_API_KEY (takes precedence over this file).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "jevModel": {
+      "default": "jev-1.13.0",
+      "description": "The Jev model asked when judgeBackend is jev. A version rather than the jev-latest alias, which moves when TypeSafe ships a new one. Environment: DISCOBOX_JEV_MODEL (takes precedence over this file).",
+      "type": "string"
+    },
+    "jevUnsure": {
+      "default": "harness",
+      "description": "What a jev judge does with a request it is unsure about: harness, ask the project's judge discobox (as judgeBackend harness runs one), which then decides, so every project keeps a judge discobox for those requests; or refuse it, and run no judge discobox. Environment: DISCOBOX_JEV_UNSURE (takes precedence over this file).",
+      "enum": [
+        "harness",
+        "refuse"
+      ],
+      "type": "string"
+    },
+    "judgeBackend": {
+      "default": "auto",
+      "description": "What judges credential use when judgeCredentials is on: auto, jev when jevApiKey is set and harness otherwise; harness, a judge discobox per project running the project's default harness; or jev, TypeSafe's Jev, asked by this server directly, which requires jevApiKey. Environment: DISCOBOX_JUDGE_BACKEND (takes precedence over this file).",
+      "enum": [
+        "auto",
+        "harness",
+        "jev"
+      ],
+      "type": "string"
+    },
     "judgeCredentials": {
       "description": "Run a judge for each project: a discobox that decides whether a credential-bearing request is part of what the credential's approved use allows. Off by default. While it is off no judge is created, and credentials are resolved for whatever asks for them, held only to the host and grant they were approved for. Environment: DISCOBOX_JUDGE_CREDENTIALS (takes precedence over this file).",
       "type": "boolean"

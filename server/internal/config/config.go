@@ -145,6 +145,24 @@ type Config struct {
 	// one anything, so no request waits on a model to be allowed through.
 	JudgeCredentials bool `yaml:"judgeCredentials" env:"DISCOBOX_JUDGE_CREDENTIALS" doc:"Run a judge for each project: a discobox that decides whether a credential-bearing request is part of what the credential's approved use allows. Off by default. While it is off no judge is created, and credentials are resolved for whatever asks for them, held only to the host and grant they were approved for."`
 
+	// JudgeBackend is what answers when judgeCredentials is on: each
+	// project's judge discobox, or TypeSafe's Jev, asked by this server
+	// directly (ADR 26-10-01-324). It is the server's choice, like judging
+	// itself. auto is resolved by Load, so after it this is harness or jev:
+	// a server given a Jev key judges with Jev without being told twice.
+	JudgeBackend string `yaml:"judgeBackend" env:"DISCOBOX_JUDGE_BACKEND" enum:"auto,harness,jev" default:"auto" doc:"What judges credential use when judgeCredentials is on: auto, jev when jevApiKey is set and harness otherwise; harness, a judge discobox per project running the project's default harness; or jev, TypeSafe's Jev, asked by this server directly, which requires jevApiKey."`
+	// JevAPIKey is required when JudgeBackend is jev, and is what auto
+	// chooses Jev by.
+	JevAPIKey string `yaml:"jevApiKey" env:"DISCOBOX_JEV_API_KEY" doc:"TypeSafe API key the server asks Jev with. Setting it makes judgeBackend auto choose jev; judgeBackend jev requires it." example:"-"`
+	// JevModel is pinned to a version by default, because the thresholds the
+	// judge decides Jev's probabilities against were tuned on one.
+	JevModel string `yaml:"jevModel" env:"DISCOBOX_JEV_MODEL" default:"jev-1.13.0" doc:"The Jev model asked when judgeBackend is jev. A version rather than the jev-latest alias, which moves when TypeSafe ships a new one."`
+	// JevUnsure is what happens to a request Jev cannot tell about: put to
+	// the project's judge discobox, which each project then keeps, or
+	// refused. Put by default: an unsure refusal is a request a correct
+	// judge mostly allows, and the judge discobox is there to settle it.
+	JevUnsure string `yaml:"jevUnsure" env:"DISCOBOX_JEV_UNSURE" enum:"harness,refuse" default:"harness" doc:"What a jev judge does with a request it is unsure about: harness, ask the project's judge discobox (as judgeBackend harness runs one), which then decides, so every project keeps a judge discobox for those requests; or refuse it, and run no judge discobox."`
+
 	// ArchiveRetention is how long an archived sandbox is kept before it is
 	// purged, for projects that have not set their own retention. Zero means
 	// nothing configured it and sandboxes.DefaultArchiveRetention applies; a
@@ -324,6 +342,14 @@ func Load() (*Config, error) {
 	if !configured("databaseDsn") {
 		cfg.DatabaseDSN = defaultDatabaseDSN(cfg.DataDir)
 	}
+	// auto is a choice made from the key: Jev when there is one to ask it
+	// with, and the judge discobox otherwise.
+	if cfg.JudgeBackend == JudgeBackendAuto {
+		cfg.JudgeBackend = JudgeBackendHarness
+		if strings.TrimSpace(cfg.JevAPIKey) != "" {
+			cfg.JudgeBackend = JudgeBackendJev
+		}
+	}
 	if !configured("databaseDriver") {
 		cfg.DatabaseDriver = gormdb.DetectDriver(cfg.DatabaseDSN)
 	}
@@ -440,8 +466,42 @@ func (c *Config) validate(configured func(string) bool) error {
 	if c.OTelMetricsEnabled && c.OTelMetricExportInterval <= 0 {
 		return fmt.Errorf("otelMetricExportInterval must be greater than 0")
 	}
+	switch c.JudgeBackend {
+	case JudgeBackendAuto:
+		// Load resolves it; a Config built some other way has not been.
+		return fmt.Errorf("judgeBackend auto was not resolved")
+	case JudgeBackendHarness:
+	case JudgeBackendJev:
+		// Refused at startup whether or not judging is on: a server told to
+		// judge with Jev and given no key would otherwise start, and refuse
+		// every credential the moment judging is turned on.
+		if strings.TrimSpace(c.JevAPIKey) == "" {
+			return fmt.Errorf("jevApiKey is required when judgeBackend is jev")
+		}
+		if strings.TrimSpace(c.JevModel) == "" {
+			return fmt.Errorf("jevModel is required when judgeBackend is jev")
+		}
+		if c.JevUnsure != JevUnsureRefuse && c.JevUnsure != JevUnsureHarness {
+			return fmt.Errorf("jevUnsure must be one of: %s, %s", JevUnsureRefuse, JevUnsureHarness)
+		}
+	default:
+		return fmt.Errorf("judgeBackend must be one of: %s, %s, %s", JudgeBackendAuto, JudgeBackendHarness, JudgeBackendJev)
+	}
 	return nil
 }
+
+// The judge backends judgeBackend chooses between.
+const (
+	JudgeBackendAuto    = "auto"
+	JudgeBackendHarness = "harness"
+	JudgeBackendJev     = "jev"
+)
+
+// What jevUnsure does with a request Jev cannot tell about.
+const (
+	JevUnsureRefuse  = "refuse"
+	JevUnsureHarness = "harness"
+)
 
 func defaultDatabaseDSN(dataDir string) string {
 	return "sqlite3://" + filepath.Join(dataDir, "discobox.db")

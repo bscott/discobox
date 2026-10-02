@@ -1,5 +1,7 @@
 // Package judges keeps a project's judge converged: the discobox that answers
-// judging asks and nothing else (ADR 26-09-22-838 §1).
+// judging asks and nothing else (ADR 26-09-22-838 §1). A server that judges
+// with Jev instead has no judge discobox at all, and asks Jev from here
+// (ADR 26-10-01-324).
 //
 // A judge is Discobox's own. It is not the project's work, it is not listed
 // with it, and it exists exactly when the project can have one: a pool to run
@@ -18,6 +20,7 @@ import (
 
 	serverapi "github.com/discobox-ai/discobox/api/gen"
 	"github.com/discobox-ai/discobox/judge"
+	"github.com/discobox-ai/discobox/judge/jev"
 	"github.com/discobox-ai/discobox/server/internal/model"
 	"github.com/discobox-ai/discobox/server/internal/reconcile"
 	"github.com/discobox-ai/discobox/server/internal/services"
@@ -53,13 +56,23 @@ type Service struct {
 	// credential-bearing request, and a server that has not asked for that
 	// keeps resolving credentials the way it always did.
 	enabled bool
+	// jev is what judges instead of a judge discobox, when the server says
+	// so (ADR 26-10-01-324). It is the server's choice, like enabled: no
+	// project has a judge discobox then, and every job goes to Jev.
+	jev *jev.Client
+	// jevFallback sends what Jev is unsure of on to the project's judge
+	// discobox, which every project then keeps (jevUnsure: harness).
+	jevFallback bool
 }
 
-func New(appStore *store.Store, sandboxes Sandboxes, logger *slog.Logger, enabled bool) *Service {
+// New is the judges service. jevClient is nil for a server whose judge is a
+// discobox per project, and the Jev it asks otherwise; jevFallback has Jev's
+// unsure refusals put to the project's judge discobox instead.
+func New(appStore *store.Store, sandboxes Sandboxes, logger *slog.Logger, enabled bool, jevClient *jev.Client, jevFallback bool) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{store: appStore, sandboxes: sandboxes, logger: logger, enabled: enabled}
+	return &Service{store: appStore, sandboxes: sandboxes, logger: logger, enabled: enabled, jev: jevClient, jevFallback: jevClient != nil && jevFallback}
 }
 
 // Reconcile brings one project's judge to what the project says it should be.
@@ -196,6 +209,12 @@ func (s *Service) wanted(ctx context.Context, project *model.Project, record boo
 	// was on is taken away by the convergence that finds none wanted.
 	if !s.enabled {
 		return nil, "this server does not judge credential use", nil
+	}
+	// Jev is asked by this server, so no discobox is wanted to ask, and one
+	// left from before the server switched is taken away like any other
+	// judge nothing wants — unless what Jev is unsure of goes on to one.
+	if s.jev != nil && !s.jevFallback {
+		return nil, "this server judges with Jev and refuses what it is unsure of, so it runs no judge discobox", nil
 	}
 	poolID, err := s.judgePool(ctx, project, record)
 	if err != nil {
