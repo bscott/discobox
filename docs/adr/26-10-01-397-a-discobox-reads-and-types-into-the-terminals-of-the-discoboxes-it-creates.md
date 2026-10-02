@@ -2,10 +2,14 @@
 
 - **Status**: Accepted
 - **Date**: 2026-10-01
-- **Supersedes**: [0140](0140-a-discobox-reaches-the-discobox-api-through-its-pool-with-a-fixed-role.md)'s
-  deferral of "terminal screen, input, and wait … for a lead that drives its
-  workers", for the discoboxes the caller created. Its other deferrals —
-  start, stop, archive, exec create, and port tunnels — stand.
+- **Supersedes**: in [0140](0140-a-discobox-reaches-the-discobox-api-through-its-pool-with-a-fixed-role.md),
+  for the discoboxes the caller created and only for the four routes of §1:
+  §4's refusal of execs and terminals; its deferral of "terminal screen,
+  input, and wait … for a lead that drives its workers"; and its rejection of
+  authority by creator, which
+  [26-09-24-630](26-09-24-630-a-discobox-delivers-the-source-of-the-discoboxes-it-creates.md)
+  lifted for source delivery only. 0140's other deferrals — start, stop,
+  archive, exec create, and port tunnels — stand.
 
 ## Context
 
@@ -36,6 +40,14 @@ ADR 26-09-24-630 §2):
 
 Each is one bounded request that the pool proxy judges against the lead's use,
 as every other call to this API is.
+
+The sandbox service's own scope check, which let a sandbox caller request only
+the push's `sandbox:write`, also lets it request `exec:read` and `exec:write`,
+the scopes these routes lease. `exec:write` also covers creating, starting,
+and ending an exec, so the role's route list is what keeps those out; the
+service still refuses a sandbox caller the legacy terminal, tunnel, and
+sandbox-HTTP scopes, and refuses it the waiting acquire outright, which is how
+an attach (and a create that waits to be used) reaches a sandbox.
 
 ### 2. Creating, ending, and attaching to execs stay out
 
