@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/discobox-ai/discobox/server/internal/apperrors"
+	"github.com/discobox-ai/discobox/server/internal/auth"
 	"github.com/discobox-ai/discobox/server/internal/model"
 	sandbox "github.com/discobox-ai/discobox/server/internal/sandbox"
 	services "github.com/discobox-ai/discobox/server/internal/services"
@@ -76,6 +77,12 @@ var sandboxPoolHostWaitCeiling = 5 * time.Minute
 // Every pass re-reads authoritative state and asks again, so there is no window
 // in which the transition that opens the gate can be missed.
 func (s *Service) AwaitSandboxHTTPClient(ctx context.Context, projectID, sandboxID string, scopes []string) (*services.HTTPClientLease, *model.Sandbox, error) {
+	// Waiting is for an attach, or for an exec created to be used at once, and
+	// a discobox does neither to another: it reads and types into a
+	// terminal one judged call at a time (ADR 26-10-01-397 §2).
+	if principal, ok := auth.PrincipalFromContext(ctx); ok && principal.Type == auth.PrincipalTypeSandbox {
+		return nil, nil, apperrors.NewStatusError(http.StatusForbidden, "a discobox does not attach to another")
+	}
 	if err := authorizeRequestedScopes(ctx, scopes); err != nil {
 		return nil, nil, err
 	}

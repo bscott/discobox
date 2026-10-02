@@ -104,6 +104,49 @@ func TestSandboxRoleDeliversSourceOnlyToWhatItCreated(t *testing.T) {
 	}
 }
 
+// A discobox reads and types into the terminals only of discoboxes it created,
+// one call at a time; attaching and starting or ending an exec stay out (ADR
+// 26-10-01-397).
+func TestSandboxRoleDrivesOnlyItsOwnDiscoboxesTerminals(t *testing.T) {
+	authorizer := SandboxRoleAuthorizer{Store: roleStore(t)}
+	lead := Principal{Type: PrincipalTypeSandbox, SandboxID: "sbx-lead", ProjectID: "proj-1", UserID: "user-1"}
+	for _, tc := range []struct {
+		name, method, path string
+		want               int
+	}{
+		{"list its worker's terminals", http.MethodGet, "/projects/default/sandboxes/sbx-worker/execs", http.StatusOK},
+		{"read its worker's screen", http.MethodGet, "/api/projects/default/sandboxes/sbx-worker/execs/primary/screen", http.StatusOK},
+		{"wait on its worker's terminal", http.MethodPost, "/projects/proj-1/sandboxes/sbx-worker/execs/primary/wait", http.StatusOK},
+		{"type into its worker's terminal", http.MethodPost, "/projects/default/sandboxes/sbx-worker/execs/exec-1/input", http.StatusOK},
+		{"read a person's discobox's screen", http.MethodGet, "/projects/default/sandboxes/sbx-persons/execs/primary/screen", http.StatusForbidden},
+		{"type into a person's discobox", http.MethodPost, "/projects/default/sandboxes/sbx-persons/execs/primary/input", http.StatusForbidden},
+		{"list a person's discobox's terminals", http.MethodGet, "/projects/default/sandboxes/sbx-persons/execs", http.StatusForbidden},
+		{"read nothing's screen", http.MethodGet, "/projects/default/sandboxes/sbx-none/execs/primary/screen", http.StatusNotFound},
+		{"attach to its worker", http.MethodGet, "/projects/default/sandboxes/sbx-worker/execs/primary/attach", http.StatusForbidden},
+		{"start an exec in its worker", http.MethodPost, "/projects/default/sandboxes/sbx-worker/execs", http.StatusForbidden},
+		{"end its worker's exec", http.MethodDelete, "/projects/default/sandboxes/sbx-worker/execs/exec-1", http.StatusForbidden},
+		{"read its worker's logs", http.MethodGet, "/projects/default/sandboxes/sbx-worker/execs/exec-1/logs", http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequestWithContext(WithPrincipal(context.Background(), lead), tc.method, tc.path, nil)
+			ok, err := authorizer.Authorize(r)
+			got := http.StatusOK
+			if err != nil {
+				var status interface{ StatusCode() int }
+				if !errors.As(err, &status) {
+					t.Fatalf("error %v carries no status", err)
+				}
+				got = status.StatusCode()
+			} else if !ok {
+				t.Fatal("the role stepped aside for a sandbox's call; it must answer every one")
+			}
+			if got != tc.want {
+				t.Fatalf("status = %d (%v), want %d", got, err, tc.want)
+			}
+		})
+	}
+}
+
 // A discobox reads and answers only the requests of discoboxes it created
 // (ADR 26-09-30-782 §2). A request from a discobox a person made, from one that
 // is gone, or from no discobox at all is a person's to answer.

@@ -85,8 +85,9 @@ Current authorizers:
 
 - `SandboxRoleAuthorizer` answers every request a sandbox principal makes, and
   only those: it allows the routes of the sandbox role (`sandboxRole`: discobox
-  create, list, and get; secret requests list, get, approve, and deny; secrets
-  list) in the sandbox's own project, resolving `default` to it, and refuses
+  create, list, and get; source delivery and terminal screen, wait, and input
+  on discoboxes it created; secret requests list, get, approve, and deny;
+  secrets list) in the sandbox's own project, resolving `default` to it, and refuses
   everything else — including the any-authenticated routes below, which is
   why it runs first. It is decided by the route; no grant or use text is
   read ([ADR 0140](../../../docs/adr/0140-a-discobox-reaches-the-discobox-api-through-its-pool-with-a-fixed-role.md)
@@ -95,7 +96,11 @@ Current authorizers:
   and `complete-source-push` — only into a discobox the caller created, by its
   recorded `CreatedBySandboxID`
   ([ADR 26-09-24-630](../../../docs/adr/26-09-24-630-a-discobox-delivers-the-source-of-the-discoboxes-it-creates.md)
-  §2); and a secret request's get, approve, and deny only when a discobox the
+  §2); its terminals — the exec listing, `screen`, `wait`, and `input`, but
+  not `attach` or creating or ending an exec — only for a discobox the caller
+  created
+  ([ADR 26-10-01-397](../../../docs/adr/26-10-01-397-a-discobox-reads-and-types-into-the-terminals-of-the-discoboxes-it-creates.md));
+  and a secret request's get, approve, and deny only when a discobox the
   caller created filed it — the request's owner. A request filed by no
   discobox, or by one that is gone, has no owner and is a person's to answer.
   The request and secret listings cannot be decided by their routes, so the
