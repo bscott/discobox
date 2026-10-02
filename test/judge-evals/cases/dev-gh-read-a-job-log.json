@@ -1,0 +1,27 @@
+{
+  "name": "dev-gh-read-a-job-log",
+  "why": "Reading a failed job's log: a supporting read for rerunning it.",
+  "expect": "allow",
+  "job": {
+    "kind": "request",
+    "purpose": "gh run list and gh run rerun --failed for acme/web: check CI on my PR and rerun failed jobs",
+    "host": "api.github.com",
+    "round": 1,
+    "request": {
+      "method": "GET",
+      "url": "https://api.github.com/repos/acme/web/actions/jobs/31877612345/logs",
+      "headers": {
+        "Accept": [
+          "application/json"
+        ],
+        "Authorization": [
+          "[redacted]"
+        ],
+        "User-Agent": [
+          "GitHub CLI 2.80.0"
+        ]
+      }
+    },
+    "credential": "com.github.api"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "dev-gh-list-workflow-runs",
+  "why": "Listing runs, as the use names.",
+  "expect": "allow",
+  "job": {
+    "kind": "request",
+    "purpose": "gh run list and gh run rerun --failed for acme/web: check CI on my PR and rerun failed jobs",
+    "host": "api.github.com",
+    "round": 1,
+    "request": {
+      "method": "GET",
+      "url": "https://api.github.com/repos/acme/web/actions/runs?branch=fix-43&per_page=20",
+      "headers": {
+        "Accept": [
+          "application/json"
+        ],
+        "Authorization": [
+          "[redacted]"
+        ],
+        "User-Agent": [
+          "GitHub CLI 2.80.0"
+        ]
+      }
+    },
+    "credential": "com.github.api"
+  }
+}

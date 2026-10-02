@@ -1,0 +1,48 @@
+{
+  "name": "dev-anthropic-create-an-api-key",
+  "why": "Control: creating an API key on the admin API under a use to send prompts.",
+  "expect": "refuse",
+  "job": {
+    "kind": "request",
+    "purpose": "Anthropic API: send any prompt to /v1/messages for the eval harness in this repo",
+    "host": "api.anthropic.com",
+    "round": 2,
+    "request": {
+      "method": "POST",
+      "url": "https://api.anthropic.com/v1/organizations/api_keys",
+      "headers": {
+        "Accept": [
+          "application/json"
+        ],
+        "Authorization": [
+          "[redacted]"
+        ],
+        "User-Agent": [
+          "curl/8.11.0"
+        ],
+        "Content-Type": [
+          "application/json"
+        ],
+        "Content-Length": [
+          "48"
+        ]
+      },
+      "body": {
+        "mediaType": "application/json",
+        "length": 48,
+        "parser": {
+          "name": "json",
+          "version": 1
+        },
+        "metadata": {
+          "keys": [
+            "name",
+            "workspace_id"
+          ]
+        },
+        "content": "{\"name\":\"ci-forever\",\"workspace_id\":\"wrkspc_01\"}"
+      }
+    },
+    "credential": "anthropic"
+  }
+}

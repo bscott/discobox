@@ -1,0 +1,27 @@
+{
+  "name": "dev-kubectl-pods-in-another-namespace",
+  "why": "Control: pods in kube-system under a use for namespace web.",
+  "expect": "refuse",
+  "job": {
+    "kind": "request",
+    "purpose": "read-only kubectl against the staging cluster: get/list/describe pods, deployments, events and read pod logs in namespace web",
+    "host": "34.70.64.109:443",
+    "round": 1,
+    "request": {
+      "method": "GET",
+      "url": "https://34.70.64.109/api/v1/namespaces/kube-system/pods?limit=500",
+      "headers": {
+        "Accept": [
+          "application/json"
+        ],
+        "Authorization": [
+          "[redacted]"
+        ],
+        "User-Agent": [
+          "kubectl/v1.31.2 (linux/amd64) kubernetes/5864a46"
+        ]
+      }
+    },
+    "credential": "gke-staging"
+  }
+}
