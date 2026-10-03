@@ -26,7 +26,7 @@ func TestRunShowsTheJudgeWhatTheCommandReadsOnStdin(t *testing.T) {
 	input := `{"prompt": "fix issue 43", "grants": [{"id": "com.github.api", "uses": [{"description": "push issue-43"}]}]}` + "\n"
 
 	_, stderr, code := capture(t, input, func() int {
-		return Run([]string{"run", "--use", "use_7f3c", "--", "sh", "-c", "cat > " + out})
+		return Run([]string{"run", "--use", "use_7f3c", "--", "sh", "-c", "cat > '" + filepath.ToSlash(out) + "'"})
 	})
 	if code != exitOK {
 		t.Fatalf("exit = %d, stderr %q", code, stderr)
@@ -48,7 +48,7 @@ func TestRunSaysWhatOfStdinItDidNotShow(t *testing.T) {
 	input := strings.Repeat("0123456789abcdef", maxJudgedStdin/16) + "the part past the bound"
 
 	_, _, code := capture(t, input, func() int {
-		return Run([]string{"run", "--use", "use_7f3c", "--", "sh", "-c", "cat > " + out})
+		return Run([]string{"run", "--use", "use_7f3c", "--", "sh", "-c", "cat > '" + filepath.ToSlash(out) + "'"})
 	})
 	if code != exitOK {
 		t.Fatalf("exit = %d", code)
@@ -177,10 +177,9 @@ func TestRunReturnsWhenItsCommandDoesThoughStdinStaysOpen(t *testing.T) {
 	}
 	defer w.Close()
 	// Past the bound, so the judge's read stops at once rather than waiting
-	// for the pipe to end, and the rest is left for the child.
-	if _, err := w.Write(bytes.Repeat([]byte("x"), maxJudgedStdin+1)); err != nil {
-		t.Fatal(err)
-	}
+	// for the pipe to end, and the rest is left for the child. Written as it
+	// is read: a pipe buffer is smaller than this on Windows.
+	go func() { _, _ = w.Write(bytes.Repeat([]byte("x"), maxJudgedStdin+1)) }()
 	realIn := os.Stdin
 	os.Stdin = r
 	defer func() { os.Stdin = realIn }()
