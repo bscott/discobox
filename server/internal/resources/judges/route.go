@@ -43,10 +43,11 @@ type Leases interface {
 func (s *Service) SetLeases(leases Leases) { s.leases = leases }
 
 // Uses is the secrets service's half of saying what an approved use allows.
-// It is named here for the same reason Leases is: this package makes one call,
-// twice.
+// It is named here for the same reason Leases is: this package asks it what a
+// request's use allows, and what a command's does.
 type Uses interface {
 	ApprovedUse(ctx context.Context, poolID, sandboxID, useID, host string) (services.ApprovedUse, error)
+	ApprovedCredentialUse(ctx context.Context, poolID, sandboxID, useID string) (services.ApprovedUse, error)
 }
 
 // SetUses installs it. A judge with no question to put has nothing to answer,
@@ -63,12 +64,12 @@ func (s *Service) Judge(ctx context.Context, poolID string, ask services.JudgeAs
 	// A pool that asks a server which does not judge is answered before
 	// anything is looked up. Nothing should be asking — the pool is told
 	// whether to — so this is the backstop, not the path.
-	if !s.enabled {
+	if !s.judging.Requests {
 		// Said in a way a program can recognize, because a pool has to tell it
 		// apart from a judge that failed: one means stop asking, the other
 		// means no credential goes out (ADR 26-09-22-838 §4).
 		return judge.Answer{}, apperrors.NewStatusErrorOfKind(http.StatusServiceUnavailable,
-			apperrors.KindJudgingDisabled, "this server does not judge credential use")
+			apperrors.KindJudgingDisabled, "this server does not judge credential-bearing requests")
 	}
 	if s.uses == nil || (s.jev == nil && s.leases == nil) {
 		return judge.Answer{}, apperrors.NewStatusError(http.StatusServiceUnavailable, "this server cannot reach a judge")
@@ -601,6 +602,14 @@ const judgeRoutingGrace = 30 * time.Second
 // answer to travel back in, so the pool reads it rather than timing out first.
 const judgeReplyMargin = 5 * time.Second
 
+// optString is a field the wire leaves out when it says nothing.
+func optString(value string) sandboxapi.OptString {
+	if value == "" {
+		return sandboxapi.OptString{}
+	}
+	return sandboxapi.NewOptString(value)
+}
+
 // judgeJobBody is the job on the wire to the judge's agent.
 func judgeJobBody(job judge.Job) sandboxapi.JudgeJob {
 	body := sandboxapi.JudgeJob{
@@ -614,6 +623,21 @@ func judgeJobBody(job judge.Job) sandboxapi.JudgeJob {
 	}
 	if job.Credential != "" {
 		body.Credential = sandboxapi.NewOptString(job.Credential)
+	}
+	if in := job.Stdin; in != nil {
+		stdin := sandboxapi.JudgeInput{Content: in.Content}
+		if in.Missing != "" {
+			stdin.Missing = sandboxapi.NewOptString(in.Missing)
+		}
+		body.Stdin = sandboxapi.NewOptJudgeInput(stdin)
+	}
+	if r := job.Reported; r != nil {
+		body.Reported = sandboxapi.NewOptJudgeReported(sandboxapi.JudgeReported{
+			WorkingDirectory: optString(r.WorkingDirectory),
+			RepositoryRoot:   optString(r.RepositoryRoot),
+			RefCommit:        optString(r.RefCommit),
+			RefSubject:       optString(r.RefSubject),
+		})
 	}
 	if job.Request == nil {
 		return body

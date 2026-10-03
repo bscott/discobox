@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -29,8 +30,6 @@ type fakeService struct {
 	requestIDs   []string
 	trustIDs     []string
 	getErr       error
-	gotDenial    agentcreds.DenialReport
-	denialErr    error
 	// predatesPurpose answers as a service that knows no purposes: it drops
 	// the field and reports none.
 	predatesPurpose bool
@@ -71,11 +70,6 @@ func (f *fakeService) Get(_ context.Context, body agentcreds.UseBody) (agentcred
 		return agentcreds.UseResponse{}, f.getErr
 	}
 	return agentcreds.UseResponse{EnvVar: "GITHUB_TOKEN", Value: "ghp_stand_in"}, nil
-}
-
-func (f *fakeService) ReportDenial(_ context.Context, body agentcreds.DenialReport) error {
-	f.gotDenial = body
-	return f.denialErr
 }
 
 func (f *fakeService) Trusts(context.Context) ([]agentcreds.Trust, error) {
@@ -376,15 +370,10 @@ func TestRequestJSONRejectsUnknownFields(t *testing.T) {
 	}
 }
 
-// The judge is not the only thing that can say no: the service still can, at
-// the use call, after a command it approved of. That denial must surface with
-// the same stable code as a refusal the judge made itself.
+// Every refusal at the use call — the judge's, or a use no longer live —
+// surfaces with the same stable code.
 func TestDenialFromTheServiceIsReportedAsAStableCode(t *testing.T) {
-	stubJudge(t, allowScript)
-	serve(t, &fakeService{
-		credentials: judgeCredentials(),
-		getErr:      fmt.Errorf("%w: no live approved use", agentcreds.ErrDenied),
-	})
+	serve(t, &fakeService{getErr: fmt.Errorf("%w: no live approved use", agentcreds.ErrDenied)})
 
 	_, stderr, code := capture(t, "", func() int {
 		return Run([]string{"run", "--use", "use_7f3c", "--json", "--", "sh", "-c", "exit 0"})
@@ -405,11 +394,58 @@ func TestDenialFromTheServiceIsReportedAsAStableCode(t *testing.T) {
 	}
 }
 
+// A command the service refuses never starts, and the agent reads why: the
+// judge's own sentence, with the code it branches on (ADR 26-09-22-838 §3).
+func TestRunNeverStartsACommandTheServiceRefuses(t *testing.T) {
+	serve(t, &fakeService{getErr: fmt.Errorf("%w: deleting the repository is not opening a PR", agentcreds.ErrDenied)})
+	marker := filepath.Join(t.TempDir(), "ran")
+
+	_, stderr, code := capture(t, "", func() int {
+		return Run([]string{"run", "--use", "use_7f3c", "--", "sh", "-c", "touch " + marker})
+	})
+	if code != exitError || !strings.Contains(stderr, "deleting the repository") {
+		t.Fatalf("exit = %d, stderr %q; want 1 and the judge's reason", code, stderr)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a refused command ran")
+	}
+}
+
+// What run sends with the argv is what the judge needs to read it: where it
+// runs, here the working directory.
+func TestRunReportsWhereTheCommandRuns(t *testing.T) {
+	svc := &fakeService{}
+	serve(t, svc)
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if _, _, code := capture(t, "", func() int {
+		return Run([]string{"run", "--use", "use_7f3c", "--", "true"})
+	}); code != exitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	wd, _ := os.Getwd()
+	if svc.gotUse.Reported == nil || svc.gotUse.Reported.WorkingDirectory != wd {
+		t.Fatalf("reported = %#v, want the working directory %q", svc.gotUse.Reported, wd)
+	}
+}
+
+// A use is named, or there is nothing to ask for.
+func TestRunWithoutAUseIsInvalid(t *testing.T) {
+	svc := &fakeService{}
+	serve(t, svc)
+	_, _, code := capture(t, "", func() int {
+		return Run([]string{"run", "--", "true"})
+	})
+	if code != exitError || svc.gotUse.UseID != "" || len(svc.gotUse.Command) != 0 {
+		t.Fatalf("exit = %d, use call %#v; want 1 and no use call", code, svc.gotUse)
+	}
+}
+
 // run's contract: the argv it declares is the argv it executes, and the child's
 // exit status is the wrapper's.
 func TestRunDeclaresTheCommandItExecutesAndPassesTheExitCode(t *testing.T) {
-	stubJudge(t, allowScript)
-	svc := &fakeService{credentials: judgeCredentials()}
+	svc := &fakeService{}
 	serve(t, svc)
 
 	_, _, code := capture(t, "", func() int {
@@ -430,8 +466,7 @@ func TestRunDeclaresTheCommandItExecutesAndPassesTheExitCode(t *testing.T) {
 }
 
 func TestRunInjectsTheValueOnlyIntoTheChild(t *testing.T) {
-	stubJudge(t, allowScript)
-	serve(t, &fakeService{credentials: judgeCredentials()})
+	serve(t, &fakeService{})
 	t.Setenv("GITHUB_TOKEN", "stale-value-that-must-not-win")
 
 	stdout, _, code := capture(t, "", func() int {
@@ -449,8 +484,7 @@ func TestRunInjectsTheValueOnlyIntoTheChild(t *testing.T) {
 }
 
 func TestRunPointsTheDiscoboxCLIAtTheAPIWhenNoServerIsNamed(t *testing.T) {
-	stubJudge(t, allowScript)
-	serve(t, &fakeService{credentials: judgeCredentials()})
+	serve(t, &fakeService{})
 	t.Setenv("DISCOBOX_API_URL", "https://api.discobox.internal")
 	// Unset, as a development shell in a discobox leaves it.
 	t.Setenv("DISCOBOX_SERVER", "")
@@ -473,8 +507,7 @@ func TestRunPointsTheDiscoboxCLIAtTheAPIWhenNoServerIsNamed(t *testing.T) {
 }
 
 func TestRunKeepsANamedServer(t *testing.T) {
-	stubJudge(t, allowScript)
-	serve(t, &fakeService{credentials: judgeCredentials()})
+	serve(t, &fakeService{})
 	t.Setenv("DISCOBOX_API_URL", "https://api.discobox.internal")
 	t.Setenv("DISCOBOX_SERVER", "https://elsewhere.example")
 

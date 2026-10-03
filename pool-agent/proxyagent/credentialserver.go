@@ -66,7 +66,14 @@ func newControlPlaneCredentials(projectID, poolID string) *controlPlaneCredentia
 // handling and identity derivation are the parts worth testing, and they are
 // exactly what a fake listener would skip.
 func serveCredentialsOn(ctx context.Context, logger *slog.Logger, tcp net.Listener, bundle *proxy.CertificateBundle, controlPlane *controlPlaneCredentials, live *activations, trusts *hostTrusts) error {
-	handler := &credentialsHandler{controlPlane: controlPlane, activations: live, trusts: trusts}
+	handler := &credentialsHandler{
+		controlPlane: controlPlane,
+		// Its own client: a verdict takes as long as a model takes, which is
+		// nothing like the time the broker's other calls take.
+		judge:       &controlPlaneCredentials{contextPath: controlPlane.contextPath, client: judgeHTTPClient()},
+		activations: live,
+		trusts:      trusts,
+	}
 
 	listener := tls.NewListener(tcp, sandboxTLSConfig(bundle))
 	server := &http.Server{
@@ -74,8 +81,10 @@ func serveCredentialsOn(ctx context.Context, logger *slog.Logger, tcp net.Listen
 		ReadHeaderTimeout: 10 * time.Second,
 		// A request here is one control-plane round trip, never a stream, so
 		// bounded deadlines are safe and a stuck sandbox cannot pin a connection.
+		// The longest is a use waiting on the judge, and the write deadline
+		// outlasts it so its refusal is written rather than cut off.
 		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
+		WriteTimeout: credentialUseTimeout + 30*time.Second,
 		IdleTimeout:  120 * time.Second,
 		BaseContext:  func(net.Listener) context.Context { return ctx },
 	}
@@ -113,6 +122,7 @@ func sweepActivations(ctx context.Context, live *activations) {
 // shared handler a caller could reach that is not already scoped to it.
 type credentialsHandler struct {
 	controlPlane *controlPlaneCredentials
+	judge        *controlPlaneCredentials
 	activations  *activations
 	trusts       *hostTrusts
 }
@@ -123,11 +133,16 @@ func (h *credentialsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "client certificate does not identify a sandbox", http.StatusUnauthorized)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), credentialBrokerTimeout)
+	timeout := credentialBrokerTimeout
+	if r.URL.Path == agentcreds.PathUse {
+		timeout = credentialUseTimeout
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 	agentcreds.NewHandler(&credentialBroker{
 		sandboxID:   sandboxID,
 		controlPlan: h.controlPlane,
+		judge:       h.judge,
 		activations: h.activations,
 		trusts:      h.trusts,
 	}).ServeHTTP(w, r.WithContext(ctx))

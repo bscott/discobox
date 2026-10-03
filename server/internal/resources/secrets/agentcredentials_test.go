@@ -281,10 +281,10 @@ func TestAnAskToDelegateIsNotAnAskToUse(t *testing.T) {
 	}
 }
 
-// The row a credential's own use call writes must resolve back to the grant
-// it belongs to, so "every use of one grant" is an ordinary query and not a
-// join nobody can make (ADR 0091 §2).
-func TestRecordCredentialVerdictResolvesTheGrantFromTheUseID(t *testing.T) {
+// A command is judged against the use it names as the live grant says it
+// now, with the grant's hosts and credential, so the verdict joins back to the
+// grant (ADR 26-09-22-838 §3).
+func TestACommandsUseIsReadFromTheLiveGrant(t *testing.T) {
 	ctx := testPrincipalContext()
 	svc, st := newAgentCredentialService(t)
 	secret := createBearerSecret(ctx, t, svc)
@@ -297,93 +297,26 @@ func TestRecordCredentialVerdictResolvesTheGrantFromTheUseID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get grant: %v", err)
 	}
-	useID := grant.Uses[0].UseID
 
-	err = svc.RecordCredentialVerdict(ctx, testPoolID, services.RecordCredentialVerdictBody{
-		SandboxId: testSandboxID,
-		UseId:     useID,
-		Command:   []string{"gh", "pr", "create", "--fill"},
-		Verdict: apimodel.AgentCredentialVerdict{
-			Allow:     true,
-			Reason:    serverapi.NewOptString("opens a PR against the approved repo"),
-			Role:      "judge",
-			Prompt:    "Approved use: open a pull request\n...",
-			LatencyMs: serverapi.NewOptInt64(842),
-		},
-		Volunteered: false,
-	})
+	use, err := svc.ApprovedCredentialUse(ctx, testPoolID, testSandboxID, grant.Uses[0].UseID)
 	if err != nil {
-		t.Fatalf("record verdict: %v", err)
+		t.Fatalf("ApprovedCredentialUse() error = %v", err)
 	}
-
-	rows, err := st.ListCredentialVerdicts(ctx, "project-1", store.CredentialVerdictFilter{SandboxID: testSandboxID})
-	if err != nil {
-		t.Fatalf("list verdicts: %v", err)
+	if use.GrantID != grant.ID || use.Purpose != grant.Uses[0].Description || use.Host != strings.Join(grant.Hosts, ", ") {
+		t.Fatalf("use = %#v, want the grant's use, host and ID", use)
 	}
-	if len(rows) != 1 {
-		t.Fatalf("verdicts = %#v, want exactly one", rows)
-	}
-	row := rows[0]
-	if row.GrantID != grant.ID {
-		t.Fatalf("grantId = %q, want it resolved to %q from the use ID", row.GrantID, grant.ID)
-	}
-	if !row.Allow || row.Reason == "" || row.Role != "judge" || row.LatencyMS != 842 {
-		t.Fatalf("row = %#v, want the verdict recorded verbatim", row)
-	}
-	if len(row.Command) != 4 || row.Command[0] != "gh" {
-		t.Fatalf("command = %#v, want the declared argv kept in order", row.Command)
-	}
-	if row.Volunteered {
-		t.Fatal("volunteered = true, want false: this verdict rode an issued credential's own use call")
+	if _, err := svc.ApprovedCredentialUse(ctx, testPoolID, testSandboxID, "use_gone"); err == nil {
+		t.Fatal("a use no live grant has was approved")
 	}
 }
 
-// A revoked or unknown use ID must not turn a verdict write into a failure:
-// the row is still complete evidence about the command without a grant to
-// join it to (ADR 0091 §2's best-effort resolution).
-func TestRecordCredentialVerdictSurvivesAnUnresolvableUseID(t *testing.T) {
-	ctx := testPrincipalContext()
-	svc, st := newAgentCredentialService(t)
-
-	err := svc.RecordCredentialVerdict(ctx, testPoolID, services.RecordCredentialVerdictBody{
-		SandboxId: testSandboxID,
-		UseId:     "use_gone",
-		Verdict: apimodel.AgentCredentialVerdict{
-			Allow:  false,
-			Role:   "judge",
-			Prompt: "...",
-		},
-		Volunteered: true,
-	})
-	if err != nil {
-		t.Fatalf("record verdict: %v", err)
-	}
-	rows, err := st.ListCredentialVerdicts(ctx, "project-1", store.CredentialVerdictFilter{SandboxID: testSandboxID})
-	if err != nil {
-		t.Fatalf("list verdicts: %v", err)
-	}
-	if len(rows) != 1 || rows[0].GrantID != "" {
-		t.Fatalf("rows = %#v, want one row with no grant resolved", rows)
-	}
-	if !rows[0].Volunteered {
-		t.Fatal("volunteered = false, want true: the judge refused before any use call, so this is the only record of it")
-	}
-}
-
-// A verdict is scoped to the sandbox it was recorded for, same as every other
-// broker call — a pool may not write a row for a sandbox it does not host.
-func TestRecordCredentialVerdictRefusesASandboxTheCallingPoolDoesNotHost(t *testing.T) {
+// Like every broker call, a pool may only ask about a sandbox it hosts.
+func TestACommandsUseIsNotReadForASandboxTheCallingPoolDoesNotHost(t *testing.T) {
 	ctx := testPrincipalContext()
 	svc, _ := newAgentCredentialService(t)
 
-	err := svc.RecordCredentialVerdict(ctx, "some-other-pool", services.RecordCredentialVerdictBody{
-		SandboxId:   testSandboxID,
-		UseId:       "use_1",
-		Verdict:     apimodel.AgentCredentialVerdict{Allow: true, Role: "judge", Prompt: "..."},
-		Volunteered: false,
-	})
-	if err == nil {
-		t.Fatal("a pool recorded a verdict for a sandbox it does not host")
+	if _, err := svc.ApprovedCredentialUse(ctx, "some-other-pool", testSandboxID, "use_1"); err == nil {
+		t.Fatal("a pool read a use for a sandbox it does not host")
 	}
 }
 

@@ -40,6 +40,43 @@ func (h *Handler) JudgeForPool(ctx context.Context, req *serverapi.PoolJudgeAsk,
 	return out, nil
 }
 
+// JudgeCommandForPool asks the judge of the project that owns the asking pool
+// about a command one of its discoboxes is about to run, before the pool
+// mints anything for it (ADR 26-09-22-838 §3). Like a request, the pool names
+// the discobox and the use, and what the use approves is read here.
+func (h *Handler) JudgeCommandForPool(ctx context.Context, req *serverapi.PoolCommandAsk, params serverapi.JudgeCommandForPoolParams) (serverapi.JudgeCommandForPoolRes, error) {
+	principal, err := credentialBrokerPrincipal(ctx)
+	if err != nil {
+		return apiError(err), nil
+	}
+	if principal.PoolID != params.PoolId {
+		return apiError(apperrors.NewStatusError(http.StatusForbidden, "pool assertion does not match the pool in the route")), nil
+	}
+	answer, err := h.services.Judges.JudgeCommand(ctx, principal.PoolID, commandAskFrom(req))
+	if err != nil {
+		return apiError(err), nil
+	}
+	return &serverapi.JudgeAnswer{Allow: serverapi.NewOptBool(answer.Allow), Reason: answer.Reason}, nil
+}
+
+// commandAskFrom is the command ask as this server reads it, mapped field by
+// field for the reason judgeAskFrom is.
+func commandAskFrom(in *serverapi.PoolCommandAsk) services.CommandAsk {
+	ask := services.CommandAsk{SandboxID: in.SandboxId, UseID: in.UseId, Command: in.Command}
+	if stdin, ok := in.Stdin.Get(); ok {
+		ask.Stdin = &judge.Input{Content: stdin.Content, Missing: stdin.Missing.Or("")}
+	}
+	if reported, ok := in.Reported.Get(); ok {
+		ask.Reported = &judge.Reported{
+			WorkingDirectory: reported.WorkingDirectory.Or(""),
+			RepositoryRoot:   reported.RepositoryRoot.Or(""),
+			RefCommit:        reported.RefCommit.Or(""),
+			RefSubject:       reported.RefSubject.Or(""),
+		}
+	}
+	return ask
+}
+
 // judgeAskFrom is the ask as this server reads it. It is mapped field by field
 // rather than re-decoded from JSON: the wire type and the contract are two
 // declarations of one thing, and a silent mismatch between them would be a

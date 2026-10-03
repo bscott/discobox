@@ -152,10 +152,6 @@ func (fakeSecretService) GetSandboxCredentialRequest(context.Context, string, st
 	return &model.SecretRequest{ID: "sreq-1", Status: model.SecretRequestStatusPending}, nil, nil
 }
 
-func (fakeSecretService) RecordCredentialVerdict(context.Context, string, svcapi.RecordCredentialVerdictBody) error {
-	return nil
-}
-
 func (fakeSecretService) ListCredentialVerdicts(context.Context, string, store.CredentialVerdictFilter) ([]model.CredentialVerdict, error) {
 	return nil, nil
 }

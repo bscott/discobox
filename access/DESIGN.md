@@ -49,7 +49,7 @@ shape, so they deliberately do not get the same interface.
 | Operation | Input | Why |
 | --- | --- | --- |
 | `run` | argv after `--`, and whatever the command reads on stdin | The declared command **is** the argv executed. Encoding it as JSON inserts a translation step between what the model wrote and what runs, and costs the child's exit status. A command that takes its request on stdin (`discobox new --json`, `gh api --input -`) is judged with it: see the judge, below. |
-| `request` | JSON on stdin (`--json`), or flags, after an optional well-known ID | Nested, and carries free text — a justification and use descriptions — through a shell that reads quotes and apostrophes as syntax. A well-known ID (`com.github.api`) stands in for the name, variable, and host, which the implementation fills from the root `wellknown` registry. `--hosts` names a credential's hosts, comma-separated or repeated, for one sent to several sites (ADR 26-10-02-393). |
+| `request` | JSON on stdin (`--json`), or flags, after an optional well-known ID | Nested, and carries free text — a justification and use descriptions — through a shell that reads quotes and apostrophes as syntax. A well-known ID (`com.github.api`) stands in for the name, variable, and host, which the implementation fills from the root `wellknown` registry. |
 | `list` | nothing | — |
 | `trust` | a host argument and flags, or JSON on stdin (`--json`) | The protocol's trust verb (ADR 0149): ask for a host whose certificate the egress refuses to be trusted for this sandbox. It carries free text for the reason `request` does. Nothing is run under it, so there is nothing to judge here; the proxy judges every request to the trusted host against its uses. |
 | `trusts` | nothing | — |
@@ -58,10 +58,10 @@ shape, so they deliberately do not get the same interface.
 There is no command that takes a use id and prints the bare value
 ([ADR 0092](../docs/adr/0092-the-cli-has-no-unjudged-way-to-take-a-value.md)):
 a value with no command attached to it is a value the judge never saw. The
-protocol's use call, `POST /v1/credentials/use`, still exists and `run` calls it
-after judging; that a caller can reach it unjudged is a gap on the pool agent's
-side of the protocol, not one this CLI covers by keeping an escape hatch of its
-own.
+protocol's use call, `POST /v1/credentials/use`, is what `run` calls, and it
+carries the command: a caller that reaches it without this CLI still has its
+declared command judged before anything is minted, because the judging happens
+on the pool's side of the call, not here.
 
 `--json` means **"talk to me in JSON"** for whichever direction a command has:
 structured output everywhere, plus a structured body on stdin for `request`.
@@ -105,99 +105,61 @@ and resume the authorized work after approval without another user prompt.
 
 ## The judge
 
-`run` does not execute a command until a model has agreed the command is the use
-a human approved it for ([ADR 0079](../docs/adr/0079-a-local-judge-gates-every-wrapped-credential-use.md)).
+`run` does not execute a command until the service hands it a value, and
+Discobox's service hands one out only once the project's judge has allowed the
+command for the use
+([ADR 26-09-22-838](../docs/adr/26-09-22-838-a-dedicated-pool-harness-judges-commands-and-credential-bearing-requests.md) §3).
+This CLI judges nothing itself: it runs no model, decodes no verdict, and
+reports none. It sends evidence on the use call (`agentcreds.UseBody`) and runs
+the command only if a value comes back.
 
-The model is reached through `discobox-prompt`, which the **harness image**
-provides — `claude -p` for claude-code, `codex exec` for codex-cli — and which
-the CLI calls as:
+What it sends beside the use ID and the argv:
 
-```
-discobox-prompt --model judge --system <instructions> --prompt <use + argv + facts> --output-schema {allow, reason} --no-tools
-```
+- **What the command will read on stdin** (`stdin.go`,
+  [ADR 26-09-27-905](../docs/adr/26-09-27-905-the-command-judge-is-shown-a-bounded-stdin.md)),
+  because for a command that takes its request there, the argv says nothing
+  about what it does. When fd 0 is a file or a pipe, `run` reads up to
+  `maxJudgedStdin` (8 KiB, the most of an input the judge accepts, and small
+  enough that the body fits one protocol call however JSON escapes it), waiting
+  at most `stdinArrivalWait` (5 s) for it to end, and sends it as
+  `agentcreds.Stdin`: the text shown, and a sentence for whatever was not —
+  past the bound, still arriving, not text, a failed read. The child reads
+  exactly what was sent: the bytes read for the judge as they arrive, then the
+  rest of fd 0. It gets them through an OS pipe `run` feeds rather than a reader
+  exec copies, because exec waits for that copy: a writer holding stdin open
+  would hold `run` open after its command exited. A terminal, a socket and a
+  character device are passed through unread: an agent's shell tool hands its
+  commands an open socket that never ends, and a terminal is a person.
+- **Where the command runs** (`facts.go`,
+  [ADR 0090](../docs/adr/0090-the-judge-is-handed-facts-and-given-no-tools.md)),
+  as `agentcreds.Reported`: the working directory, the repository root, and for
+  a `git` command naming a ref, that ref's resolved commit and subject line.
+  Each is best-effort, bounded by `factsTimeout` (5 s) combined, cut to
+  `agentcreds.MaxReportedBytes`, and left out when it could not be established.
+  The judge is told all of it is the discobox's claim; a subject line is the
+  agent's own words. Every git call goes through `gitOutput`, which pins
+  `core.pager` and `diff.external` on the command line so the repository's own
+  configuration cannot redirect a lookup into running something else.
 
-`--model judge` names a role. The CLI never learns a model id; mapping the role
-onto a model is the wrapper's job, because the wrapper is the half that knows
-what its image installed. What the role is worth spending is its decision too:
-claude-code sends `judge` to Haiku and codex-cli to Luna, the small tier of
-each line, since a verdict's latency is paid on every credentialed command.
+The use call waits up to `agentcreds.UseTimeout`, since a judge that has to be
+brought up first takes minutes. Every refusal — the judge's, a judge that could
+not be reached, a use no longer live — comes back as code `denied` with the
+reason, and the command never starts. There is no flag to skip the judge, and
+no local fallback: whether commands are judged at all is the server's setting
+(`judgeCommands`, on by default,
+[ADR 26-10-02-054](../docs/adr/26-10-02-054-commands-are-judged-by-default-and-requests-by-opt-in.md)),
+not the sandbox's.
 
-`DISCOBOX_PROMPT` names a different wrapper, for running this CLI outside a
-Discobox sandbox. One verdict is bounded at 90 seconds (`judgeTimeout`); the
-fact lookups get 5 seconds combined, outside that budget (`factsTimeout`). The
-answer is decoded strictly first, then from the outermost braces of the output,
-because `codex exec` frames its answer in a transcript.
-
-`--no-tools` is passed on every call and cannot be turned off
-([ADR 0090](../docs/adr/0090-the-judge-is-handed-facts-and-given-no-tools.md)).
-The judge answers from its prompt and executes nothing: no command, no file
-read, no network fetch. `discobox-prompt` maps it onto whatever its CLI calls
-the same thing — claude-code adds `--tools "" --restricted
---disable-slash-commands`, which also stops the judge session reading the
-sandbox's own `~/.claude` settings and skills, both of which the agent it is
-judging can write; codex-cli, which has no tools-off switch, adds `--sandbox
-read-only --config approval_policy=never` and leaves read access as the residual.
-
-`judgePrompt` (`judge.go`) lays out the approved use, the credential's name,
-variable and hosts, and the argv one element per line, plus a small, bounded
-block of facts the CLI itself gathers — never anything the argv or the
-repository chooses: the working directory, and from `gatherFacts` (`facts.go`)
-the repository root and, for a `git` command naming a ref, that ref's resolved
-SHA and commit subject. The subject is labelled in the prompt as the agent's
-own words reaching the judge by a second route, not a fact about the world — it
-can only catch a refspec that names something unlike the approved sentence, not
-verify that a commit is what it claims. Every git call goes through `gitOutput`,
-which pins `core.pager` and `diff.external` on the command line so the
-repository's own configuration cannot redirect a lookup into running something
-else; nothing here diffs or shows a patch today, so the guard is currently
-unreachable, but it costs nothing and stays true if that changes.
-
-After the argv comes what the command will read on stdin (`stdin.go`,
-[ADR 26-09-27-905](../docs/adr/26-09-27-905-the-command-judge-is-shown-a-bounded-stdin.md)),
-because for a command that takes its request there, the argv says nothing about
-what it does. When fd 0 is a file or a pipe, `run` reads up to
-`maxJudgedStdin` (8 KiB, so the verdict that records it fits one
-protocol body however JSON escapes it), waiting at most `stdinArrivalWait` (5 s) for it to
-end, and shows it between fence lines drawn fresh for each run, labeled as the
-agent's own words. What it did not show — past the bound, still arriving, not
-text, a failed read — is said. The child reads exactly what was sent: the bytes
-read for the judge as they arrive, then the rest of fd 0. It gets them through an
-OS pipe `run` feeds rather than a reader exec copies, because exec waits for
-that copy: a writer holding stdin open would hold `run` open after its command
-exited. A terminal, a socket
-and a character device are passed through unread: an agent's shell tool hands
-its commands an open socket that never ends, and a terminal is a person.
-
-Three properties do the work:
-
-- **Judge first, take second.** The approved use comes from `list`, the verdict
-  comes before the use call, and only then is a value issued. A refusal
-  therefore mints no ephemeral sentinel and leaves no activation behind. A use
-  `list` does not carry is refused without asking anyone: there is no approved
-  sentence to hold the command up to.
-- **Every non-yes is a no.** No wrapper installed, a non-zero exit, an
-  unreadable answer, or `allow: false` all stop the command with code `denied`.
-  There is no flag to skip the judge — an escape hatch would be used by exactly
-  the situation the gate exists for.
-- **A credential is never issued without a record of why**
-  ([ADR 0091](../docs/adr/0091-a-credential-is-not-issued-without-a-verdict-on-record.md)).
-  `judgeCommand` always returns the verdict it reached, not only whether to
-  proceed, and `run` carries it on the very call that takes a value —
-  `agentcreds.UseBody.Verdict` — so the pool agent can persist it to the
-  control plane before minting and refuse to mint at all if that write fails.
-  A refusal never reaches that call, so it has nowhere else to leave a trace;
-  `run` reports it separately with `client.ReportDenial`, best-effort — its own
-  failure changes nothing about what `run` reports for the refusal that
-  prompted it — and skipped entirely when no judge was ever reached (a missing
-  wrapper, say): there is no verdict to report when nothing was asked.
-
-**It is a guardrail, not a boundary.** It runs in the sandbox, so an agent that
-does not want to be judged calls the protocol endpoint directly, bypassing this
-CLI entirely. Nothing here is an authorization decision and no trusted-side
-check is relaxed for it: the pool agent still refuses a sentinel outside its
-window or against another host, and the control plane still checks the grant.
-What the judge catches is the honest failure — drift from the granted task, a
-command broader than it needed, or an agent steered by something it read.
+**What it is and is not.** The judge, its model and its prompt are on trusted
+ground, and minting is gated by its allow, so an agent cannot replace the judge,
+rewrite its settings, or forge a verdict — and the verdict is recorded by the
+control plane before the pool mints anything
+([ADR 0091](../docs/adr/0091-a-credential-is-not-issued-without-a-verdict-on-record.md)).
+But the argv, stdin and facts are still the sandbox's word: nothing binds the
+process that receives the value to the command that was judged. What sees the
+request that actually carries the credential is the proxy's request judge,
+which a server opts into (`judgeCredentials`); without it, the pool still holds
+every sentinel to its grant's hosts and its activation's window.
 
 This CLI has no way to take a value without a command to judge
 ([ADR 0092](../docs/adr/0092-the-cli-has-no-unjudged-way-to-take-a-value.md)):

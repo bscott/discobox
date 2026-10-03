@@ -29,8 +29,6 @@ const (
 	// DefaultBridgeConfigPath is the per-sandbox proxy material the pool stages,
 	// which carries both the mTLS keypair and the pool endpoint to dial.
 	DefaultBridgeConfigPath = "/etc/discobox/proxy/bridge.json"
-
-	relayTimeout = 30 * time.Second
 )
 
 // ListenAddress is where the protocol is served inside the sandbox: the
@@ -89,8 +87,9 @@ func New(path string) (*Relay, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load client certificate: %w", err)
 	}
+	// No client-wide timeout: the protocol client bounds each call itself,
+	// and a use waits on the pool's judge for far longer than any other call.
 	httpClient := &http.Client{
-		Timeout: relayTimeout,
 		Transport: &http.Transport{
 			// Never proxied: this call goes to the pool over the sandbox's own
 			// network, and the sandbox's HTTP_PROXY points at the egress
@@ -120,10 +119,6 @@ func (r *Relay) RequestStatus(ctx context.Context, requestID string) (agentcreds
 
 func (r *Relay) Get(ctx context.Context, body agentcreds.UseBody) (agentcreds.UseResponse, error) {
 	return r.client.Get(ctx, body)
-}
-
-func (r *Relay) ReportDenial(ctx context.Context, body agentcreds.DenialReport) error {
-	return r.client.ReportDenial(ctx, body)
 }
 
 func (r *Relay) Trusts(ctx context.Context) ([]agentcreds.Trust, error) {
@@ -158,9 +153,10 @@ func Serve(ctx context.Context, logger *slog.Logger, relay *Relay, addr string) 
 		Handler:           agentcreds.NewHandler(relay),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		// Longer than the relay's own timeout so a slow pool answer reaches the
-		// caller as the pool's error rather than as a truncated response.
-		WriteTimeout: 60 * time.Second,
+		// Longer than the longest call the relay makes, a use waiting on the
+		// pool's judge, so a slow pool answer reaches the caller as the pool's
+		// error rather than as a truncated response.
+		WriteTimeout: agentcreds.UseTimeout + 30*time.Second,
 		IdleTimeout:  120 * time.Second,
 		BaseContext:  func(net.Listener) context.Context { return ctx },
 	}

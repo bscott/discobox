@@ -160,8 +160,9 @@ An agent can request additional access, which a human grants with a host scope
 and an expiry.
 
 An LLM judge checks privileged credential use against grants written in English.
-The judge currently runs inside the box, so it is a guardrail rather than a
-security boundary against a compromised agent.
+It runs outside the box: every command an agent runs with a credential is judged
+before the credential is issued (on by default), and each request that carries
+one can be judged as it leaves (opt-in).
 
 See [discobox.ai](https://discobox.ai) for the full overview and
 [architecture](https://discobox.ai/architecture).

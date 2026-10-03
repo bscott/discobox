@@ -1614,10 +1614,12 @@ per ADR 0112. Each trail is read where it is kept, through the control plane:
 | `list` | every trail but `dns` unless `--source` names it, merged by time, for one discobox | | each trail's own | each trail's own |
 | `get` | whichever trail the ID names | | | |
 
-`creds` lists both judges' verdicts, `--kind` picks one: `command`, a
-discobox's own judge, recorded at `use` or by `report`; and `request`, the
-project's judge, recorded `judge` by the control plane for every answer. `RTT`
-is the round trip each asker timed.
+`creds` lists the judge's verdicts, `--kind` picks one: `command`, a command
+`discobox-access run` declared, judged before its value was minted;
+`request`, a request the proxy observed; and `delegation`, a discobox handing a
+credential on. The control plane records each `judge` before it answers. A
+`command` row of origin `sandbox` predates that: a discobox's own judge's word.
+`RTT` is the round trip each asker timed.
 `refresh` is the asks for a new value of a token and how each closed
 (ADR 26-09-25-122 §6), two events per request — `asked`, then `answered` or
 `dismissed` — so a follower reading forward by time sees the answer arrive

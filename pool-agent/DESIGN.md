@@ -973,7 +973,8 @@ flowchart LR
   contract counts bytes and cannot say "unknown", so a chunked upload is not
   described at all rather than described as empty. Every sentinel is taken out
   of a shown body before it is cut, so no cut can leave part of one behind.
-- **A server that does not judge is not a refusal.** It says so with a problem
+- **A server that does not judge requests is not a refusal.** Request
+  judging is a server's opt-in (`judgeCredentials`). It says so with a problem
   type a program can recognize, and the pool remembers that for a few minutes
   and allows in the meantime, so an opted-out server does not put a
   control-plane call in front of every credential its discoboxes spend. That
@@ -1023,11 +1024,20 @@ back at swap time are one act. Splitting them across processes would put a file
 and a race between the moment a sandbox is handed a sentinel and the moment the
 proxy would recognize it.
 
-- `list` and `request` are relayed to the control plane unchanged. `get` records
-  the caller's verdict to the control plane before it mints — a write failure
-  there stops the mint, so a value is never issued with no record of why — and
-  a refusal that never reaches `get` at all is relayed on its own, through the
-  denial-report call ([ADR 0091](../docs/adr/0091-a-credential-is-not-issued-without-a-verdict-on-record.md)).
+- `list` and `request` are relayed to the control plane unchanged. `get` puts
+  the declared command — argv, stdin evidence and what the sandbox reported
+  about where it runs — to the project's judge
+  (`POST /api/pools/{poolId}/judge-commands`,
+  [ADR 26-09-22-838](../docs/adr/26-09-22-838-a-dedicated-pool-harness-judges-commands-and-credential-bearing-requests.md) §3)
+  and mints only on an explicit allow. The control plane records the verdict
+  before it answers, so nothing is minted without one on record
+  ([ADR 0091](../docs/adr/0091-a-credential-is-not-issued-without-a-verdict-on-record.md)).
+  Unlike a request, a command fails closed on every non-answer: a refusal, an
+  unreachable judge, an unreadable answer. The one exception is the server's
+  own judging-disabled problem (`judgeCommands: false`,
+  [ADR 26-10-02-054](../docs/adr/26-10-02-054-commands-are-judged-by-default-and-requests-by-opt-in.md)),
+  which mints with no verdict. A use waits up to `credentialUseTimeout`, the
+  judge's whole deadline plus the calls around it.
 - **Activations** (`activations.go`) are in-memory and pool-local: ephemeral
   sentinel → `{stable sentinel, useId, hosts, declared command, expiry}`. They are
   disposable by design — a restart costs a dead sentinel and one fresh `get`,

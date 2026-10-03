@@ -580,6 +580,19 @@ func (UnimplementedHandler) GetTrustRequest(ctx context.Context, params GetTrust
 	return r, ht.ErrNotImplemented
 }
 
+// JudgeCommandForPool implements judge-command-for-pool operation.
+//
+// Asks the judge of the project that owns this pool whether a command one of its discoboxes is about
+// to run carries out the use it names, before the pool mints a credential for it (ADR 26-09-22-838
+// §3). The verdict is recorded before the answer goes back. A server that does not judge commands
+// says so with the judging-disabled problem type, and the pool then mints without a verdict (ADR
+// 26-10-02-054); anything else that is not an explicit allow mints nothing.
+//
+// POST /api/pools/{poolId}/judge-commands
+func (UnimplementedHandler) JudgeCommandForPool(ctx context.Context, req *PoolCommandAsk, params JudgeCommandForPoolParams) (r JudgeCommandForPoolRes, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // JudgeForPool implements judge-for-pool operation.
 //
 // Puts one judging job to the judge of the project that owns this pool. The control plane forwards
@@ -958,15 +971,6 @@ func (UnimplementedHandler) ReconcilePool(ctx context.Context, params ReconcileP
 //
 // POST /projects/{projectId}/sandboxes/{sandboxId}/reconcile
 func (UnimplementedHandler) ReconcileSandbox(ctx context.Context, params ReconcileSandboxParams) (r ReconcileSandboxRes, _ error) {
-	return r, ht.ErrNotImplemented
-}
-
-// RecordCredentialVerdict implements record-credential-verdict operation.
-//
-// Record a judge's verdict about a command run under an agent credential use.
-//
-// POST /api/pools/{poolId}/sandbox-credential-verdicts
-func (UnimplementedHandler) RecordCredentialVerdict(ctx context.Context, req *RecordCredentialVerdictBody, params RecordCredentialVerdictParams) (r RecordCredentialVerdictRes, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

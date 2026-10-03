@@ -30,13 +30,19 @@ and is marked by whatever changes those. Its reconcile id is a project ID,
 because a project has one judge, and its scan names every project so a judge
 converges even when whatever changed did not think to say so.
 
-Judging is off until a server opts in (`judgeCredentials`). It is a server's
-decision rather than a project's, because it puts a model in front of every
-credential-bearing request, and a server that has not asked for that keeps
-resolving credentials as it always did. While it is off, no project wants a
-judge, so the convergence makes none and takes away any made while it was on —
-the same path as removing the project's default harness. A pool that asks
-anyway is refused before a judge is looked for.
+What a server judges is its decision rather than a project's, made for
+commands and requests apart (`judges.Judging`,
+[ADR 26-10-02-054](../../../docs/adr/26-10-02-054-commands-are-judged-by-default-and-requests-by-opt-in.md)):
+`judgeCommands`, on by default, judges the command `discobox-access run`
+declares and a discobox handing a credential on, each before anything is
+minted; `judgeCredentials`, off by default, judges every credential-bearing
+request the proxy observes, holding its connection open. A project wants a
+judge while either is on. While both are off, the convergence makes none and
+takes away any made while one was on — the same path as removing the project's
+default harness. A pool that asks about a kind the server does not judge is
+answered with the judging-disabled problem before a judge is looked for: for a
+request the proxy allows it, for a command the pool mints with no verdict, and
+a delegation is refused.
 
 A judge is an ordinary discobox in judge mode. Judge mode is a create body's to
 ask for like any other, so what makes one *the project's* judge is that the
@@ -93,6 +99,16 @@ The row does not yet carry §8's request correlation. The proxy numbers an
 exchange when it writes the audit row, after the judge has answered, so there
 is no ID to send with the ask; a verdict joins the http trail by use, discobox
 and time, which is ambiguous for a use that made several requests at once.
+
+A command is asked the same way (`command.go`,
+`POST /api/pools/{poolId}/judge-commands`, ADR 26-09-22-838 §3): the pool asks
+before it mints a sentinel, naming the discobox and the use, with the argv,
+its stdin and what the discobox reported about where it runs as evidence. The
+purpose, credential and host come from the live grant
+(`secrets.ApprovedCredentialUse`, which a host trust's use never matches),
+the use is re-read after the verdict, nothing stands, and the answer is
+recorded as a command `CredentialVerdict` (kind `command`, origin `judge`)
+before it goes back.
 
 Pools never call each other: they sit behind NAT, in clouds, and inside VMs,
 and the only thing every pool can reach is the control plane.

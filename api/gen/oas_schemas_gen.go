@@ -11,83 +11,6 @@ import (
 	"github.com/go-faster/jx"
 )
 
-// What a judge decided about one command, and what it was given to decide from.
-// Ref: #/components/schemas/AgentCredentialVerdict
-type AgentCredentialVerdict struct {
-	// A URL to the JSON Schema for this object.
-	Schema OptURI `json:"$schema"`
-	// True if the judge allowed the command.
-	Allow bool `json:"allow"`
-	// How long the judge took to answer, in milliseconds.
-	LatencyMs OptInt64 `json:"latencyMs"`
-	// The exact prompt the judge was given, including the facts block.
-	Prompt string `json:"prompt"`
-	// The judge's own sentence, addressed to the agent that asked.
-	Reason OptString `json:"reason"`
-	// The role discobox-prompt was asked for (e.g. "judge"), never a vendor model id.
-	Role string `json:"role"`
-}
-
-// GetSchema returns the value of Schema.
-func (s *AgentCredentialVerdict) GetSchema() OptURI {
-	return s.Schema
-}
-
-// GetAllow returns the value of Allow.
-func (s *AgentCredentialVerdict) GetAllow() bool {
-	return s.Allow
-}
-
-// GetLatencyMs returns the value of LatencyMs.
-func (s *AgentCredentialVerdict) GetLatencyMs() OptInt64 {
-	return s.LatencyMs
-}
-
-// GetPrompt returns the value of Prompt.
-func (s *AgentCredentialVerdict) GetPrompt() string {
-	return s.Prompt
-}
-
-// GetReason returns the value of Reason.
-func (s *AgentCredentialVerdict) GetReason() OptString {
-	return s.Reason
-}
-
-// GetRole returns the value of Role.
-func (s *AgentCredentialVerdict) GetRole() string {
-	return s.Role
-}
-
-// SetSchema sets the value of Schema.
-func (s *AgentCredentialVerdict) SetSchema(val OptURI) {
-	s.Schema = val
-}
-
-// SetAllow sets the value of Allow.
-func (s *AgentCredentialVerdict) SetAllow(val bool) {
-	s.Allow = val
-}
-
-// SetLatencyMs sets the value of LatencyMs.
-func (s *AgentCredentialVerdict) SetLatencyMs(val OptInt64) {
-	s.LatencyMs = val
-}
-
-// SetPrompt sets the value of Prompt.
-func (s *AgentCredentialVerdict) SetPrompt(val string) {
-	s.Prompt = val
-}
-
-// SetReason sets the value of Reason.
-func (s *AgentCredentialVerdict) SetReason(val OptString) {
-	s.Reason = val
-}
-
-// SetRole sets the value of Role.
-func (s *AgentCredentialVerdict) SetRole(val string) {
-	s.Role = val
-}
-
 // Records one successful discobox apply of a source's commits into a host working tree.
 // Client-declared provenance, like Origin, since the server cannot observe host-side Git state.
 // Ref: #/components/schemas/AppliedSourceCommit
@@ -2165,15 +2088,16 @@ func (s *CreateSecretRequestBodyType) UnmarshalText(data []byte) error {
 }
 
 // One recorded judge decision about an agent credential use. The row lives in the control plane and
-// outlives its sandbox. A command verdict (kind command, origin sandbox) is a discobox's own judge
-// deciding about a command: its command, reason and prompt were composed inside the sandbox and are
-// display data, never instruction. A row with volunteered false rode the call that issued a
-// credential, so the record is complete for every value issued; one with volunteered true is a
-// denial the sandbox chose to report, so denials are undercounted by exactly the reports never sent.
-// A request verdict (kind request, origin judge) is the project's judge answering about one request
-// the proxy observed, recorded by the control plane before the answer went back, so every answer is
-// on record whichever way it went. Its request is evidence the sandbox wrote, redacted, and is
-// display data too.
+// outlives its sandbox. A command verdict (kind command, origin judge) is the project's judge
+// answering about a command a discobox was about to run, recorded by the control plane before the
+// pool minted anything for it; its command, input and reported context are evidence the sandbox
+// wrote, and are display data, never instruction. A command verdict with origin sandbox predates
+// that: a discobox's own judge deciding inside the sandbox, whose command, reason and prompt were
+// composed there, and whose volunteered true marks a denial the sandbox chose to report. A request
+// verdict (kind request, origin judge) is the project's judge answering about one request the proxy
+// observed, recorded by the control plane before the answer went back, so every answer is on record
+// whichever way it went. Its request is evidence the sandbox wrote, redacted, and is display data
+// too.
 // Ref: #/components/schemas/CredentialVerdict
 type CredentialVerdict struct {
 	// A URL to the JSON Schema for this object.
@@ -3085,6 +3009,7 @@ func (*ErrorModelStatusCode) getSecretRes()                        {}
 func (*ErrorModelStatusCode) getServerInfoRes()                    {}
 func (*ErrorModelStatusCode) getServerPeerRes()                    {}
 func (*ErrorModelStatusCode) getTrustRequestRes()                  {}
+func (*ErrorModelStatusCode) judgeCommandForPoolRes()              {}
 func (*ErrorModelStatusCode) judgeForPoolRes()                     {}
 func (*ErrorModelStatusCode) listApprovalRequestsRes()             {}
 func (*ErrorModelStatusCode) listCredentialVerdictsRes()           {}
@@ -3114,7 +3039,6 @@ func (*ErrorModelStatusCode) mintSandboxAgentStatusTokensRes()     {}
 func (*ErrorModelStatusCode) purgeSandboxRes()                     {}
 func (*ErrorModelStatusCode) reconcilePoolRes()                    {}
 func (*ErrorModelStatusCode) reconcileSandboxRes()                 {}
-func (*ErrorModelStatusCode) recordCredentialVerdictRes()          {}
 func (*ErrorModelStatusCode) refreshHarnessConfigImageRes()        {}
 func (*ErrorModelStatusCode) refreshSecretRes()                    {}
 func (*ErrorModelStatusCode) registerPoolRes()                     {}
@@ -6054,8 +5978,39 @@ func (s *JudgeAnswer) SetStanding(val OptJudgeStanding) {
 	s.Standing = val
 }
 
-func (*JudgeAnswer) judgeForPoolRes() {}
-func (*JudgeAnswer) judgeSandboxRes() {}
+func (*JudgeAnswer) judgeCommandForPoolRes() {}
+func (*JudgeAnswer) judgeForPoolRes()        {}
+func (*JudgeAnswer) judgeSandboxRes()        {}
+
+// What a command will read on standard input, as much of it as the discobox showed (ADR
+// 26-09-27-905).
+// Ref: #/components/schemas/JudgeInput
+type JudgeInput struct {
+	// The input shown, which is text. Empty when none of it could be shown, and missing then says why.
+	Content string `json:"content"`
+	// Why content is not the whole input, in a sentence for the judge.
+	Missing OptString `json:"missing"`
+}
+
+// GetContent returns the value of Content.
+func (s *JudgeInput) GetContent() string {
+	return s.Content
+}
+
+// GetMissing returns the value of Missing.
+func (s *JudgeInput) GetMissing() OptString {
+	return s.Missing
+}
+
+// SetContent sets the value of Content.
+func (s *JudgeInput) SetContent(val string) {
+	s.Content = val
+}
+
+// SetMissing sets the value of Missing.
+func (s *JudgeInput) SetMissing(val OptString) {
+	s.Missing = val
+}
 
 // One question put to the judge, and everything it may see to answer it. Purpose and host are the
 // authorization; everything else is evidence, which is data to weigh and never instructions to
@@ -6077,11 +6032,13 @@ type JudgeJob struct {
 	Kind JudgeJobKind `json:"kind"`
 	// The approved use, in the words it was approved in. For a delegation job, the uses the discobox was
 	// delegated, one per line.
-	Purpose string                  `json:"purpose"`
-	Request OptJudgeRequestEvidence `json:"request"`
+	Purpose  string                  `json:"purpose"`
+	Reported OptJudgeReported        `json:"reported"`
+	Request  OptJudgeRequestEvidence `json:"request"`
 	// Which ask this is, from 1. A round after the first exists because the judge asked to be shown the
 	// body.
-	Round int64 `json:"round"`
+	Round int64         `json:"round"`
+	Stdin OptJudgeInput `json:"stdin"`
 	// For a delegation job, the uses the discobox is about to hand on, judged against purpose.
 	Uses []string `json:"uses"`
 }
@@ -6116,6 +6073,11 @@ func (s *JudgeJob) GetPurpose() string {
 	return s.Purpose
 }
 
+// GetReported returns the value of Reported.
+func (s *JudgeJob) GetReported() OptJudgeReported {
+	return s.Reported
+}
+
 // GetRequest returns the value of Request.
 func (s *JudgeJob) GetRequest() OptJudgeRequestEvidence {
 	return s.Request
@@ -6124,6 +6086,11 @@ func (s *JudgeJob) GetRequest() OptJudgeRequestEvidence {
 // GetRound returns the value of Round.
 func (s *JudgeJob) GetRound() int64 {
 	return s.Round
+}
+
+// GetStdin returns the value of Stdin.
+func (s *JudgeJob) GetStdin() OptJudgeInput {
+	return s.Stdin
 }
 
 // GetUses returns the value of Uses.
@@ -6161,6 +6128,11 @@ func (s *JudgeJob) SetPurpose(val string) {
 	s.Purpose = val
 }
 
+// SetReported sets the value of Reported.
+func (s *JudgeJob) SetReported(val OptJudgeReported) {
+	s.Reported = val
+}
+
 // SetRequest sets the value of Request.
 func (s *JudgeJob) SetRequest(val OptJudgeRequestEvidence) {
 	s.Request = val
@@ -6169,6 +6141,11 @@ func (s *JudgeJob) SetRequest(val OptJudgeRequestEvidence) {
 // SetRound sets the value of Round.
 func (s *JudgeJob) SetRound(val int64) {
 	s.Round = val
+}
+
+// SetStdin sets the value of Stdin.
+func (s *JudgeJob) SetStdin(val OptJudgeInput) {
+	s.Stdin = val
 }
 
 // SetUses sets the value of Uses.
@@ -6281,6 +6258,60 @@ func (s *JudgeRecognition) SetName(val string) {
 // SetVersion sets the value of Version.
 func (s *JudgeRecognition) SetVersion(val int64) {
 	s.Version = val
+}
+
+// What a discobox said about where a command runs (ADR 0090). Every field is its claim, never a fact
+// the trusted side established.
+// Ref: #/components/schemas/JudgeReported
+type JudgeReported struct {
+	// The commit a git ref the command names resolves to.
+	RefCommit OptString `json:"refCommit"`
+	// That commit's subject line, the agent's own words about its work.
+	RefSubject OptString `json:"refSubject"`
+	// The root of the git checkout the command runs in.
+	RepositoryRoot OptString `json:"repositoryRoot"`
+	// The directory the command runs in.
+	WorkingDirectory OptString `json:"workingDirectory"`
+}
+
+// GetRefCommit returns the value of RefCommit.
+func (s *JudgeReported) GetRefCommit() OptString {
+	return s.RefCommit
+}
+
+// GetRefSubject returns the value of RefSubject.
+func (s *JudgeReported) GetRefSubject() OptString {
+	return s.RefSubject
+}
+
+// GetRepositoryRoot returns the value of RepositoryRoot.
+func (s *JudgeReported) GetRepositoryRoot() OptString {
+	return s.RepositoryRoot
+}
+
+// GetWorkingDirectory returns the value of WorkingDirectory.
+func (s *JudgeReported) GetWorkingDirectory() OptString {
+	return s.WorkingDirectory
+}
+
+// SetRefCommit sets the value of RefCommit.
+func (s *JudgeReported) SetRefCommit(val OptString) {
+	s.RefCommit = val
+}
+
+// SetRefSubject sets the value of RefSubject.
+func (s *JudgeReported) SetRefSubject(val OptString) {
+	s.RefSubject = val
+}
+
+// SetRepositoryRoot sets the value of RepositoryRoot.
+func (s *JudgeReported) SetRepositoryRoot(val OptString) {
+	s.RepositoryRoot = val
+}
+
+// SetWorkingDirectory sets the value of WorkingDirectory.
+func (s *JudgeReported) SetWorkingDirectory(val OptString) {
+	s.WorkingDirectory = val
 }
 
 // What the judge is told about a request's body, always in this one shape (ADR 26-09-26-240). The
@@ -9005,6 +9036,52 @@ func (o OptIrohListener) Or(d IrohListener) IrohListener {
 	return d
 }
 
+// NewOptJudgeInput returns new OptJudgeInput with value set to v.
+func NewOptJudgeInput(v JudgeInput) OptJudgeInput {
+	return OptJudgeInput{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptJudgeInput is optional JudgeInput.
+type OptJudgeInput struct {
+	Value JudgeInput
+	Set   bool
+}
+
+// IsSet returns true if OptJudgeInput was set.
+func (o OptJudgeInput) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptJudgeInput) Reset() {
+	var v JudgeInput
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptJudgeInput) SetTo(v JudgeInput) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptJudgeInput) Get() (v JudgeInput, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptJudgeInput) Or(d JudgeInput) JudgeInput {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptJudgeNeed returns new OptJudgeNeed with value set to v.
 func NewOptJudgeNeed(v JudgeNeed) OptJudgeNeed {
 	return OptJudgeNeed{
@@ -9091,6 +9168,52 @@ func (o OptJudgeRecognition) Get() (v JudgeRecognition, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptJudgeRecognition) Or(d JudgeRecognition) JudgeRecognition {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptJudgeReported returns new OptJudgeReported with value set to v.
+func NewOptJudgeReported(v JudgeReported) OptJudgeReported {
+	return OptJudgeReported{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptJudgeReported is optional JudgeReported.
+type OptJudgeReported struct {
+	Value JudgeReported
+	Set   bool
+}
+
+// IsSet returns true if OptJudgeReported was set.
+func (o OptJudgeReported) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptJudgeReported) Reset() {
+	var v JudgeReported
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptJudgeReported) SetTo(v JudgeReported) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptJudgeReported) Get() (v JudgeReported, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptJudgeReported) Or(d JudgeReported) JudgeReported {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -13992,6 +14115,72 @@ func (s *PoolCPUUsageAdditional) init() PoolCPUUsageAdditional {
 	return m
 }
 
+// One command a pool's discobox is about to run under an approved use, asked about before the pool
+// mints anything for it (ADR 26-09-22-838 §3). A pool does not say what the use authorizes: the
+// control plane reads the sentence, the credential's name and its host from the live grant.
+// Everything here is the discobox's, and evidence.
+// Ref: #/components/schemas/PoolCommandAsk
+type PoolCommandAsk struct {
+	// The argv the discobox is about to run.
+	Command  []string         `json:"command"`
+	Reported OptJudgeReported `json:"reported"`
+	// The discobox about to run it. It must belong to the asking pool.
+	SandboxId string        `json:"sandboxId"`
+	Stdin     OptJudgeInput `json:"stdin"`
+	// The approved use the command would spend the credential under.
+	UseId string `json:"useId"`
+}
+
+// GetCommand returns the value of Command.
+func (s *PoolCommandAsk) GetCommand() []string {
+	return s.Command
+}
+
+// GetReported returns the value of Reported.
+func (s *PoolCommandAsk) GetReported() OptJudgeReported {
+	return s.Reported
+}
+
+// GetSandboxId returns the value of SandboxId.
+func (s *PoolCommandAsk) GetSandboxId() string {
+	return s.SandboxId
+}
+
+// GetStdin returns the value of Stdin.
+func (s *PoolCommandAsk) GetStdin() OptJudgeInput {
+	return s.Stdin
+}
+
+// GetUseId returns the value of UseId.
+func (s *PoolCommandAsk) GetUseId() string {
+	return s.UseId
+}
+
+// SetCommand sets the value of Command.
+func (s *PoolCommandAsk) SetCommand(val []string) {
+	s.Command = val
+}
+
+// SetReported sets the value of Reported.
+func (s *PoolCommandAsk) SetReported(val OptJudgeReported) {
+	s.Reported = val
+}
+
+// SetSandboxId sets the value of SandboxId.
+func (s *PoolCommandAsk) SetSandboxId(val string) {
+	s.SandboxId = val
+}
+
+// SetStdin sets the value of Stdin.
+func (s *PoolCommandAsk) SetStdin(val OptJudgeInput) {
+	s.Stdin = val
+}
+
+// SetUseId sets the value of UseId.
+func (s *PoolCommandAsk) SetUseId(val string) {
+	s.UseId = val
+}
+
 // Requested existence, the same vocabulary every orchestrated resource uses.
 type PoolDesiredState string
 
@@ -15866,91 +16055,6 @@ func (s *ProviderStatus) SetState(val string) {
 type PurgeSandboxNoContent struct{}
 
 func (*PurgeSandboxNoContent) purgeSandboxRes() {}
-
-// A judge's verdict about one command run under an agent credential use, relayed by the pool agent
-// on behalf of one of its sandboxes. Carried on the same call that takes a value, so a credential
-// cannot be issued without a record of why; sent on its own when the judge refused and no value was
-// ever taken.
-// Ref: #/components/schemas/RecordCredentialVerdictBody
-type RecordCredentialVerdictBody struct {
-	// A URL to the JSON Schema for this object.
-	Schema OptURI `json:"$schema"`
-	// The argv the judge was shown.
-	Command []string `json:"command"`
-	// Sandbox the command ran in.
-	SandboxId string `json:"sandboxId"`
-	// Approved use the command was judged against.
-	UseId   string                 `json:"useId"`
-	Verdict AgentCredentialVerdict `json:"verdict"`
-	// True when the judge refused and this report is the only record of it, because the use call this
-	// would otherwise ride never happened.
-	Volunteered bool `json:"volunteered"`
-}
-
-// GetSchema returns the value of Schema.
-func (s *RecordCredentialVerdictBody) GetSchema() OptURI {
-	return s.Schema
-}
-
-// GetCommand returns the value of Command.
-func (s *RecordCredentialVerdictBody) GetCommand() []string {
-	return s.Command
-}
-
-// GetSandboxId returns the value of SandboxId.
-func (s *RecordCredentialVerdictBody) GetSandboxId() string {
-	return s.SandboxId
-}
-
-// GetUseId returns the value of UseId.
-func (s *RecordCredentialVerdictBody) GetUseId() string {
-	return s.UseId
-}
-
-// GetVerdict returns the value of Verdict.
-func (s *RecordCredentialVerdictBody) GetVerdict() AgentCredentialVerdict {
-	return s.Verdict
-}
-
-// GetVolunteered returns the value of Volunteered.
-func (s *RecordCredentialVerdictBody) GetVolunteered() bool {
-	return s.Volunteered
-}
-
-// SetSchema sets the value of Schema.
-func (s *RecordCredentialVerdictBody) SetSchema(val OptURI) {
-	s.Schema = val
-}
-
-// SetCommand sets the value of Command.
-func (s *RecordCredentialVerdictBody) SetCommand(val []string) {
-	s.Command = val
-}
-
-// SetSandboxId sets the value of SandboxId.
-func (s *RecordCredentialVerdictBody) SetSandboxId(val string) {
-	s.SandboxId = val
-}
-
-// SetUseId sets the value of UseId.
-func (s *RecordCredentialVerdictBody) SetUseId(val string) {
-	s.UseId = val
-}
-
-// SetVerdict sets the value of Verdict.
-func (s *RecordCredentialVerdictBody) SetVerdict(val AgentCredentialVerdict) {
-	s.Verdict = val
-}
-
-// SetVolunteered sets the value of Volunteered.
-func (s *RecordCredentialVerdictBody) SetVolunteered(val bool) {
-	s.Volunteered = val
-}
-
-// RecordCredentialVerdictNoContent is response for RecordCredentialVerdict operation.
-type RecordCredentialVerdictNoContent struct{}
-
-func (*RecordCredentialVerdictNoContent) recordCredentialVerdictRes() {}
 
 // Ref: #/components/schemas/RefreshSecretBody
 type RefreshSecretBody struct {

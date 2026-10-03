@@ -174,7 +174,7 @@ func TestJevJudgesADelegation(t *testing.T) {
 		ApproverID: "sbx-lead", RequestID: "sreq-worker", DelegationGrantID: "grant-delegated",
 		Delegated:  []string{"read issues in org/repo"},
 		Uses:       []string{"read issue 43 in org/repo", "push the branch fix-43 to org/repo"},
-		Credential: "github", Host: "api.github.com",
+		Credential: "github", Hosts: []string{"api.github.com"},
 	})
 	if err != nil {
 		t.Fatalf("JudgeDelegation() error = %v", err)

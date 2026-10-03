@@ -13,8 +13,6 @@ FROM ${SANDBOX_AGENT_IMAGE}
 # the harness-run convention from it — a command typed into this terminal would
 # be a second shell inside the first (ADR 0086 §3).
 #
-# What it does install is discobox-prompt, which every harness provides and
-# discobox-access's command judge needs an answer from (ADR 0079). A shell runs
-# no model, so this one answers the judge with a fixed verdict: refused, unless
-# DISCOBOX_SHELL_JUDGE=allow. See prompt.sh.
-COPY --chmod=0755 prompt.sh /usr/local/bin/discobox-prompt
+# Nor does it install discobox-prompt, which every image that runs a model
+# provides for the project's judge. A shell runs no model, so a project whose
+# default harness is this one has no judge discobox (ADR 26-10-02-054 §2).

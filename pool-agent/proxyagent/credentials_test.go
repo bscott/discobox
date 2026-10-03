@@ -15,22 +15,27 @@ import (
 	"github.com/discobox-ai/discobox/proxy"
 )
 
-// fakeControlPlane answers list and sandbox-credential-verdicts the way the
-// real control plane does, and records what it was sent — which is the half
-// of ADR 0091's guarantee this package owns: that a verdict is sent, and sent
-// before a value is ever minted.
+// fakeControlPlane answers list and judge-commands the way the real control
+// plane does, and records what it was asked — which is the half of
+// ADR 26-09-22-838 §3 this package owns: that a command is put to the judge,
+// and that nothing is minted unless the judge allowed it.
 type fakeControlPlane struct {
-	mu           sync.Mutex
-	credentials  []credentialDoc
-	verdictCalls []recordCredentialVerdictDoc
-	verdictErr   error
-	requests     []createCredentialRequestDoc
+	mu          sync.Mutex
+	credentials []credentialDoc
+	// judged is every command ask, and answer is how each is answered: a
+	// judge answer, or a status with a problem document.
+	judged   []commandAskDoc
+	answer   judgeAnswer
+	status   int
+	problem  string
+	requests []createCredentialRequestDoc
 }
 
 func newFakeControlPlane(t *testing.T, credentials []credentialDoc) (*controlPlaneCredentials, *fakeControlPlane) {
 	t.Helper()
 	withTestRoot(t)
-	fake := &fakeControlPlane{credentials: credentials}
+	allow := true
+	fake := &fakeControlPlane{credentials: credentials, answer: judgeAnswer{Allow: &allow, Reason: "matches the approved use"}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/sandbox-credentials"):
@@ -42,17 +47,19 @@ func newFakeControlPlane(t *testing.T, credentials []credentialDoc) (*controlPla
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			fake.requests = append(fake.requests, body)
 			_ = json.NewEncoder(w).Encode(credentialRequestStatusDoc{RequestID: "req-1", Status: agentcreds.StatusPending})
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/sandbox-credential-verdicts"):
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/judge-commands"):
 			fake.mu.Lock()
 			defer fake.mu.Unlock()
-			if fake.verdictErr != nil {
-				http.Error(w, fake.verdictErr.Error(), http.StatusInternalServerError)
+			var body commandAskDoc
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			fake.judged = append(fake.judged, body)
+			if fake.status != 0 {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(fake.status)
+				_ = json.NewEncoder(w).Encode(map[string]string{"type": fake.problem, "detail": "said by the control plane"})
 				return
 			}
-			var body recordCredentialVerdictDoc
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			fake.verdictCalls = append(fake.verdictCalls, body)
-			w.WriteHeader(http.StatusNoContent)
+			_ = json.NewEncoder(w).Encode(fake.answer)
 		default:
 			http.NotFound(w, r)
 		}
@@ -68,24 +75,29 @@ func newFakeControlPlane(t *testing.T, credentials []credentialDoc) (*controlPla
 	return broker, fake
 }
 
-func allowVerdict() agentcreds.Verdict {
-	return agentcreds.Verdict{Allow: true, Reason: "matches the approved use", Role: "judge", Prompt: "..."}
-}
-
-// The verdict must reach the control plane before the value does: ADR 0091's
-// whole guarantee is that a credential is never issued without a record of
-// why, and that only holds if the record actually lands.
-func TestGetRecordsTheVerdictBeforeMintingTheValue(t *testing.T) {
-	broker, fake := newFakeControlPlane(t, []credentialDoc{{
+func oneUse() []credentialDoc {
+	return []credentialDoc{{
 		EnvVar: "GITHUB_TOKEN", Hosts: []string{"api.github.com"}, Sentinel: "STABLE-1",
 		Uses: []credentialUseDoc{{UseID: "use-1", Description: "open a PR"}},
-	}})
-	b := &credentialBroker{sandboxID: "sb-1", controlPlan: broker, activations: newActivations()}
+	}}
+}
 
-	out, err := b.Get(context.Background(), agentcreds.UseBody{
-		UseID:   "use-1",
-		Command: []string{"gh", "pr", "create"},
-		Verdict: allowVerdict(),
+func judgedBroker(plane *controlPlaneCredentials, live *activations) *credentialBroker {
+	return &credentialBroker{sandboxID: "sb-1", controlPlan: plane, judge: plane, activations: live}
+}
+
+// A value is minted only once the project's judge allowed the command, and
+// the judge is asked about the command as the sandbox declared it: its argv,
+// what it reads on stdin, and where it says it runs.
+func TestGetMintsOnlyWhatTheJudgeAllowed(t *testing.T) {
+	plane, fake := newFakeControlPlane(t, oneUse())
+	live := newActivations()
+
+	out, err := judgedBroker(plane, live).Get(context.Background(), agentcreds.UseBody{
+		UseID:    "use-1",
+		Command:  []string{"gh", "pr", "create", "--body-file", "-"},
+		Stdin:    &agentcreds.Stdin{Content: "Fixes #1"},
+		Reported: &agentcreds.Reported{WorkingDirectory: "/src/repo"},
 	})
 	if err != nil {
 		t.Fatalf("get: %v", err)
@@ -93,69 +105,79 @@ func TestGetRecordsTheVerdictBeforeMintingTheValue(t *testing.T) {
 	if out.EnvVar != "GITHUB_TOKEN" || out.Value == "" {
 		t.Fatalf("response = %#v, want a minted value", out)
 	}
-	if len(fake.verdictCalls) != 1 {
-		t.Fatalf("verdict calls = %d, want exactly one", len(fake.verdictCalls))
+	if len(fake.judged) != 1 {
+		t.Fatalf("judged %d commands, want exactly one", len(fake.judged))
 	}
-	call := fake.verdictCalls[0]
-	if call.SandboxID != "sb-1" || call.UseID != "use-1" || call.Volunteered {
-		t.Fatalf("recorded verdict = %#v, want it scoped to this sandbox/use and not volunteered", call)
-	}
-	if !call.Verdict.Allow || call.Verdict.Role != "judge" {
-		t.Fatalf("recorded verdict = %#v, want the allow verdict carried through", call.Verdict)
+	asked := fake.judged[0]
+	if asked.SandboxID != "sb-1" || asked.UseID != "use-1" || len(asked.Command) != 5 ||
+		asked.Stdin == nil || asked.Stdin.Content != "Fixes #1" || asked.Reported == nil || asked.Reported.WorkingDirectory != "/src/repo" {
+		t.Fatalf("asked = %#v, want this sandbox's use and the command as declared", asked)
 	}
 }
 
-func TestGetRefusesAMissingVerdict(t *testing.T) {
-	broker, fake := newFakeControlPlane(t, []credentialDoc{{
-		EnvVar: "GITHUB_TOKEN", Hosts: []string{"api.github.com"}, Sentinel: "STABLE-1",
-		Uses: []credentialUseDoc{{UseID: "use-1", Description: "open a PR"}},
-	}})
-	b := &credentialBroker{sandboxID: "sb-1", controlPlan: broker, activations: newActivations()}
+// A refusal mints nothing, and the judge's sentence is what the sandbox is
+// told.
+func TestGetMintsNothingTheJudgeRefused(t *testing.T) {
+	plane, fake := newFakeControlPlane(t, oneUse())
+	refuse := false
+	fake.answer = judgeAnswer{Allow: &refuse, Reason: "deleting the repository is not opening a PR"}
+	live := newActivations()
 
-	_, err := b.Get(context.Background(), agentcreds.UseBody{UseID: "use-1", Command: []string{"gh"}})
-	if !errors.Is(err, agentcreds.ErrInvalid) {
-		t.Fatalf("get error = %v, want ErrInvalid for a body with no verdict", err)
+	_, err := judgedBroker(plane, live).Get(context.Background(), agentcreds.UseBody{UseID: "use-1", Command: []string{"gh", "repo", "delete"}})
+	if !errors.Is(err, agentcreds.ErrDenied) || !strings.Contains(err.Error(), "deleting the repository") {
+		t.Fatalf("get error = %v, want ErrDenied carrying the judge's reason", err)
 	}
-	if len(fake.verdictCalls) != 0 {
-		t.Fatal("a rejected call still reached the control plane")
-	}
-}
-
-// A control plane that cannot record the verdict must not mint a value
-// anyway: the record is what makes the mint safe to have issued, not a
-// courtesy alongside it.
-func TestGetMintsNothingWhenRecordingTheVerdictFails(t *testing.T) {
-	broker, fake := newFakeControlPlane(t, []credentialDoc{{
-		EnvVar: "GITHUB_TOKEN", Hosts: []string{"api.github.com"}, Sentinel: "STABLE-1",
-		Uses: []credentialUseDoc{{UseID: "use-1", Description: "open a PR"}},
-	}})
-	fake.verdictErr = errors.New("database unavailable")
-	activations := newActivations()
-	b := &credentialBroker{sandboxID: "sb-1", controlPlan: broker, activations: activations}
-
-	_, err := b.Get(context.Background(), agentcreds.UseBody{UseID: "use-1", Verdict: allowVerdict()})
-	if err == nil {
-		t.Fatal("get minted a value even though its verdict could not be recorded")
+	if len(live.byEphemeral) != 0 {
+		t.Fatal("a refused command left an activation behind")
 	}
 }
 
-// A denial never reaches Get (ADR 0079 §1's ordering mints nothing for a
-// refusal), so ReportDenial is the only route it reaches the control plane
-// by, and it must reach it with Volunteered set.
-func TestReportDenialRecordsAVolunteeredVerdict(t *testing.T) {
-	broker, fake := newFakeControlPlane(t, nil)
-	b := &credentialBroker{sandboxID: "sb-1", controlPlan: broker, activations: newActivations()}
-
-	err := b.ReportDenial(context.Background(), agentcreds.DenialReport{
-		UseID:   "use-1",
-		Command: []string{"curl", "-X", "DELETE"},
-		Verdict: agentcreds.Verdict{Allow: false, Reason: "broader than the approved use", Role: "judge", Prompt: "..."},
-	})
-	if err != nil {
-		t.Fatalf("report denial: %v", err)
+// Anything that is not an allow refuses: a judge that could not be reached,
+// or one that answered neither way. A command is asked about before anything
+// exists to lose, so there is no reason to let one through on a silence.
+func TestGetMintsNothingWithoutAnAnswer(t *testing.T) {
+	for name, set := range map[string]func(*fakeControlPlane){
+		"unreachable": func(f *fakeControlPlane) { f.status, f.problem = http.StatusServiceUnavailable, "about:blank" },
+		"no decision": func(f *fakeControlPlane) { f.answer = judgeAnswer{Reason: "?"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			plane, fake := newFakeControlPlane(t, oneUse())
+			set(fake)
+			live := newActivations()
+			_, err := judgedBroker(plane, live).Get(context.Background(), agentcreds.UseBody{UseID: "use-1", Command: []string{"gh"}})
+			if !errors.Is(err, agentcreds.ErrDenied) || len(live.byEphemeral) != 0 {
+				t.Fatalf("get error = %v with %d activations, want ErrDenied and none", err, len(live.byEphemeral))
+			}
+		})
 	}
-	if len(fake.verdictCalls) != 1 || !fake.verdictCalls[0].Volunteered {
-		t.Fatalf("verdict calls = %#v, want exactly one, volunteered", fake.verdictCalls)
+}
+
+// A server that does not judge commands says so, and the value is minted
+// without a verdict (ADR 26-10-02-054 §3).
+func TestGetMintsUnjudgedOnAServerThatDoesNotJudgeCommands(t *testing.T) {
+	plane, fake := newFakeControlPlane(t, oneUse())
+	fake.status, fake.problem = http.StatusServiceUnavailable, judgingDisabledKind
+
+	out, err := judgedBroker(plane, newActivations()).Get(context.Background(), agentcreds.UseBody{UseID: "use-1", Command: []string{"gh"}})
+	if err != nil || out.Value == "" {
+		t.Fatalf("get = %#v, %v; want a value from a server that does not judge commands", out, err)
+	}
+}
+
+// A value is only ever handed out for a command to judge, and a use nobody
+// holds is refused before anybody is asked.
+func TestGetAsksNothingForNoCommandOrNoUse(t *testing.T) {
+	plane, fake := newFakeControlPlane(t, oneUse())
+	b := judgedBroker(plane, newActivations())
+
+	if _, err := b.Get(context.Background(), agentcreds.UseBody{UseID: "use-1"}); !errors.Is(err, agentcreds.ErrInvalid) {
+		t.Fatalf("get error = %v, want ErrInvalid for no command", err)
+	}
+	if _, err := b.Get(context.Background(), agentcreds.UseBody{UseID: "use-gone", Command: []string{"gh"}}); !errors.Is(err, agentcreds.ErrDenied) {
+		t.Fatalf("get error = %v, want ErrDenied for a use nobody holds", err)
+	}
+	if len(fake.judged) != 0 {
+		t.Fatalf("judged %d commands, want none", len(fake.judged))
 	}
 }
 
@@ -195,7 +217,7 @@ func TestAUseGrantedForSeveralHostsIsSpentAtEach(t *testing.T) {
 		Uses:  []credentialUseDoc{{UseID: "use-1", Description: "run copilot"}},
 	}})
 	live := newActivations()
-	b := &credentialBroker{sandboxID: "sb-1", controlPlan: broker, activations: live}
+	b := judgedBroker(broker, live)
 
 	listed, err := b.List(context.Background())
 	if err != nil {
@@ -205,7 +227,7 @@ func TestAUseGrantedForSeveralHostsIsSpentAtEach(t *testing.T) {
 		t.Fatalf("listed = %+v, want both hosts", listed)
 	}
 
-	out, err := b.Get(context.Background(), agentcreds.UseBody{UseID: "use-1", Command: []string{"copilot"}, Verdict: allowVerdict()})
+	out, err := b.Get(context.Background(), agentcreds.UseBody{UseID: "use-1", Command: []string{"copilot"}})
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -242,8 +264,8 @@ func TestAnActivationIsNeverPinnedToNoHost(t *testing.T) {
 			doc.Uses = []credentialUseDoc{{UseID: "use-1", Description: "open a PR"}}
 			broker, _ := newFakeControlPlane(t, []credentialDoc{doc})
 			live := newActivations()
-			b := &credentialBroker{sandboxID: "sb-1", controlPlan: broker, activations: live}
-			out, err := b.Get(context.Background(), agentcreds.UseBody{UseID: "use-1", Verdict: allowVerdict()})
+			b := judgedBroker(broker, live)
+			out, err := b.Get(context.Background(), agentcreds.UseBody{UseID: "use-1", Command: []string{"gh"}})
 			if err != nil {
 				t.Fatalf("get: %v", err)
 			}

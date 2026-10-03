@@ -65,6 +65,17 @@ func judgeJob(in *sandboxapi.JudgeJob) judge.Job {
 		Guidance:   in.Guidance,
 		Uses:       in.Uses,
 	}
+	if stdin, ok := in.Stdin.Get(); ok {
+		job.Stdin = &judge.Input{Content: stdin.Content, Missing: stdin.Missing.Or("")}
+	}
+	if reported, ok := in.Reported.Get(); ok {
+		job.Reported = &judge.Reported{
+			WorkingDirectory: reported.WorkingDirectory.Or(""),
+			RepositoryRoot:   reported.RepositoryRoot.Or(""),
+			RefCommit:        reported.RefCommit.Or(""),
+			RefSubject:       reported.RefSubject.Or(""),
+		}
+	}
 	evidence, ok := in.Request.Get()
 	if !ok {
 		return job

@@ -89,9 +89,10 @@ type Options struct {
 	// a sandbox is started with. Empty when the server does not listen on iroh,
 	// where that address would reach nothing; sandboxes then get none.
 	ServerPeerID string
-	// JudgeCredentials turns the judge on. It is off unless a server opted in,
-	// and while it is off no project has a judge and nothing is asked one.
-	JudgeCredentials bool
+	// Judging is what this server judges: commands, credential-bearing
+	// requests, both or neither (ADR 26-10-02-054). While it judges nothing,
+	// no project has a judge and nothing is asked one.
+	Judging judges.Judging
 	// JudgeJev, when set, is what judges instead of a judge discobox per
 	// project (ADR 26-10-01-324).
 	JudgeJev *jev.Client
@@ -136,7 +137,7 @@ func New(store *store.Store, engine *reconcile.Engine, options Options) *Service
 	// it exists when the project has a pool for it and a configured default
 	// harness, and is replaced when that harness is — unless the server judges
 	// with Jev, when no project has a judge discobox (ADR 26-10-01-324 §2).
-	judgeService := judges.New(store, sandboxService, nil, options.JudgeCredentials, options.JudgeJev, options.JudgeJevFallback)
+	judgeService := judges.New(store, sandboxService, nil, options.Judging, options.JudgeJev, options.JudgeJevFallback)
 	// Reaching the judge's own agent is the sandbox service's to do; which
 	// discobox is the judge is this one's (ADR 26-09-22-838 §2).
 	judgeService.SetLeases(sandboxService)

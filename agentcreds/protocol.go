@@ -70,10 +70,19 @@ const (
 	PathRequests = "/" + Version + "/credentials/requests"
 	// PathUse takes a value for one declared command.
 	PathUse = "/" + Version + "/credentials/use"
-	// PathDenials volunteers a verdict for a command the judge refused, which
-	// never reached PathUse (ADR 0091 §3).
-	PathDenials = "/" + Version + "/credentials/denials"
 )
+
+// MaxReportedBytes is the most any one field of Reported may be. An
+// implementation may refuse a use whose report has a longer one. It is small
+// because JSON may write a byte as six, and the four fields share one body
+// (MaxBodyBytes) with the most of stdin a caller shows.
+const MaxReportedBytes = 256
+
+// UseTimeout is how long a use call may take. An implementation may judge the
+// command before it hands out a value, and a judge that has to be brought up
+// first takes minutes rather than seconds, so a client waits this long for
+// the answer rather than the few seconds every other call gets.
+const UseTimeout = 4 * time.Minute
 
 // Request status values. A request settles from Pending to exactly one of
 // Granted or Denied and never moves again.
@@ -213,46 +222,43 @@ func (s RequestStatus) Settled() bool {
 	return s.Status == StatusGranted || s.Status == StatusDenied
 }
 
-// Verdict is what a judge decided about a command, carried on the call that
-// takes a value for it so that a credential cannot be issued without one
-// (ADR 0091): the call that mints the value is the call that carries the
-// record of why.
-//
-// Role names what discobox-prompt was asked for (e.g. "judge"), never a
-// vendor model id — the judge itself never learns one to report. Prompt is
-// stored in full, not digested: the value of an audit record here is being
-// able to read exactly what the judge saw, not a hash of it.
-type Verdict struct {
-	Allow     bool   `json:"allow"`
-	Reason    string `json:"reason,omitempty"`
-	Role      string `json:"role"`
-	Prompt    string `json:"prompt"`
-	LatencyMS int64  `json:"latencyMs,omitempty"`
-}
-
 // UseBody takes a value for one command. Command is the argv the caller is
-// about to run, declared before the value is handed out. It narrows the window
-// and gives the audit log a per-use story; it is never a trust anchor, because
-// the caller could lie about it.
+// about to run, declared before the value is handed out; Stdin and Reported
+// are what that command will read on standard input and where the caller says
+// it runs.
 //
-// Verdict is required: an implementation may reject a body without one, the
-// same way it rejects a body without a UseID (ADR 0091 §1).
+// An implementation may judge the command before it hands out anything, and
+// Discobox does: a value is handed out only when its judge allows the command
+// for the use, and a refusal is CodeDenied with the judge's reason (ADR
+// 26-09-22-838 §3). Everything here is the caller's word, so it is evidence
+// for that judgement and never authority; the use is what was approved.
 type UseBody struct {
-	UseID   string   `json:"useId"`
-	Command []string `json:"command,omitempty"`
-	Verdict Verdict  `json:"verdict"`
+	UseID    string    `json:"useId"`
+	Command  []string  `json:"command,omitempty"`
+	Stdin    *Stdin    `json:"stdin,omitempty"`
+	Reported *Reported `json:"reported,omitempty"`
 }
 
-// DenialReport volunteers a verdict that never reached UseBody because the
-// judge refused before a value was ever taken (ADR 0079 §1's ordering means a
-// refusal mints nothing, so the use call this would otherwise ride never
-// happens). Reporting it is best-effort on the caller's side — nothing about
-// what the CLI does next depends on whether this call succeeds — but what it
-// stores, once it arrives, is as real as an issued verdict.
-type DenialReport struct {
-	UseID   string   `json:"useId"`
-	Command []string `json:"command,omitempty"`
-	Verdict Verdict  `json:"verdict"`
+// Stdin is what a command will read on standard input, as much of it as the
+// caller shows: text, and a sentence for whatever of it is not shown.
+type Stdin struct {
+	// Content is the input shown, which is text. Empty when none of it is
+	// shown, and Missing then says why.
+	Content string `json:"content"`
+	// Missing says why Content is not the whole input: longer than the caller
+	// shows, still arriving, not text, or a read that failed.
+	Missing string `json:"missing,omitempty"`
+}
+
+// Reported is what the caller says about where a command runs. Every field is
+// optional, and at most MaxReportedBytes: they are a path or a line.
+type Reported struct {
+	WorkingDirectory string `json:"workingDirectory,omitempty"`
+	RepositoryRoot   string `json:"repositoryRoot,omitempty"`
+	// RefCommit and RefSubject are the commit a git ref the command names
+	// resolves to, and that commit's subject line.
+	RefCommit  string `json:"refCommit,omitempty"`
+	RefSubject string `json:"refSubject,omitempty"`
 }
 
 // UseResponse carries the value to place in EnvVar for that one command, and

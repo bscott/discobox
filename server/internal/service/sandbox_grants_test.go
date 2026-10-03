@@ -89,6 +89,10 @@ func (j *grantJudge) Judge(context.Context, string, services.JudgeAsk) (judge.An
 	return judge.Answer{}, errors.New("not a request judge")
 }
 
+func (j *grantJudge) JudgeCommand(context.Context, string, services.CommandAsk) (judge.Answer, error) {
+	return judge.Answer{}, errors.New("not a command judge")
+}
+
 func (j *grantJudge) JudgeDelegation(_ context.Context, _ string, ask services.DelegationAsk) (judge.Answer, error) {
 	j.asked = append(j.asked, ask)
 	return judge.Answer{Allow: j.allow, Reason: "decided"}, nil

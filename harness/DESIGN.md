@@ -172,8 +172,9 @@ launchers, and configure scripts.
   `DISABLE_AUTOUPDATER` in claude-code's env layer, `check_for_update_on_startup`
   in codex's system config, `OPENCODE_DISABLE_AUTOUPDATE` in opencode's env
   layer. `discobox-harness-upgrade` is the by-hand "newest, now".
-- Every harness image provides **`/usr/local/bin/discobox-prompt`**, a one-shot
-  prompting interface in-sandbox tools ask for a model through
+- Every harness image that runs a model provides
+  **`/usr/local/bin/discobox-prompt`**, a one-shot prompting interface a
+  process in the discobox asks for a model through
   ([ADR 0079](../docs/adr/0079-a-local-judge-gates-every-wrapped-credential-use.md)):
   `discobox-prompt --model ROLE --system TEXT --prompt TEXT --output-schema JSON [--no-tools]`,
   answering on stdout and exiting 0 only when the model answered. `--model`
@@ -194,9 +195,11 @@ launchers, and configure scripts.
   killed on cancellation runs no trap, and its caller removes that `TMPDIR`
   (the sandbox agent gives each judging run its own and removes it,
   `execs.RunOnce`). It goes on PATH rather than in `libexec` because
-  its callers resolve it by name. Its first consumer is the credential CLI's
-  judge, which will not run a wrapped command until a model agrees the command
-  is the approved use, and which never omits `--no-tools`.
+  its callers resolve it by name. Its consumer is the project's judge: the
+  sandbox agent of a discobox in judge mode, running the project's default
+  harness, which answers every command, request and delegation job with it
+  ([ADR 26-09-22-838](../docs/adr/26-09-22-838-a-dedicated-pool-harness-judges-commands-and-credential-bearing-requests.md))
+  and never omits `--no-tools`.
 
   **With `--output-schema`, stdout is one JSON document and nothing else.** The
   answer is decoded strictly ([`judge`](../judge/DESIGN.md)): prose around it,
@@ -212,12 +215,9 @@ launchers, and configure scripts.
   that through it too, since a model asked for JSON may fence it anyway. Each
   captures its CLI's output rather than piping it, so a failed run is a failed
   wrapper rather than a successful print of nothing. The `shell`
-  image
-  runs no model, so its wrapper answers only the `judge` role, with a fixed
-  verdict. It refuses, as the judge fails closed, unless a person set
-  `DISCOBOX_SHELL_JUDGE=allow` for the discobox, which allows every judged
-  command. It is a stand-in until the pool judge decides these requests; the
-  host a credential may go to is enforced either way.
+  image runs no model and provides no wrapper: a project whose default harness
+  is `shell` has no judge discobox
+  ([ADR 26-10-02-054](../docs/adr/26-10-02-054-commands-are-judged-by-default-and-requests-by-opt-in.md)).
 
   **The `judge` role answers without extended reasoning, and a one-shot run
   does nothing beside the model call.** The judge holds a request open, and

@@ -173,7 +173,10 @@ var poolRuntimeActions = map[string]bool{
 	"sandbox-secret-rejections": false,
 	// Putting a job to the project's judge (ADR 26-09-22-838 §2). One call is one
 	// job, so it takes no trailing ID.
-	"judge":                       false,
+	"judge": false,
+	// Judging a command before its credential is minted (ADR 26-09-22-838
+	// §3). One call is one command, so it takes no trailing ID.
+	"judge-commands":              false,
 	"sandbox-agent-status-tokens": false,
 	"sandbox-agent-status":        false,
 	// The pool's resource report (ADR 0071, resource accounting). It addresses the pool itself, so
@@ -186,9 +189,6 @@ var poolRuntimeActions = map[string]bool{
 	// The agent credentials broker (ADR 0031).
 	"sandbox-credentials":         false,
 	"sandbox-credential-requests": true, // .../{requestId} polls one request
-	// The judge's verdict trail (ADR 0091). It addresses no resource of its
-	// own — one call records one verdict — so it takes no trailing ID.
-	"sandbox-credential-verdicts": false,
 	// Host trust (ADR 0149): an agent's ask, polled by its ID, and the pool's
 	// read of every live trust its proxy enforces.
 	"sandbox-trust-requests": true, // .../{requestId} polls one request

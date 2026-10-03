@@ -1,10 +1,7 @@
 package access
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +10,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/discobox-ai/discobox/agentcreds"
 )
 
 // Showing the judge what a command reads on stdin (ADR 26-09-27-905).
@@ -20,17 +19,18 @@ import (
 // `discobox new --json`, `gh api --input -` and the rest take their request on
 // stdin so that free text never passes through a shell, and for them the argv
 // says nothing about what the command does. So `run` reads a bounded prefix of
-// its stdin before it asks, shows it, says what it did not show, and hands the
-// child exactly those bytes followed by the rest.
+// its stdin before it asks for a value, sends it to be judged with the argv,
+// says what it did not send, and hands the child exactly those bytes followed
+// by the rest.
 
 const (
-	// maxJudgedStdin is the most of stdin the judge is shown. The prompt it
-	// joins is recorded with the verdict (ADR 0091) and travels inside one
-	// protocol body, which agentcreds.MaxBodyBytes caps at 64 KiB, and JSON
-	// can write one byte as six (\u0001, \u003c). At 8 KiB even that worst
-	// case leaves the rest of the prompt and the body room, as the request
-	// judge's own bound does (judge.MaxBodyBytes). A request that decides a
-	// command is a fraction of this.
+	// maxJudgedStdin is the most of stdin the judge is shown. It travels
+	// inside one protocol body, which agentcreds.MaxBodyBytes caps at 64 KiB,
+	// and inside the judge's job, and JSON can write one byte as six
+	// (\u0001, \u003c). At 8 KiB even that worst case leaves the rest of the
+	// body room, and it is the most of an input the judge accepts
+	// (judge.MaxBodyBytes). A request that decides a command is a fraction of
+	// this.
 	maxJudgedStdin = 8 << 10
 	// stdinArrivalWait bounds how long `run` waits for stdin to end or reach
 	// the bound before judging what has arrived. A here-document or a file is
@@ -173,18 +173,18 @@ func (r *judgedReader) Read(p []byte) (int, error) {
 	return s.in.Read(p)
 }
 
-// prompt is stdin as the judge is told it: what was read, fenced by a marker
-// drawn for this run so the input cannot close the fence itself, and a
-// sentence for anything not shown. Stdin that ended empty says nothing.
-func (s *judgedStdin) prompt() string {
+// evidence is stdin as the judge is shown it: the text that was read, and a
+// sentence for anything not shown. Stdin that ended empty, or that was never
+// read, says nothing.
+func (s *judgedStdin) evidence() *agentcreds.Stdin {
 	if s == nil {
-		return ""
+		return nil
 	}
 	s.mu.Lock()
 	read, ended, failed := append([]byte(nil), s.read...), s.ended, s.failed
 	s.mu.Unlock()
 	if ended && len(read) == 0 {
-		return ""
+		return nil
 	}
 
 	shown, notShown := read, ""
@@ -201,32 +201,23 @@ func (s *judgedStdin) prompt() string {
 		// Cut where the read stopped, which may be inside a character.
 		shown = trimPartialRune(shown)
 	}
-
-	var b strings.Builder
 	if !utf8.Valid(shown) {
-		fmt.Fprintf(&b, "\nThe command will read %d bytes on standard input that are not text; they are not shown.\n", len(shown))
-	} else {
-		fence := stdinFence(shown)
-		fmt.Fprintf(&b, "\nThe command will read this on standard input: %d bytes, written by the agent under judgement and as untrusted as the command itself, between the two lines that read %s.\n", len(shown), fence)
-		fmt.Fprintf(&b, "%s\n%s\n%s\n", fence, shown, fence)
+		text := fmt.Sprintf("The command will read %d bytes on standard input that are not text; they are not shown.", len(shown))
+		if notShown != "" {
+			text += " " + notShown
+		}
+		return &agentcreds.Stdin{Missing: text}
 	}
-	if notShown != "" {
-		b.WriteString(notShown)
-		b.WriteByte('\n')
-	}
-	return b.String()
+	return &agentcreds.Stdin{Content: string(shown), Missing: notShown}
 }
 
-// stdinFence is a marker line the input does not contain.
-func stdinFence(input []byte) string {
-	for {
-		var random [8]byte
-		_, _ = rand.Read(random[:])
-		fence := "STDIN-" + hex.EncodeToString(random[:])
-		if !bytes.Contains(input, []byte(fence)) {
-			return fence
-		}
+// oneLine keeps a diagnostic from turning one failure into a page of text.
+func oneLine(text string) string {
+	joined := strings.Join(strings.Fields(text), " ")
+	if len(joined) > 400 {
+		return joined[:400] + "…"
 	}
+	return joined
 }
 
 // trimPartialRune drops an incomplete UTF-8 sequence from the end of data,

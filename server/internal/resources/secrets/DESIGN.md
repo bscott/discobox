@@ -312,16 +312,16 @@ The entry points:
 - **`GetSandboxCredentialRequest`** — a sandbox's own protocol request and, once
   approved, its grant. `AgentCredentialRequestStatus` reports an approval whose
   grant has since been revoked as `denied`.
-- **`RecordCredentialVerdict`** — persists the pool agent's relay of a
-  discobox's own judge's verdict on one command as a `CredentialVerdict` row
-  (kind `command`, origin `sandbox`), linked best-effort to the grant owning the
-  use ID. The pool agent records before it issues, and a store failure stops the
-  issue, so no credential goes out without a verdict on record (ADR 0091). A
-  refused use is reported too, best-effort, and flagged `Volunteered`. The
-  project's judge's verdicts on requests are recorded by `judges`, not here;
-  `ApprovedUse` hands it the grant to record them against.
+- **`ApprovedUse` / `ApprovedCredentialUse`** — what a request, or a command,
+  is judged against: the approved sentence, the credential's name and the host,
+  read from the live grant, never from what a pool sent. `ApprovedUse` also
+  matches a host trust's use for its host; `ApprovedCredentialUse` matches only
+  a credential's, since only one of those takes a value. Verdicts are recorded
+  by `judges`, not here, against the grant these hand it (ADR 26-09-22-838 §3).
+  Rows of kind `command` and origin `sandbox`, with `Volunteered`, predate that:
+  a discobox's own judge's word, relayed by its pool, and kept readable.
 - **`ListCredentialVerdicts`** — the read side, for a project's members rather
-  than a pool: every recorded verdict in the project, of both kinds, newest
+  than a pool: every recorded verdict in the project, of every kind, newest
   first, narrowed by kind, sandbox, use, grant, allow/deny and a start time. It never looks the sandbox
   up. A verdict outlives its sandbox's purge, and the sandboxes whose trail is
   worth reading are often the ones already gone, so the sandbox is a filter on

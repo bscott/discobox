@@ -111,7 +111,7 @@ func newJudgeTest(t *testing.T) (*Service, *store.Store, *fakeSandboxes) {
 	sandboxes := &fakeSandboxes{store: appStore}
 	// Enabled: every test below is about what a server that judges does. The
 	// server that has not opted in is its own test.
-	return New(appStore, sandboxes, nil, true, nil, false), appStore, sandboxes
+	return New(appStore, sandboxes, nil, Judging{Commands: true, Requests: true}, nil, false), appStore, sandboxes
 }
 
 // harness records a configured harness and makes it the project's default.
@@ -563,6 +563,10 @@ func (a approvedUses) ApprovedUse(context.Context, string, string, string, strin
 	return a.use, nil
 }
 
+func (a approvedUses) ApprovedCredentialUse(ctx context.Context, poolID, sandboxID, useID string) (services.ApprovedUse, error) {
+	return a.ApprovedUse(ctx, poolID, sandboxID, useID, "")
+}
+
 // requestAsk is a pool asking about an ordinary observed request.
 func requestAsk() services.JudgeAsk {
 	return services.JudgeAsk{
@@ -577,7 +581,7 @@ func requestAsk() services.JudgeAsk {
 func TestAServerThatDoesNotJudgeMakesNoJudge(t *testing.T) {
 	ctx := context.Background()
 	service, appStore, sandboxes := newJudgeTest(t)
-	service.enabled = false
+	service.judging = Judging{}
 	defaultHarness(t, appStore, "codex", "sha256:one")
 
 	if _, err := service.Reconcile(ctx, "project-1"); err != nil {
@@ -610,7 +614,7 @@ func TestTurningJudgingOffTakesTheJudgeAway(t *testing.T) {
 	}
 	judge := sandboxes.created[0].ID
 
-	service.enabled = false
+	service.judging = Judging{}
 	if _, err := service.Reconcile(ctx, "project-1"); err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
@@ -632,7 +636,7 @@ func TestTurningJudgingOffTakesTheJudgeAway(t *testing.T) {
 func TestAServerThatDoesNotJudgeRefusesToBeAsked(t *testing.T) {
 	ctx := context.Background()
 	service, appStore, _ := newJudgeTest(t)
-	service.enabled = false
+	service.judging = Judging{}
 	defaultHarness(t, appStore, "codex", "sha256:one")
 
 	_, err := service.Judge(ctx, "pool-1", requestAsk())
@@ -813,6 +817,10 @@ func TestAUseRevokedWhileTheJudgeThoughtIsNotAllowed(t *testing.T) {
 
 // revokedAfterFirst answers once and is gone by the time it is asked again.
 type revokedAfterFirst struct{ asked int }
+
+func (r *revokedAfterFirst) ApprovedCredentialUse(ctx context.Context, poolID, sandboxID, useID string) (services.ApprovedUse, error) {
+	return r.ApprovedUse(ctx, poolID, sandboxID, useID, "")
+}
 
 func (r *revokedAfterFirst) ApprovedUse(context.Context, string, string, string, string) (services.ApprovedUse, error) {
 	r.asked++
@@ -1302,7 +1310,7 @@ func TestADelegationIsJudgedAndRecordedAgainstItsGrant(t *testing.T) {
 // not answer one: the approval it was asked for refuses.
 func TestAServerThatDoesNotJudgeRefusesADelegation(t *testing.T) {
 	service, _, _ := newJudgeTest(t)
-	service.enabled = false
+	service.judging = Judging{}
 	if _, err := service.JudgeDelegation(context.Background(), "project-1", services.DelegationAsk{
 		Delegated: []string{"read issues"}, Uses: []string{"read issue 43"}, Hosts: []string{"api.github.com"},
 	}); err == nil {

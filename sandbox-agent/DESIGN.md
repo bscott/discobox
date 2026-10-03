@@ -298,11 +298,12 @@ PID, because PIDs are reused and the pool agent differences per process.
   no in-sandbox process can forge without already having root here — at which
   point it has the listener too. A sandbox with no staged proxy material simply
   does not bring the endpoint up; that is not a startup failure.
-- `discobox-access run` refuses to execute a command until a model has
-  agreed the command is the use it was approved for, asking through the harness
-  image's `discobox-prompt` (ADR 0079). The gate runs in the sandbox, so it is a
-  guardrail on the honest path rather than a boundary; the pool agent's
-  activation check and the control plane's grant are still what enforce.
+- `discobox-access run` judges nothing in the sandbox. It sends the argv, what
+  the command reads on stdin, and where it runs on the use call, and the pool
+  mints a value only once the project's judge allows the command
+  ([ADR 26-09-22-838](../docs/adr/26-09-22-838-a-dedicated-pool-harness-judges-commands-and-credential-bearing-requests.md) §3).
+  The relay passes the call through and waits as long as a judge may take
+  (`agentcreds.UseTimeout`).
 - A value taken through the credential CLI is never written to disk or exported
   into a shell. `discobox-access run --use ID -- cmd` injects it into that
   one child process's environment, replacing rather than joining any same-named

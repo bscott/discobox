@@ -258,32 +258,23 @@ func runWrapped(ctx context.Context, args []string) int {
 	if len(command) == 0 {
 		return usageError(out, "no command given; use `%s run --use USE_ID -- COMMAND ...`", Name)
 	}
-	client := newClient()
-	credential, use, err := approvedUse(ctx, client, useID)
-	if err != nil {
-		return out.report(err)
+	useID = strings.TrimSpace(useID)
+	if useID == "" {
+		return out.report(fmt.Errorf("%w: --use is required", agentcreds.ErrInvalid))
 	}
-	// Judged before the value is taken (ADR 0079 §1), so a refusal mints no
-	// ephemeral sentinel and leaves no activation behind for a command that
-	// never ran.
-	//
 	// What the command will read on stdin is read first, bounded, because for
 	// a command that takes its request there it is what the command does
-	// (ADR 26-09-27-905).
+	// (ADR 26-09-27-905); where it runs is looked up beside it (ADR 0090).
+	// Both go with the argv to the service, which judges them on trusted
+	// ground before it hands out anything (ADR 26-09-22-838 §3): a refusal
+	// mints nothing and the command never starts.
 	stdin := readStdin(ctx, os.Stdin)
-	verdict, judgeErr := judgeCommand(ctx, credential, use, command, stdin)
-	if judgeErr != nil {
-		// A denial never reaches Get, and so would leave no record on trusted
-		// ground at all if this stopped here. Reporting it is best-effort — its
-		// own failure changes nothing about what run reports for the refusal
-		// that prompted it — and only attempted when a judge was actually asked;
-		// a zero Verdict means judgeCommand never got that far.
-		if verdict.Role != "" {
-			_ = client.ReportDenial(ctx, agentcreds.DenialReport{UseID: useID, Command: command, Verdict: verdict})
-		}
-		return out.report(judgeErr)
-	}
-	result, err := client.Get(ctx, agentcreds.UseBody{UseID: useID, Command: command, Verdict: verdict})
+	result, err := newClient().Get(ctx, agentcreds.UseBody{
+		UseID:    useID,
+		Command:  command,
+		Stdin:    stdin.evidence(),
+		Reported: gatherFacts(ctx, command),
+	})
 	if err != nil {
 		return out.report(err)
 	}
@@ -321,31 +312,6 @@ func runWrapped(ctx context.Context, args []string) int {
 		return out.report(err)
 	}
 	return exitOK
-}
-
-// approvedUse finds the credential and the approved use behind a use ID, which
-// is what the judge compares the command against.
-//
-// A use the service does not list cannot be judged — there is no approved
-// sentence to hold the command up to — so it is refused here rather than
-// carried to the use call, which would only deny it one hop later.
-func approvedUse(ctx context.Context, client *agentcreds.Client, useID string) (agentcreds.Credential, agentcreds.Use, error) {
-	useID = strings.TrimSpace(useID)
-	if useID == "" {
-		return agentcreds.Credential{}, agentcreds.Use{}, fmt.Errorf("%w: --use is required", agentcreds.ErrInvalid)
-	}
-	credentials, err := client.List(ctx)
-	if err != nil {
-		return agentcreds.Credential{}, agentcreds.Use{}, err
-	}
-	for _, credential := range credentials {
-		for _, use := range credential.Uses {
-			if use.UseID == useID {
-				return credential, use, nil
-			}
-		}
-	}
-	return agentcreds.Credential{}, agentcreds.Use{}, fmt.Errorf("%w: no live approved use %s", agentcreds.ErrDenied, useID)
 }
 
 // Where the discobox CLI finds its server, and the address the pool gives a

@@ -17,28 +17,11 @@ import (
 // What a command reads on stdin is shown to the judge (ADR 26-09-27-905): for
 // `discobox new --json` and its kind, it is the whole of what the command does.
 
-// recordedPrompt is the --prompt the stub judge was called with.
-func recordedPrompt(t *testing.T, argsFile string) string {
-	t.Helper()
-	recorded, err := os.ReadFile(argsFile)
-	if err != nil {
-		t.Fatalf("read recorded args: %v", err)
-	}
-	args := strings.Split(strings.TrimSuffix(string(recorded), "\x00"), "\x00")
-	for i := 0; i+1 < len(args); i++ {
-		if args[i] == "--prompt" {
-			return args[i+1]
-		}
-	}
-	t.Fatalf("args = %q, want a --prompt", args)
-	return ""
-}
-
-// The request a command reads on stdin reaches the judge, fenced, and the
-// command still reads every byte of it.
+// The request a command reads on stdin is sent to be judged, and the command
+// still reads every byte of it.
 func TestRunShowsTheJudgeWhatTheCommandReadsOnStdin(t *testing.T) {
-	argsFile := stubJudge(t, allowScript)
-	serve(t, &fakeService{credentials: judgeCredentials()})
+	svc := &fakeService{}
+	serve(t, svc)
 	out := filepath.Join(t.TempDir(), "read")
 	input := `{"prompt": "fix issue 43", "grants": [{"id": "com.github.api", "uses": [{"description": "push issue-43"}]}]}` + "\n"
 
@@ -48,12 +31,8 @@ func TestRunShowsTheJudgeWhatTheCommandReadsOnStdin(t *testing.T) {
 	if code != exitOK {
 		t.Fatalf("exit = %d, stderr %q", code, stderr)
 	}
-	prompt := recordedPrompt(t, argsFile)
-	if !strings.Contains(prompt, "standard input") || !strings.Contains(prompt, `"description": "push issue-43"`) {
-		t.Fatalf("--prompt = %q, want what the command reads on stdin", prompt)
-	}
-	if strings.Count(prompt, "STDIN-") != 3 {
-		t.Fatalf("--prompt = %q, want the input between two fence lines, named once", prompt)
+	if got := svc.gotUse.Stdin; got == nil || got.Content != input || got.Missing != "" {
+		t.Fatalf("stdin sent = %#v, want all of what the command reads", got)
 	}
 	if read, _ := os.ReadFile(out); string(read) != input {
 		t.Fatalf("the command read %q, want exactly what was sent", read)
@@ -63,8 +42,8 @@ func TestRunShowsTheJudgeWhatTheCommandReadsOnStdin(t *testing.T) {
 // Past the bound the judge is told there is more, and the command still reads
 // all of it, in order.
 func TestRunSaysWhatOfStdinItDidNotShow(t *testing.T) {
-	argsFile := stubJudge(t, allowScript)
-	serve(t, &fakeService{credentials: judgeCredentials()})
+	svc := &fakeService{}
+	serve(t, svc)
 	out := filepath.Join(t.TempDir(), "read")
 	input := strings.Repeat("0123456789abcdef", maxJudgedStdin/16) + "the part past the bound"
 
@@ -74,9 +53,8 @@ func TestRunSaysWhatOfStdinItDidNotShow(t *testing.T) {
 	if code != exitOK {
 		t.Fatalf("exit = %d", code)
 	}
-	prompt := recordedPrompt(t, argsFile)
-	if strings.Contains(prompt, "the part past the bound") || !strings.Contains(prompt, "longer than the 8192 bytes shown") {
-		t.Fatalf("--prompt shows %d bytes, want the first %d and that there is more", len(prompt), maxJudgedStdin)
+	if got := svc.gotUse.Stdin; got == nil || len(got.Content) != maxJudgedStdin || !strings.Contains(got.Missing, "longer than the 8192 bytes shown") {
+		t.Fatalf("stdin sent = %d bytes, want the first %d and that there is more", len(svc.gotUse.Stdin.Content), maxJudgedStdin)
 	}
 	if read, _ := os.ReadFile(out); string(read) != input {
 		t.Fatalf("the command read %d bytes, want all %d, in order", len(read), len(input))
@@ -86,15 +64,15 @@ func TestRunSaysWhatOfStdinItDidNotShow(t *testing.T) {
 // Nothing on stdin says nothing: a command fed an empty pipe is judged on its
 // argv as before.
 func TestAnEmptyStdinAddsNothing(t *testing.T) {
-	argsFile := stubJudge(t, allowScript)
-	serve(t, &fakeService{credentials: judgeCredentials()})
+	svc := &fakeService{}
+	serve(t, svc)
 	if _, _, code := capture(t, "", func() int {
 		return Run([]string{"run", "--use", "use_7f3c", "--", "true"})
 	}); code != exitOK {
 		t.Fatalf("exit = %d", code)
 	}
-	if prompt := recordedPrompt(t, argsFile); strings.Contains(prompt, "standard input") {
-		t.Fatalf("--prompt = %q, want nothing said about an empty stdin", prompt)
+	if svc.gotUse.Stdin != nil {
+		t.Fatalf("stdin sent = %#v, want nothing said about an empty stdin", svc.gotUse.Stdin)
 	}
 }
 
@@ -115,9 +93,9 @@ func TestAPipeStillOpenIsJudgedOnWhatArrived(t *testing.T) {
 	if stdin == nil {
 		t.Fatal("a pipe was not read")
 	}
-	prompt := stdin.prompt()
-	if !strings.Contains(prompt, "first half, ") || !strings.Contains(prompt, "had not ended") {
-		t.Fatalf("prompt = %q, want what arrived and that more may follow", prompt)
+	shown := stdin.evidence()
+	if shown.Content != "first half, " || !strings.Contains(shown.Missing, "had not ended") {
+		t.Fatalf("stdin shown = %#v, want what arrived and that more may follow", shown)
 	}
 	go func() {
 		_, _ = w.WriteString("second half")
@@ -140,9 +118,9 @@ func TestStdinThatIsNotTextIsNotShown(t *testing.T) {
 		_, _ = w.Write([]byte{0xff, 0xfe, 0x00, 0x01})
 		_ = w.Close()
 	}()
-	prompt := readStdin(context.Background(), r).prompt()
-	if !strings.Contains(prompt, "4 bytes on standard input that are not text") || strings.Contains(prompt, "STDIN-") {
-		t.Fatalf("prompt = %q, want the bytes counted and not shown", prompt)
+	shown := readStdin(context.Background(), r).evidence()
+	if shown.Content != "" || !strings.Contains(shown.Missing, "4 bytes on standard input that are not text") {
+		t.Fatalf("stdin shown = %#v, want the bytes counted and not shown", shown)
 	}
 }
 
@@ -171,7 +149,7 @@ func TestAFileOnStdinIsRead(t *testing.T) {
 	}
 	defer file.Close()
 	stdin := readStdin(context.Background(), file)
-	if stdin == nil || !strings.Contains(stdin.prompt(), "\nfrom a file\n") {
+	if stdin == nil || stdin.evidence().Content != "from a file" {
 		t.Fatal("a file on stdin was not shown")
 	}
 	if read, _ := io.ReadAll(stdin.Reader()); !bytes.Equal(read, []byte("from a file")) {
@@ -192,8 +170,7 @@ func TestACutCharacterIsNotShownHalf(t *testing.T) {
 // A writer that keeps stdin open does not hold `run` open once its command has
 // exited: the child is fed through a pipe of its own, which nothing waits on.
 func TestRunReturnsWhenItsCommandDoesThoughStdinStaysOpen(t *testing.T) {
-	stubJudge(t, allowScript)
-	serve(t, &fakeService{credentials: judgeCredentials()})
+	serve(t, &fakeService{})
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -220,9 +197,9 @@ func TestRunReturnsWhenItsCommandDoesThoughStdinStaysOpen(t *testing.T) {
 	}
 }
 
-// However JSON escapes it, the most of stdin a judge is shown fits the verdict
-// that records it into one protocol body (ADR 26-09-27-905 §5).
-func TestTheLargestStdinShownFitsTheVerdictThatRecordsIt(t *testing.T) {
+// However JSON escapes it, the most of stdin a judge is shown fits one
+// protocol body beside the argv and where it runs (ADR 26-09-27-905 §5).
+func TestTheLargestStdinShownFitsOneUseCall(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -234,11 +211,14 @@ func TestTheLargestStdinShownFitsTheVerdictThatRecordsIt(t *testing.T) {
 		_ = w.Close()
 	}()
 	stdin := readStdin(context.Background(), r)
-	argv := []string{"discobox", "new", "--json"}
-	prompt := judgePrompt(judgeCredentials()[0], judgeCredentials()[0].Uses[0], argv, facts{}, stdin)
-	body, err := json.Marshal(agentcreds.UseBody{UseID: "use_7f3c", Command: argv, Verdict: agentcreds.Verdict{
-		Allow: true, Reason: strings.Repeat("r", 400), Role: judgeModel, Prompt: prompt,
-	}})
+	// Escaped as six bytes each too, as the worst a report can be.
+	long := strings.Repeat("\x01", agentcreds.MaxReportedBytes)
+	body, err := json.Marshal(agentcreds.UseBody{
+		UseID:    "use_7f3c",
+		Command:  []string{"discobox", "new", "--json"},
+		Stdin:    stdin.evidence(),
+		Reported: &agentcreds.Reported{WorkingDirectory: long, RepositoryRoot: long, RefCommit: long, RefSubject: long},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

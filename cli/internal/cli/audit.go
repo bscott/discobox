@@ -363,23 +363,22 @@ func (a *App) newAuditCredsCommand() *cobra.Command {
 With --follow, print the last --limit oldest first and keep printing verdicts as
 they are recorded.
 
-There are two judges. A discobox's own judge decides about a command before its
-credential is taken. A verdict recorded at "use" rode the call that took the
-credential's value, so every credential this server issued has one. A verdict
-recorded by "report" is a denial the discobox chose to send afterwards; nothing
-forces it to, so denials are undercounted by exactly the ones never reported.
+The project's judge decides about a command before a credential is issued for
+it, about each request the proxy sees carrying a credential when the server
+judges requests, and about a discobox handing a credential on. Its verdicts are
+recorded "judge": the server records every answer before giving it, whether it
+allowed, denied, or asked to be shown a request's body, which the proxy
+refuses. An ask with no answer, or whose use was revoked while it was judged,
+has no verdict; for a request, the proxy's blocked http row is its record. A
+verdict does not name the http row it was about: join them by --use-id and
+time. --kind picks one kind of verdict.
 
-The project's judge decides about each request the proxy sees carrying a
-credential, before the credential is put into it. Its verdicts are recorded
-"judge": the server records every answer it gives the proxy, before giving it,
-whether it allowed, denied, or asked to be shown the request's body, which the
-proxy refuses. An ask with no answer, or whose use was revoked while it was
-judged, has no verdict; the proxy's blocked http row is its record. A verdict
-does not name the http row it was about: join them by --use-id and time.
---kind picks one judge's verdicts.
+Command verdicts recorded "use" or "report" predate that: a discobox's own
+judge decided them inside the discobox, "use" riding the call that took the
+value and "report" a denial the discobox chose to send afterwards.
 
-RTT is the round trip from asking a judge to its answer: timed by the discobox
-around its own judge, and by the server around the project's judge.
+RTT is the round trip from asking a judge to its answer, timed by whoever
+asked it.
 
 The use ID, command, request, reason and prompt were written inside the
 discobox. Every field is shown as data: non-printing characters are escaped in
@@ -463,7 +462,7 @@ Verdicts outlive their discobox. To read a deleted one's, pass its full ID.`,
 	cmd.Flags().StringVar(&sandboxID, "discobox-id", "", "Only this discobox's verdicts; a deleted one needs its full ID")
 	cmd.Flags().StringVar(&useID, "use-id", "", "Only verdicts on this approved use")
 	cmd.Flags().StringVar(&grantID, "grant-id", "", "Only verdicts on uses of this grant")
-	cmd.Flags().StringVar(&kind, "kind", "", "Only verdicts on a command (a discobox's own judge), a request (the project's judge), or a delegation (the project's judge, on a discobox handing a credential on)")
+	cmd.Flags().StringVar(&kind, "kind", "", "Only verdicts on a command, a request, or a delegation (a discobox handing a credential on)")
 	cmd.Flags().BoolVar(&denied, "denied", false, "Only denied verdicts, including a judge asking to see a request's body")
 	cmd.Flags().BoolVar(&allowed, "allowed", false, "Only allowed verdicts")
 	cmd.Flags().StringVar(&since, "since", "", "Only verdicts from this long ago (e.g. 1h) or since this RFC 3339 time")
@@ -581,6 +580,9 @@ func writeCredentialVerdictBlocks(out io.Writer, verdicts []apimodel.CredentialV
 		if isRequestVerdict(v) {
 			lines = append(lines, requestVerdictLines(v)...)
 		}
+		if judgedOnTrustedGround(v) {
+			lines = append(lines, judgeLines(v)...)
+		}
 		lines = append(lines,
 			"role:     "+terminalSafe(v.Role.Or("")),
 			"rtt:      "+verdictRoundTrip(v),
@@ -639,6 +641,12 @@ func requestVerdictLines(v apimodel.CredentialVerdict) []string {
 		}
 		lines = append(lines, "asked:    "+asked)
 	}
+	return lines
+}
+
+// judgeLines say which of the server's judges answered, running what.
+func judgeLines(v apimodel.CredentialVerdict) []string {
+	var lines []string
 	// A server that judges with Jev names the model that answered and what it
 	// said, where one with a judge discobox names the discobox.
 	if model := v.Model.Or(""); model != "" {
@@ -733,6 +741,13 @@ func describeMetadata(metadata apiclientgen.JudgeRequestBodyMetadata) string {
 	return terminalSafe("{" + strings.Join(parts, ",") + "}")
 }
 
+// judgedOnTrustedGround reports whether one of the server's judges decided
+// this, rather than a discobox about itself. A server that predates origins
+// sends none, and every verdict it has is a discobox's own.
+func judgedOnTrustedGround(v apimodel.CredentialVerdict) bool {
+	return v.Origin.Or(apiclientgen.CredentialVerdictOriginSandbox) == apiclientgen.CredentialVerdictOriginJudge
+}
+
 // isRequestVerdict reports whether the project's judge decided this about a
 // request. A server that predates request verdicts sends no kind, and every
 // verdict it has is a command verdict.
@@ -761,16 +776,17 @@ func verdictWord(v apimodel.CredentialVerdict) string {
 	}
 }
 
-// verdictRecorded says where a verdict came from: "use" rode the call that took
-// the value, "report" is one the discobox sent on its own after a denial,
-// "judge" is the project's judge answering about a request, recorded by the
-// server, and "standing" is a request an allow the judge let stand covered,
-// which no model read (ADR 26-09-25-428).
+// verdictRecorded says where a verdict came from: "judge" is one of the
+// server's judges answering, recorded by the server; "standing" is a request
+// an allow the judge let stand covered, which no model read
+// (ADR 26-09-25-428); and from before commands were judged on trusted ground
+// (ADR 26-09-22-838 §3), "use" rode the call that took the value and "report"
+// is one the discobox sent on its own after a denial.
 func verdictRecorded(v apimodel.CredentialVerdict) string {
 	switch {
 	case v.StandingVerdictId.Or("") != "":
 		return "standing"
-	case isRequestVerdict(v), isDelegationVerdict(v):
+	case judgedOnTrustedGround(v), isRequestVerdict(v), isDelegationVerdict(v):
 		return "judge"
 	case v.Volunteered:
 		return "report"

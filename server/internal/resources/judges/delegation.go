@@ -24,9 +24,11 @@ import (
 // before it is returned, so the grant a discobox hands on can be traced to the
 // delegation that allowed it.
 func (s *Service) JudgeDelegation(ctx context.Context, projectID string, ask services.DelegationAsk) (judge.Answer, error) {
-	if !s.enabled {
+	// A delegation is judged with commands: it is put before anything is
+	// minted, and it holds no request open (ADR 26-10-02-054 §1).
+	if !s.judging.Commands {
 		return judge.Answer{}, apperrors.NewStatusErrorOfKind(http.StatusServiceUnavailable,
-			apperrors.KindJudgingDisabled, "this server does not judge credential use, so a discobox hands nothing on")
+			apperrors.KindJudgingDisabled, "this server does not judge commands, so a discobox hands nothing on")
 	}
 	if s.jev == nil && s.leases == nil {
 		return judge.Answer{}, apperrors.NewStatusError(http.StatusServiceUnavailable, "this server cannot reach a judge")

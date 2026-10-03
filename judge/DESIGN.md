@@ -10,7 +10,7 @@ it.
 
 | File | What it holds |
 | --- | --- |
-| `judge.go` | `Job` — a command, an observed request, or a delegation (a discobox about to hand a credential on: the uses it would grant, judged against the uses it was delegated) — its bounds, and the JSON prompt it becomes. |
+| `judge.go` | `Job` — a command (its argv, the `Stdin` it will read and where the discobox `Reported` it runs), an observed request, or a delegation (a discobox about to hand a credential on: the uses it would grant, judged against the uses it was delegated) — its bounds, and the JSON prompt it becomes. |
 | `system.go` | `System`, the words the judge is given, and `PromptVersion`, which changes with them. |
 | `verdict.go` | `Answer`, `Need`, `Schema`, and `Decode`: what Discobox will accept as a verdict. |
 | `standing.go` | `Standing`, `Route`, and `Job.Admits`: an allow the judge asks to let stand for a route, and whether it may. |
@@ -51,6 +51,24 @@ on the first round's description alone. `Budget` caps what may be shown at
 exactly when it was shown, `Body.Missing` says what is not being shown and why,
 and `Body.Answers` reports an ask that would change nothing, which is a judge
 that has decided nothing.
+
+**A command is judged on what the discobox says it will do.** A command job
+is built by the control plane when a pool asks before minting a sentinel
+(ADR 26-09-22-838 §3): the purpose, credential and host from the live grant,
+and from the discobox the argv, its `Stdin` (`Input`: text shown, at most
+`MaxBodyBytes`, and `Missing` for what was not) and `Reported` (directory,
+repository root, a git ref's commit and subject, each at most
+`MaxReportedBytes`). Only a command job carries the last two. `System` tells
+the judge they are the discobox's claims and an input it reads is part of the
+operation; `jev/` puts them in the state.
+
+The job reaches a judge discobox as the sandbox API's `JudgeJob`, which refuses
+fields it does not know, so a judge whose image carries a sandbox agent older
+than a field refuses every job that sends it — fail closed, with a decode error
+as the reason. A built-in harness is re-pinned to the release's image when the
+server is upgraded, and a judge is replaced when its image changes, so that is
+a window; a custom harness built FROM an older sandbox-agent image is judged
+by nothing until it is rebuilt.
 
 **Guidance is the trusted side's.** A request names what a pool recognized it
 as (`Request.Protocol`, `Request.Endpoint`); the words that go with a name are

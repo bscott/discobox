@@ -31,6 +31,10 @@ func (j *delegationJudge) Judge(context.Context, string, services.JudgeAsk) (jud
 	return judge.Answer{}, errors.New("not a request judge")
 }
 
+func (j *delegationJudge) JudgeCommand(context.Context, string, services.CommandAsk) (judge.Answer, error) {
+	return judge.Answer{}, errors.New("not a command judge")
+}
+
 func (j *delegationJudge) JudgeDelegation(_ context.Context, _ string, ask services.DelegationAsk) (judge.Answer, error) {
 	j.asked = append(j.asked, ask)
 	if j.err != nil {
@@ -409,6 +413,10 @@ func (j *afterJudge) Judge(context.Context, string, services.JudgeAsk) (judge.An
 	return judge.Answer{}, errors.New("not a request judge")
 }
 
+func (j *afterJudge) JudgeCommand(context.Context, string, services.CommandAsk) (judge.Answer, error) {
+	return judge.Answer{}, errors.New("not a command judge")
+}
+
 func (j *afterJudge) JudgeDelegation(context.Context, string, services.DelegationAsk) (judge.Answer, error) {
 	j.then()
 	return judge.Answer{Allow: true, Reason: "within"}, nil
@@ -545,6 +553,10 @@ type countingJudge struct {
 
 func (j *countingJudge) Judge(context.Context, string, services.JudgeAsk) (judge.Answer, error) {
 	return judge.Answer{}, errors.New("not a request judge")
+}
+
+func (j *countingJudge) JudgeCommand(context.Context, string, services.CommandAsk) (judge.Answer, error) {
+	return judge.Answer{}, errors.New("not a command judge")
 }
 
 func (j *countingJudge) JudgeDelegation(context.Context, string, services.DelegationAsk) (judge.Answer, error) {

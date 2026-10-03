@@ -11,8 +11,8 @@ import (
 
 // Service is the server half of the protocol. An implementation owns the four
 // decisions the protocol does not make: whose credentials these are, what Get
-// returns, how a request reaches a human, and what becomes of a verdict (on
-// Get and on ReportDenial).
+// returns, how a request reaches a human, and whether a command is judged
+// before Get answers.
 type Service interface {
 	// List returns the credentials the caller may use and their approved uses.
 	// It never returns values.
@@ -22,11 +22,9 @@ type Service interface {
 	Request(ctx context.Context, body RequestBody) (RequestStatus, error)
 	// RequestStatus reads a request's current status.
 	RequestStatus(ctx context.Context, requestID string) (RequestStatus, error)
-	// Get returns a value for one declared command.
+	// Get returns a value for one declared command, or ErrDenied when the
+	// implementation judged the command and refused it.
 	Get(ctx context.Context, body UseBody) (UseResponse, error)
-	// ReportDenial records a verdict for a command the judge refused, which
-	// never reached Get (ADR 0091 §3).
-	ReportDenial(ctx context.Context, body DenialReport) error
 	// Trusts returns the host trusts the caller holds (ADR 0149).
 	Trusts(ctx context.Context) ([]Trust, error)
 	// RequestTrust records an ask to trust a host and returns immediately:
@@ -116,17 +114,6 @@ func NewHandler(svc Service) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, out)
-	})
-	mux.HandleFunc("POST "+PathDenials, func(w http.ResponseWriter, r *http.Request) {
-		var body DenialReport
-		if !decode(w, r, &body) {
-			return
-		}
-		if err := svc.ReportDenial(r.Context(), body); err != nil {
-			writeError(w, err)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET "+PathTrusts, func(w http.ResponseWriter, r *http.Request) {
 		trusts, err := svc.Trusts(r.Context())

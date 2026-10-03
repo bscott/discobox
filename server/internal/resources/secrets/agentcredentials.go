@@ -195,66 +195,12 @@ func (s *Service) GetSandboxCredentialRequest(ctx context.Context, poolID, sandb
 	return req, grant, nil
 }
 
-// RecordCredentialVerdict persists one judge decision about an agent
-// credential use, called on the same code path that mints a value — before
-// the mint, in the issuing case, and gating it: a store failure here must
-// stop that path, so no credential is ever issued with no record of why
-// (ADR 0091).
-func (s *Service) RecordCredentialVerdict(ctx context.Context, poolID string, input services.RecordCredentialVerdictBody) error {
-	sandbox, err := s.sandboxOwnedByPool(ctx, poolID, strings.TrimSpace(input.SandboxId))
-	if err != nil {
-		return err
-	}
-	verdict := input.Verdict
-	row := &model.CredentialVerdict{
-		ProjectID:   sandbox.ProjectID,
-		Kind:        model.CredentialVerdictKindCommand,
-		Origin:      model.CredentialVerdictOriginSandbox,
-		SandboxID:   sandbox.ID,
-		UseID:       strings.TrimSpace(input.UseId),
-		Command:     input.Command,
-		Allow:       verdict.Allow,
-		Reason:      strings.TrimSpace(verdict.Reason.Or("")),
-		Role:        verdict.Role,
-		Prompt:      verdict.Prompt,
-		LatencyMS:   verdict.LatencyMs.Or(0),
-		Volunteered: input.Volunteered,
-	}
-	if grantID, ok := s.findGrantForUse(ctx, sandbox, row.UseID); ok {
-		row.GrantID = grantID
-	}
-	return s.store.CreateCredentialVerdict(ctx, row)
-}
-
 // ListCredentialVerdicts returns the project's recorded verdicts matching
 // filter, newest first. It deliberately does not look the sandbox up: a
 // verdict is kept past its sandbox's purge (ADR 0091), so requiring the
 // sandbox to exist would hide exactly the trails most worth reading.
 func (s *Service) ListCredentialVerdicts(ctx context.Context, projectID string, filter store.CredentialVerdictFilter) ([]model.CredentialVerdict, error) {
 	return s.store.ListCredentialVerdicts(ctx, projectID, filter)
-}
-
-// findGrantForUse resolves which of a sandbox's live grants a use ID belongs
-// to. Best-effort: a grant revoked in the moment between judging and
-// recording is not found here, and the verdict is recorded without it rather
-// than failing the write (ADR 0091 §2) — it is still complete evidence about
-// the command either way.
-func (s *Service) findGrantForUse(ctx context.Context, sandbox *model.Sandbox, useID string) (string, bool) {
-	if useID == "" {
-		return "", false
-	}
-	credentials, err := s.store.ListLiveAgentCredentials(ctx, sandbox.ProjectID, sandbox.ID, store.SandboxGrantScopes(sandbox))
-	if err != nil {
-		return "", false
-	}
-	for _, credential := range credentials {
-		for _, use := range credential.Grant.Uses {
-			if use.UseID == useID {
-				return credential.Grant.ID, true
-			}
-		}
-	}
-	return "", false
 }
 
 // requestedUses validates and normalizes the uses an agent asked for. Supplied
@@ -391,12 +337,7 @@ func (s *Service) ApprovedUse(ctx context.Context, poolID, sandboxID, useID, hos
 			return services.ApprovedUse{}, apperrors.NewStatusError(http.StatusForbidden,
 				fmt.Sprintf("that use is not approved for %s", host))
 		}
-		return services.ApprovedUse{
-			Purpose:    use.Description,
-			Credential: credential.Name,
-			Host:       approvedFor,
-			GrantID:    credential.Grant.ID,
-		}, nil
+		return approvedCredentialUse(credential, use, approvedFor), nil
 	}
 	// Not a credential's use. It may still be a host trust's: a person who
 	// pins a host approves uses for it the same way, and every request to that
@@ -410,6 +351,42 @@ func (s *Service) ApprovedUse(ctx context.Context, poolID, sandboxID, useID, hos
 	// answer here on purpose: which it was is the approval trail's to say, and
 	// saying it back to a pool would describe grants it is not party to.
 	return services.ApprovedUse{}, apperrors.NewStatusError(http.StatusForbidden, "no live approved use by that ID")
+}
+
+// ApprovedCredentialUse names what a command run under this use may be judged
+// against (ADR 26-09-22-838 §3): ApprovedUse for a command rather than a
+// request. There is no destination to check yet, since nothing has been sent;
+// the hosts are the grant's, every one of them, and the request that follows
+// is held to them. Only a
+// credential's use takes a value, so a host trust's is not one.
+func (s *Service) ApprovedCredentialUse(ctx context.Context, poolID, sandboxID, useID string) (services.ApprovedUse, error) {
+	useID = strings.TrimSpace(useID)
+	if useID == "" {
+		return services.ApprovedUse{}, apperrors.NewStatusError(http.StatusBadRequest, "use ID is required")
+	}
+	sandbox, err := s.sandboxOwnedByPool(ctx, poolID, sandboxID)
+	if err != nil {
+		return services.ApprovedUse{}, err
+	}
+	credentials, err := s.store.ListLiveAgentCredentials(ctx, sandbox.ProjectID, sandbox.ID, store.SandboxGrantScopes(sandbox))
+	if err != nil {
+		return services.ApprovedUse{}, err
+	}
+	for _, credential := range credentials {
+		if use, ok := credential.Grant.FindUse(useID); ok {
+			return approvedCredentialUse(credential, use, strings.Join(credential.Grant.Hosts, ", ")), nil
+		}
+	}
+	return services.ApprovedUse{}, apperrors.NewStatusError(http.StatusForbidden, "no live approved use by that ID")
+}
+
+func approvedCredentialUse(credential store.AgentCredential, use model.SecretUse, host string) services.ApprovedUse {
+	return services.ApprovedUse{
+		Purpose:    use.Description,
+		Credential: credential.Name,
+		Host:       host,
+		GrantID:    credential.Grant.ID,
+	}
 }
 
 // trustedUse names a use a host trust was granted for. It reports ok only for

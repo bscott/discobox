@@ -1,8 +1,8 @@
 # Agent Credentials Protocol v1
 
 A small HTTP protocol an agent inside a sandbox uses to **ask a human** for a
-credential it was not provisioned with, and then **use** it. Four operations:
-`list`, `request`, `get`, and reporting a denial `get` never saw. A second
+credential it was not provisioned with, and then **use** it. Three operations:
+`list`, `request`, and `get`. A second
 verb, [trust](#trust--ask-for-a-host-to-be-trusted), asks for a host whose
 certificate the sandbox's egress refuses to be trusted for it.
 
@@ -203,8 +203,9 @@ POST /v1/credentials/use
 ```json
 {
   "useId": "use_7f3c…",
-  "command": ["gh", "pr", "create", "--fill"],
-  "verdict": { "allow": true, "reason": "opens a PR against the approved repo", "role": "judge", "prompt": "Approved use: …", "latencyMs": 842 }
+  "command": ["gh", "pr", "create", "--body-file", "-"],
+  "stdin": { "content": "Fixes #42" },
+  "reported": { "workingDirectory": "/src/repo", "repositoryRoot": "/src/repo" }
 }
 ```
 
@@ -212,55 +213,36 @@ POST /v1/credentials/use
 { "envVar": "GITHUB_TOKEN", "value": "ghp_…", "expiresAt": "2026-08-12T17:05:00Z" }
 ```
 
-The caller **declares the command it is about to run**. The declaration is
-recorded on the serving side before the value is handed out; it narrows the
-window and gives the audit log a per-use story. It is not a trust anchor: in
-Discobox the real enforcement happens against the actual outbound request at
-swap time, and a client that lies about its command gains nothing.
+The caller **declares the command it is about to run**, and with it what that
+command will read on standard input (`stdin`: the text shown, and in `missing`
+a sentence for whatever was not) and where the caller says it runs
+(`reported`: its directory, its repository root, and the commit and subject of
+a git ref the command names, each at most `MaxReportedBytes`). All of it is the
+caller's word.
 
-`verdict` is required
-([ADR 0091](adr/0091-a-credential-is-not-issued-without-a-verdict-on-record.md)):
-a caller reports what decided the command was the approved use, and an
-implementation that judges its callers persists it before the value is handed
-out, so a credential is never issued with no record of why. `role` names what
-answered (a role like `"judge"`, never a vendor model id — a caller with
-nothing that decided the command, because it never judges its callers at all,
-reports the role it would have asked for anyway, such as `"none"`). `prompt`
-is the exact text the decision was made from, in full. An implementation that
-makes no such decision may still require the field and record it verbatim; the
-protocol does not make persistence itself mandatory, only that the field is
-sent. Discobox answers `invalid` when `useId` is missing or the verdict has no
-`role` or `prompt`, and records the verdict to the control plane before it
-mints: if that write fails, no value is issued.
+An implementation **may judge the command before it hands out a value**, and
+Discobox does
+([ADR 26-09-22-838](adr/26-09-22-838-a-dedicated-pool-harness-judges-commands-and-credential-bearing-requests.md) §3):
+the pool asks the project's judge, on trusted ground, whether the command
+carries out the approved use, and mints nothing unless it allows it. The
+verdict is recorded by the control plane before the pool mints
+([ADR 0091](adr/0091-a-credential-is-not-issued-without-a-verdict-on-record.md)).
+A refusal, or a judge that could not be reached, answers `denied` with the
+judge's reason. A server that does not judge commands (`judgeCommands: false`,
+[ADR 26-10-02-054](adr/26-10-02-054-commands-are-judged-by-default-and-requests-by-opt-in.md))
+mints without asking. Discobox answers `invalid` when `useId` or `command` is
+missing.
+
+Because a judge may have to be brought up first, a `get` can take minutes: a
+client waits up to `UseTimeout` (4 minutes) for it, where every other call is
+bounded at seconds.
+
+The declaration is not the request that reaches the internet. In Discobox the
+proxy still holds every sentinel to its grant's hosts and its window, and a
+server that opts in (`judgeCredentials`) judges each request that carries one.
 
 `expiresAt` is the end of this value's window. A client that needs the
 credential again after it passes calls `get` again rather than holding the value.
-
-## Reporting a verdict `get` never saw
-
-```
-POST /v1/credentials/denials
-```
-
-```json
-{
-  "useId": "use_7f3c…",
-  "command": ["curl", "-X", "DELETE", "…"],
-  "verdict": { "allow": false, "reason": "broader than the approved use", "role": "judge", "prompt": "Approved use: …" }
-}
-```
-
-A caller that judges its own commands before calling `get` (`discobox-access`
-does; the protocol does not require it) never calls `get` at all for a command
-its judge refused — there is nothing to issue, so there is nothing for `get`'s
-own recording to catch. Without this operation that verdict would exist only
-on the caller's own side, if anywhere. A report the server accepts answers
-`204`, whether the verdict allowed or refused the command; Discobox answers
-`invalid` for one with no `useId` or with no verdict `role` or `prompt`.
-Reporting it is the caller's choice, not its obligation, and a client is free
-to treat this call's own failure as unremarkable — it is what a caller
-volunteers about a decision made before this protocol was ever asked to act on
-it, not a correction to something `get` returned.
 
 ## `trust` — ask for a host to be trusted
 
@@ -376,13 +358,11 @@ structured output everywhere, and a structured body on stdin for `request`.
 Results go to stdout and failures to stderr, always — which is what lets `run`
 hand its child the real stdout untouched.
 
-**The reference client judges before it runs.** Before executing a wrapped
-command, `discobox-access` asks a local model whether the command is the use
-it was approved for, and refuses to start it otherwise
-([ADR 0079](adr/0079-a-local-judge-gates-every-wrapped-credential-use.md)). That
-is a property of this client, not of the protocol: an implementation serving the
-protocol neither knows nor depends on whether its caller does this, and a
-different client may do something else.
+**The reference client runs nothing it was not given a value for.**
+`discobox-access` judges nothing itself: it sends the argv, its stdin and where
+it runs on `get`, and starts the command only when a value comes back. Whether
+the command is judged is the implementation's decision, made on its side of the
+call, so a client that skips the CLI is judged the same way.
 
 **The reference client has no unwrapped way to take a value.** The wire
 operation above is `get` for a reason — a caller of the protocol may still ask
@@ -405,8 +385,9 @@ the trust verb, what its egress verifies and how a pin reaches it):
 2. **What `get` returns.** Real value, or a scoped stand-in.
 3. **How a request reaches a human.** The protocol only says a request has an
    id and a status that eventually settles.
-4. **What becomes of a verdict.** The field is required on both `get` and the
-   denial report; whether either is persisted, and where, is not specified.
+4. **Whether a command is judged.** `get` carries the evidence; whether a
+   judge reads it before a value is handed out, and where its verdict is
+   recorded, is not specified.
 
 In Discobox: sandbox-agent serves the protocol on sandbox loopback
 (`127.0.0.1:17010`) and relays each call to the pool over the sandbox's mTLS

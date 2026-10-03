@@ -197,7 +197,15 @@ func (c *judgeClient) unanswered(now time.Time) bool {
 
 // ask puts one request to the judge of the project that owns this pool.
 func (c *judgeClient) ask(ctx context.Context, ask judgeAsk) (judgeAnswer, error) {
-	rc, err := readResolveContext(c.plane.contextPath)
+	return c.plane.askJudge(ctx, "judge", ask)
+}
+
+// askJudge puts one job to the judge of the project that owns this pool, at
+// path under the pool's control-plane routes: a request the proxy observed,
+// or a command a discobox is about to run. A non-2xx answer is sorted by
+// judgeRefusal into what it says about judging.
+func (c *controlPlaneCredentials) askJudge(ctx context.Context, path string, ask any) (judgeAnswer, error) {
+	rc, err := readResolveContext(c.contextPath)
 	if err != nil || rc.Token == "" || rc.ControlPlaneURL == "" || rc.PoolID == "" {
 		return judgeAnswer{}, errors.New("this pool cannot reach the control plane yet")
 	}
@@ -205,14 +213,14 @@ func (c *judgeClient) ask(ctx context.Context, ask judgeAsk) (judgeAnswer, error
 	if err != nil {
 		return judgeAnswer{}, err
 	}
-	endpoint := fmt.Sprintf("%s/api/pools/%s/judge", rc.ControlPlaneURL, url.PathEscape(rc.PoolID))
+	endpoint := fmt.Sprintf("%s/api/pools/%s/%s", rc.ControlPlaneURL, url.PathEscape(rc.PoolID), path)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return judgeAnswer{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+rc.Token)
-	resp, err := c.plane.client.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return judgeAnswer{}, err
 	}

@@ -18,8 +18,6 @@ type fakeService struct {
 	statuses    []agentcreds.RequestStatus
 	gotUse      agentcreds.UseBody
 	getErr      error
-	gotDenial   agentcreds.DenialReport
-	denialErr   error
 	trusts      []agentcreds.Trust
 	gotTrust    agentcreds.TrustRequestBody
 	trustStatus agentcreds.TrustRequestStatus
@@ -48,11 +46,6 @@ func (f *fakeService) Get(_ context.Context, body agentcreds.UseBody) (agentcred
 	}
 	expiry := time.Date(2026, 8, 12, 17, 0, 0, 0, time.UTC)
 	return agentcreds.UseResponse{EnvVar: "GITHUB_TOKEN", Value: "ghp_stand_in", ExpiresAt: &expiry}, nil
-}
-
-func (f *fakeService) ReportDenial(_ context.Context, body agentcreds.DenialReport) error {
-	f.gotDenial = body
-	return f.denialErr
 }
 
 func (f *fakeService) Trusts(context.Context) ([]agentcreds.Trust, error) {
@@ -119,47 +112,24 @@ func TestDenialRoundTripsAsDenial(t *testing.T) {
 	}
 }
 
-// Get is the call ADR 0091 makes carry a verdict, so it has to reach the wire
-// as part of the same body as the command — not a second call the server
-// could receive and the client could still treat Get as having succeeded.
-func TestGetCarriesTheVerdict(t *testing.T) {
+// Get carries what the command will read and where it runs on the same body
+// as the argv, since an implementation that judges the command judges them
+// together (ADR 26-09-22-838 §3).
+func TestGetCarriesTheCommandsEvidence(t *testing.T) {
 	svc := &fakeService{}
 	_, err := newTestClient(t, svc).Get(context.Background(), agentcreds.UseBody{
-		UseID:   "use-1",
-		Command: []string{"gh", "pr", "create"},
-		Verdict: agentcreds.Verdict{Allow: true, Reason: "matches the approved use", Role: "judge", Prompt: "...", LatencyMS: 750},
+		UseID:    "use-1",
+		Command:  []string{"gh", "api", "--input", "-"},
+		Stdin:    &agentcreds.Stdin{Content: `{"title":"x"}`, Missing: "more may follow"},
+		Reported: &agentcreds.Reported{WorkingDirectory: "/src", RefCommit: "abc"},
 	})
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if !svc.gotUse.Verdict.Allow || svc.gotUse.Verdict.Role != "judge" || svc.gotUse.Verdict.LatencyMS != 750 {
-		t.Fatalf("verdict = %#v, want it carried on the same body as the command", svc.gotUse.Verdict)
-	}
-}
-
-// The one call this protocol has for a verdict that never rode an issued
-// credential (ADR 0091 §3): the judge refused, Get was never called, and this
-// is the only route that decision reaches the server by.
-func TestReportDenialCarriesTheRefusedVerdict(t *testing.T) {
-	svc := &fakeService{}
-	err := newTestClient(t, svc).ReportDenial(context.Background(), agentcreds.DenialReport{
-		UseID:   "use-1",
-		Command: []string{"curl", "-X", "DELETE"},
-		Verdict: agentcreds.Verdict{Allow: false, Reason: "broader than the approved use", Role: "judge", Prompt: "..."},
-	})
-	if err != nil {
-		t.Fatalf("report denial: %v", err)
-	}
-	if svc.gotDenial.Verdict.Allow || svc.gotDenial.Verdict.Reason == "" {
-		t.Fatalf("denial = %#v, want the refused verdict carried verbatim", svc.gotDenial)
-	}
-}
-
-func TestReportDenialFailureSurfacesAsAnError(t *testing.T) {
-	svc := &fakeService{denialErr: fmt.Errorf("%w: could not write", agentcreds.ErrInvalid)}
-	err := newTestClient(t, svc).ReportDenial(context.Background(), agentcreds.DenialReport{UseID: "use-1"})
-	if !errors.Is(err, agentcreds.ErrInvalid) {
-		t.Fatalf("report denial error = %v, want ErrInvalid", err)
+	got := svc.gotUse
+	if len(got.Command) != 4 || got.Stdin == nil || got.Stdin.Content != `{"title":"x"}` || got.Stdin.Missing == "" ||
+		got.Reported == nil || got.Reported.WorkingDirectory != "/src" || got.Reported.RefCommit != "abc" {
+		t.Fatalf("use body = %#v, want the argv, its input and where it runs carried together", got)
 	}
 }
 

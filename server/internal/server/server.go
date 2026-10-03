@@ -19,6 +19,7 @@ import (
 	"github.com/discobox-ai/discobox/judge/jev"
 	"github.com/discobox-ai/discobox/server/internal/config"
 	"github.com/discobox-ai/discobox/server/internal/database"
+	"github.com/discobox-ai/discobox/server/internal/resources/judges"
 	"github.com/discobox-ai/discobox/server/internal/secrets"
 	"github.com/discobox-ai/discobox/server/internal/service"
 	"github.com/discobox-ai/discobox/server/internal/services"
@@ -203,7 +204,7 @@ func Run(ctx context.Context) error {
 		HarnessImages:                  cfg.HarnessImages,
 		ListenEndpoints:                cfg.Listen,
 		ArchiveRetention:               cfg.ArchiveRetention,
-		JudgeCredentials:               cfg.JudgeCredentials,
+		Judging:                        judges.Judging{Commands: cfg.JudgeCommands, Requests: cfg.JudgeCredentials},
 		JudgeJev:                       judgeJev,
 		JudgeJevFallback:               cfg.JevUnsure == config.JevUnsureHarness,
 		ServerDefaults: dockerworker.ServerDefaults{

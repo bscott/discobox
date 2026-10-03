@@ -134,23 +134,33 @@ type Config struct {
 	// simply means those sandboxes report no upgrade.
 	DefaultSandboxImageDigest string `yaml:"defaultSandboxImageDigest" env:"DISCOBOX_DEFAULT_SANDBOX_IMAGE_DIGEST" doc:"Digest identifying the build behind defaultSandboxImage. Those sandboxes report no upgrade when it is unknown." example:"sha256:4f2a9c1e7b3d8a6f0e5c2b9d7a1f3e8c6b4d2a0f9e7c5b3a1d8f6e4c2b0a9d7e"`
 
-	// JudgeCredentials turns on the judge: the discobox a project runs to
-	// decide whether a credential-bearing request is part of what its use was
-	// approved for (ADR 26-09-22-838).
+	// JudgeCommands has the judge decide whether the command
+	// `discobox-access run` declares carries out the use it names, before the
+	// pool mints a credential for it, and whether a discobox may hand a
+	// credential on (ADR 26-09-22-838 §3, ADR 26-10-02-054).
 	//
-	// It is off by default and opted into, because it is being built out: a
-	// server that has not opted in behaves exactly as it did before it existed.
-	// No judge is created — and one already created is taken away, the same way
-	// removing the project's default harness takes it away — and nothing asks
-	// one anything, so no request waits on a model to be allowed through.
-	JudgeCredentials bool `yaml:"judgeCredentials" env:"DISCOBOX_JUDGE_CREDENTIALS" doc:"Run a judge for each project: a discobox that decides whether a credential-bearing request is part of what the credential's approved use allows. Off by default. While it is off no judge is created, and credentials are resolved for whatever asks for them, held only to the host and grant they were approved for."`
+	// It is on by default. A command is judged once, before anything is
+	// minted, so it costs one verdict per command an agent chose to run. Off,
+	// the pool mints without asking and records no verdict, and a discobox
+	// hands nothing on.
+	JudgeCommands bool `yaml:"judgeCommands" env:"DISCOBOX_JUDGE_COMMANDS" default:"true" doc:"Have each project's judge decide whether a command discobox-access runs carries out the approved use it names, before a credential is issued for it, and whether a discobox may hand a credential on. On by default. A project whose default harness runs no model then runs no credentialed command unless the server judges with Jev. Off, credentials are issued for whatever command asks, with no verdict on record, and no discobox hands one on."`
 
-	// JudgeBackend is what answers when judgeCredentials is on: each
+	// JudgeCredentials has the judge decide whether each credential-bearing
+	// request the proxy observes is part of what its use was approved for
+	// (ADR 26-09-22-838 §4).
+	//
+	// It is off by default and opted into: it puts a model in front of every
+	// such request, holding its connection open, and a busy discobox sends
+	// many per command. Its key predates JudgeCommands, which is why it does
+	// not say requests (ADR 26-10-02-054 §1).
+	JudgeCredentials bool `yaml:"judgeCredentials" env:"DISCOBOX_JUDGE_CREDENTIALS" doc:"Have each project's judge decide whether each credential-bearing request is part of what the credential's approved use allows. Off by default. While it is off credentials are resolved for whatever request carries them, held only to the host and grant they were approved for. Commands are judged by judgeCommands."`
+
+	// JudgeBackend is what answers when judgeCommands or judgeCredentials is on: each
 	// project's judge discobox, or TypeSafe's Jev, asked by this server
 	// directly (ADR 26-10-01-324). It is the server's choice, like judging
 	// itself. auto is resolved by Load, so after it this is harness or jev:
 	// a server given a Jev key judges with Jev without being told twice.
-	JudgeBackend string `yaml:"judgeBackend" env:"DISCOBOX_JUDGE_BACKEND" enum:"auto,harness,jev" default:"auto" doc:"What judges credential use when judgeCredentials is on: auto, jev when jevApiKey is set and harness otherwise; harness, a judge discobox per project running the project's default harness; or jev, TypeSafe's Jev, asked by this server directly, which requires jevApiKey."`
+	JudgeBackend string `yaml:"judgeBackend" env:"DISCOBOX_JUDGE_BACKEND" enum:"auto,harness,jev" default:"auto" doc:"What judges credential use when judgeCommands or judgeCredentials is on: auto, jev when jevApiKey is set and harness otherwise; harness, a judge discobox per project running the project's default harness; or jev, TypeSafe's Jev, asked by this server directly, which requires jevApiKey."`
 	// JevAPIKey is required when JudgeBackend is jev, and is what auto
 	// chooses Jev by.
 	JevAPIKey string `yaml:"jevApiKey" env:"DISCOBOX_JEV_API_KEY" doc:"TypeSafe API key the server asks Jev with. Setting it makes judgeBackend auto choose jev; judgeBackend jev requires it." example:"-"`

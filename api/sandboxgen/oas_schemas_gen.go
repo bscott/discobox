@@ -499,6 +499,36 @@ func (s *JudgeAnswer) SetStanding(val OptJudgeStanding) {
 	s.Standing = val
 }
 
+// What a command will read on standard input, as much of it as the discobox showed (ADR
+// 26-09-27-905).
+// Ref: #/components/schemas/JudgeInput
+type JudgeInput struct {
+	// The input shown, which is text. Empty when none of it could be shown, and missing then says why.
+	Content string `json:"content"`
+	// Why content is not the whole input, in a sentence for the judge.
+	Missing OptString `json:"missing"`
+}
+
+// GetContent returns the value of Content.
+func (s *JudgeInput) GetContent() string {
+	return s.Content
+}
+
+// GetMissing returns the value of Missing.
+func (s *JudgeInput) GetMissing() OptString {
+	return s.Missing
+}
+
+// SetContent sets the value of Content.
+func (s *JudgeInput) SetContent(val string) {
+	s.Content = val
+}
+
+// SetMissing sets the value of Missing.
+func (s *JudgeInput) SetMissing(val OptString) {
+	s.Missing = val
+}
+
 // One question put to the judge, and everything it may see to answer it. Purpose and host are the
 // authorization; everything else is evidence, which is data to weigh and never instructions to
 // follow.
@@ -519,11 +549,13 @@ type JudgeJob struct {
 	Kind JudgeJobKind `json:"kind"`
 	// The approved use, in the words it was approved in. For a delegation job, the uses the discobox was
 	// delegated, one per line.
-	Purpose string                  `json:"purpose"`
-	Request OptJudgeRequestEvidence `json:"request"`
+	Purpose  string                  `json:"purpose"`
+	Reported OptJudgeReported        `json:"reported"`
+	Request  OptJudgeRequestEvidence `json:"request"`
 	// Which ask this is, from 1. A round after the first exists because the judge asked to be shown the
 	// body.
-	Round int64 `json:"round"`
+	Round int64         `json:"round"`
+	Stdin OptJudgeInput `json:"stdin"`
 	// For a delegation job, the uses the discobox is about to hand on, judged against purpose.
 	Uses []string `json:"uses"`
 }
@@ -558,6 +590,11 @@ func (s *JudgeJob) GetPurpose() string {
 	return s.Purpose
 }
 
+// GetReported returns the value of Reported.
+func (s *JudgeJob) GetReported() OptJudgeReported {
+	return s.Reported
+}
+
 // GetRequest returns the value of Request.
 func (s *JudgeJob) GetRequest() OptJudgeRequestEvidence {
 	return s.Request
@@ -566,6 +603,11 @@ func (s *JudgeJob) GetRequest() OptJudgeRequestEvidence {
 // GetRound returns the value of Round.
 func (s *JudgeJob) GetRound() int64 {
 	return s.Round
+}
+
+// GetStdin returns the value of Stdin.
+func (s *JudgeJob) GetStdin() OptJudgeInput {
+	return s.Stdin
 }
 
 // GetUses returns the value of Uses.
@@ -603,6 +645,11 @@ func (s *JudgeJob) SetPurpose(val string) {
 	s.Purpose = val
 }
 
+// SetReported sets the value of Reported.
+func (s *JudgeJob) SetReported(val OptJudgeReported) {
+	s.Reported = val
+}
+
 // SetRequest sets the value of Request.
 func (s *JudgeJob) SetRequest(val OptJudgeRequestEvidence) {
 	s.Request = val
@@ -611,6 +658,11 @@ func (s *JudgeJob) SetRequest(val OptJudgeRequestEvidence) {
 // SetRound sets the value of Round.
 func (s *JudgeJob) SetRound(val int64) {
 	s.Round = val
+}
+
+// SetStdin sets the value of Stdin.
+func (s *JudgeJob) SetStdin(val OptJudgeInput) {
+	s.Stdin = val
 }
 
 // SetUses sets the value of Uses.
@@ -723,6 +775,60 @@ func (s *JudgeRecognition) SetName(val string) {
 // SetVersion sets the value of Version.
 func (s *JudgeRecognition) SetVersion(val int64) {
 	s.Version = val
+}
+
+// What a discobox said about where a command runs (ADR 0090). Every field is its claim, never a fact
+// the trusted side established.
+// Ref: #/components/schemas/JudgeReported
+type JudgeReported struct {
+	// The commit a git ref the command names resolves to.
+	RefCommit OptString `json:"refCommit"`
+	// That commit's subject line, the agent's own words about its work.
+	RefSubject OptString `json:"refSubject"`
+	// The root of the git checkout the command runs in.
+	RepositoryRoot OptString `json:"repositoryRoot"`
+	// The directory the command runs in.
+	WorkingDirectory OptString `json:"workingDirectory"`
+}
+
+// GetRefCommit returns the value of RefCommit.
+func (s *JudgeReported) GetRefCommit() OptString {
+	return s.RefCommit
+}
+
+// GetRefSubject returns the value of RefSubject.
+func (s *JudgeReported) GetRefSubject() OptString {
+	return s.RefSubject
+}
+
+// GetRepositoryRoot returns the value of RepositoryRoot.
+func (s *JudgeReported) GetRepositoryRoot() OptString {
+	return s.RepositoryRoot
+}
+
+// GetWorkingDirectory returns the value of WorkingDirectory.
+func (s *JudgeReported) GetWorkingDirectory() OptString {
+	return s.WorkingDirectory
+}
+
+// SetRefCommit sets the value of RefCommit.
+func (s *JudgeReported) SetRefCommit(val OptString) {
+	s.RefCommit = val
+}
+
+// SetRefSubject sets the value of RefSubject.
+func (s *JudgeReported) SetRefSubject(val OptString) {
+	s.RefSubject = val
+}
+
+// SetRepositoryRoot sets the value of RepositoryRoot.
+func (s *JudgeReported) SetRepositoryRoot(val OptString) {
+	s.RepositoryRoot = val
+}
+
+// SetWorkingDirectory sets the value of WorkingDirectory.
+func (s *JudgeReported) SetWorkingDirectory(val OptString) {
+	s.WorkingDirectory = val
 }
 
 // What the judge is told about a request's body, always in this one shape (ADR 26-09-26-240). The
@@ -1442,6 +1548,52 @@ func (o OptInt64) Or(d int64) int64 {
 	return d
 }
 
+// NewOptJudgeInput returns new OptJudgeInput with value set to v.
+func NewOptJudgeInput(v JudgeInput) OptJudgeInput {
+	return OptJudgeInput{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptJudgeInput is optional JudgeInput.
+type OptJudgeInput struct {
+	Value JudgeInput
+	Set   bool
+}
+
+// IsSet returns true if OptJudgeInput was set.
+func (o OptJudgeInput) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptJudgeInput) Reset() {
+	var v JudgeInput
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptJudgeInput) SetTo(v JudgeInput) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptJudgeInput) Get() (v JudgeInput, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptJudgeInput) Or(d JudgeInput) JudgeInput {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptJudgeNeed returns new OptJudgeNeed with value set to v.
 func NewOptJudgeNeed(v JudgeNeed) OptJudgeNeed {
 	return OptJudgeNeed{
@@ -1528,6 +1680,52 @@ func (o OptJudgeRecognition) Get() (v JudgeRecognition, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptJudgeRecognition) Or(d JudgeRecognition) JudgeRecognition {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptJudgeReported returns new OptJudgeReported with value set to v.
+func NewOptJudgeReported(v JudgeReported) OptJudgeReported {
+	return OptJudgeReported{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptJudgeReported is optional JudgeReported.
+type OptJudgeReported struct {
+	Value JudgeReported
+	Set   bool
+}
+
+// IsSet returns true if OptJudgeReported was set.
+func (o OptJudgeReported) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptJudgeReported) Reset() {
+	var v JudgeReported
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptJudgeReported) SetTo(v JudgeReported) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptJudgeReported) Get() (v JudgeReported, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptJudgeReported) Or(d JudgeReported) JudgeReported {
 	if v, ok := o.Get(); ok {
 		return v
 	}
