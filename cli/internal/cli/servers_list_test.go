@@ -859,6 +859,7 @@ func TestASlowServerIsListedWhenItAnswers(t *testing.T) {
 			t.Fatalf("List() error = %v", err)
 		}
 		if len(listing.Sandboxes) == 2 {
+			waitForPollsToLand(t, ds)
 			return
 		}
 		if len(listing.Unreachable) > 0 {
@@ -867,6 +868,28 @@ func TestASlowServerIsListedWhenItAnswers(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	t.Fatal("a server that answered late was never listed")
+}
+
+// waitForPollsToLand waits out the requests a poll left in flight. The poll
+// that listed the slow server asked it again, and that answer lands on its
+// own, writing this machine's host ID under the test's config directory: left
+// running, it races the directory's removal.
+func waitForPollsToLand(t *testing.T, ds *apiDataSource) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		ds.mu.Lock()
+		asking := false
+		for _, s := range ds.servers {
+			asking = asking || s.listing.asking
+		}
+		ds.mu.Unlock()
+		if !asking {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("a poll's request never landed")
 }
 
 // The same for the only server there is, which the window does wait for:
