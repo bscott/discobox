@@ -274,7 +274,11 @@ pass the pool's start gate first; see [Clearing the Pool's Caches](#clearing-the
 sandbox-directed routes — the HTTP proxy, the sandbox-agent proxy, the Git
 proxy, and the SSH ingress's TCP tunnel route (ADR 0024 §7) — start a stopped
 sandbox before proxying (`server/autostart.go`), and ten concurrent requests
-produce one start. Control operations never auto-start.
+produce one start. Control operations never auto-start. A failed on-demand
+start refuses the routes that reach into the sandbox with its error, so a runtime
+failure such as a missing bind mount is not hidden behind a missing sandbox IP
+address. The Git routes still serve: the pool host answers them from the
+sandbox's files, so the work in a sandbox that cannot start can still be fetched.
 
 Every start — explicit, restart, or auto-start — first writes the pool's current
 idle timeout into the sandbox's `sandbox.json` (`applySandboxIdleTimeout`,
