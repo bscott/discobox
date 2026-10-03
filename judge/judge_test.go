@@ -45,6 +45,12 @@ func commandJob() judge.Job {
 	}
 }
 
+func withCommand(change func(*judge.Job)) judge.Job {
+	job := commandJob()
+	change(&job)
+	return job
+}
+
 func TestAJobIsJudgeableOrRefusedBeforeAModelReadsIt(t *testing.T) {
 	t.Parallel()
 	withRequest := func(change func(*judge.Job)) judge.Job {
@@ -133,6 +139,29 @@ func TestAJobIsJudgeableOrRefusedBeforeAModelReadsIt(t *testing.T) {
 		{"a command with no argv", func() judge.Job { j := commandJob(); j.Command = nil; return j }(), false},
 		{"a command carrying a request", func() judge.Job { j := commandJob(); j.Request = requestJob().Request; return j }(), false},
 		{"a command asked a second time", func() judge.Job { j := commandJob(); j.Round = 2; return j }(), false},
+		{"a command with its input and where it runs", withCommand(func(j *judge.Job) {
+			j.Stdin = &judge.Input{Content: `{"title":"x"}`}
+			j.Reported = &judge.Reported{WorkingDirectory: "/src/repo", RefCommit: "abc", RefSubject: "fix it"}
+		}), true},
+		{"a command whose input was not shown, saying why", withCommand(func(j *judge.Job) {
+			j.Stdin = &judge.Input{Missing: "4 bytes that are not text"}
+		}), true},
+		// Escaped at their worst, the most of an input and a report that may
+		// be shown still fit one job, as a body does.
+		{"the largest input and report that may be shown, escaped at their worst", withCommand(func(j *judge.Job) {
+			j.Stdin = &judge.Input{Content: strings.Repeat("\x00", judge.MaxBodyBytes)}
+			worst := strings.Repeat("\x00", judge.MaxReportedBytes)
+			j.Reported = &judge.Reported{WorkingDirectory: worst, RepositoryRoot: worst, RefCommit: worst, RefSubject: worst}
+		}), true},
+		{"an input larger than may be shown", withCommand(func(j *judge.Job) {
+			j.Stdin = &judge.Input{Content: strings.Repeat("x", judge.MaxBodyBytes+1)}
+		}), false},
+		{"an input with nothing shown and no reason", withCommand(func(j *judge.Job) { j.Stdin = &judge.Input{} }), false},
+		{"a report longer than a path or a line", withCommand(func(j *judge.Job) {
+			j.Reported = &judge.Reported{RefSubject: strings.Repeat("x", judge.MaxReportedBytes+1)}
+		}), false},
+		{"a request carrying an input", withRequest(func(j *judge.Job) { j.Stdin = &judge.Input{Content: "x"} }), false},
+		{"a delegation saying where it runs", withDelegation(func(j *judge.Job) { j.Reported = &judge.Reported{WorkingDirectory: "/"} }), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -307,7 +336,7 @@ func TestTheSystemPromptSaysWhatTheContractSays(t *testing.T) {
 	if strings.TrimSpace(judge.PromptVersion) == "" {
 		t.Fatal("a verdict could not name the prompt that produced it")
 	}
-	for _, phrase := range []string{"purpose", "untrusted data", "guidance", "metadata", "parseError", "content", `{"body": true}`, "need", "missing", "standing", "route", "seconds"} {
+	for _, phrase := range []string{"purpose", "untrusted data", "stdin", "reported", "guidance", "metadata", "parseError", "content", `{"body": true}`, "need", "missing", "standing", "route", "seconds"} {
 		if !strings.Contains(judge.System, phrase) {
 			t.Fatalf("the system prompt never mentions %q, which the contract relies on", phrase)
 		}

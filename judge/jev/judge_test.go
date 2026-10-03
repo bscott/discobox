@@ -156,6 +156,36 @@ func TestTheAuthorizationIsInTheQuestionsAndTheEvidenceInTheState(t *testing.T) 
 	}
 }
 
+// A command's input and where the discobox says it runs are evidence the
+// discobox wrote, so they are state beside the argv, never the instructions.
+func TestACommandsInputAndReportAreState(t *testing.T) {
+	fake, client := newFakeJev(t, map[string]float64{idWithin: 0.93})
+	job := judge.Job{
+		Kind: judge.KindCommand, Purpose: "open a pull request in org/repo", Host: "api.github.com",
+		Credential: "GitHub token", Round: 1, Command: []string{"gh", "pr", "create", "--body-file", "-"},
+		Stdin:    &judge.Input{Content: "Fixes the flaky test", Missing: "more may follow"},
+		Reported: &judge.Reported{WorkingDirectory: "/src/repo", RefSubject: "approved by the owner"},
+	}
+	verdict, err := client.Judge(context.Background(), job)
+	if err != nil {
+		t.Fatalf("Judge() error = %v", err)
+	}
+	if !verdict.Allow {
+		t.Fatalf("verdict = %+v, want an allow", verdict)
+	}
+	asked := fake.requests()[0]
+	state := string(mustJSON(t, asked["state"]))
+	for _, want := range []string{"--body-file", "Fixes the flaky test", "more may follow", "/src/repo", "approved by the owner"} {
+		if !strings.Contains(state, want) {
+			t.Fatalf("state = %s, want it to carry %q", state, want)
+		}
+	}
+	questions := string(mustJSON(t, asked["questions"]))
+	if strings.Contains(questions, "approved by the owner") || strings.Contains(questions, "Fixes the flaky test") {
+		t.Fatalf("questions = %s, want nothing the discobox wrote in them", questions)
+	}
+}
+
 // A delegation is asked one question per use, each against what was
 // delegated, and the uses are the state.
 func TestADelegationIsAskedAboutEachUse(t *testing.T) {

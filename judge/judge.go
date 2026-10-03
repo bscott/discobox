@@ -23,7 +23,7 @@ const (
 	Role = "judge"
 	// PromptVersion changes whenever System changes. A stored verdict names
 	// it, so a decision can be read against the words that produced it.
-	PromptVersion = "7"
+	PromptVersion = "8"
 	// Timeout bounds one exchange — every round of it together, not each ask.
 	// A request is being held open while the judge thinks.
 	//
@@ -70,6 +70,12 @@ const (
 	// fraction of what a body shown on request may be: it is what the
 	// operation is, not what it carries (ADR 26-09-26-240 §3).
 	MaxMetadataBytes = 2 << 10
+	// MaxReportedBytes is the most any one thing a discobox reports about
+	// where a command runs may be. They are a path or a line, and anything
+	// longer is not that. It is agentcreds.MaxReportedBytes, which the
+	// discobox cuts them to, and small for the reason that is: escaped at its
+	// worst beside the largest input shown, a job still fits MaxInput.
+	MaxReportedBytes = 256
 	// MaxFacts is the most the control plane may say about one job. Facts
 	// are short and specific; a long list is a context the judge drowns in.
 	MaxFacts = 8
@@ -118,6 +124,14 @@ type Job struct {
 	// the discobox declared it was running, which is context and not
 	// authority: a declaration cannot override the request observed.
 	Command []string `json:"command,omitempty"`
+	// Stdin is what a command job's command will read on standard input, as
+	// much of it as the discobox showed (ADR 26-09-27-905). For a command
+	// that takes its request there, it is the operation.
+	Stdin *Input `json:"stdin,omitempty"`
+	// Reported is what the discobox said about where a command job's command
+	// runs (ADR 0090). It is the discobox's claim, written on the side being
+	// judged, and never a fact the trusted side established.
+	Reported *Reported `json:"reported,omitempty"`
 	// Request is the request observed by the proxy, for a request job.
 	Request *Request `json:"request,omitempty"`
 	// Uses are the uses a discobox is about to hand on, for a delegation job:
@@ -136,6 +150,32 @@ type Job struct {
 	// facts rather than authority: a fact explains a target, and never
 	// widens Purpose.
 	Facts []string `json:"facts,omitempty"`
+}
+
+// Input is what a command will read on standard input, as the discobox
+// showed it: text, and a sentence for whatever of it is not shown.
+type Input struct {
+	// Content is the input shown, which is text. It is empty when none of it
+	// could be shown, and Missing then says why.
+	Content string `json:"content"`
+	// Missing says, in a sentence for the judge, why Content is not the whole
+	// input: longer than may be shown, still arriving, not text, or a read
+	// that failed. It is said rather than hidden, as a body's is.
+	Missing string `json:"missing,omitempty"`
+}
+
+// Reported is what a discobox says about where a command runs. Every field is
+// optional, and every one is a claim: the discobox under judgement wrote it.
+type Reported struct {
+	// WorkingDirectory is the directory the command runs in.
+	WorkingDirectory string `json:"workingDirectory,omitempty"`
+	// RepositoryRoot is the root of the git checkout it runs in.
+	RepositoryRoot string `json:"repositoryRoot,omitempty"`
+	// RefCommit and RefSubject are the commit a git ref the command names
+	// resolves to, and that commit's subject line: the agent's own words
+	// about its work, reaching the judge by a second route (ADR 0090 §3).
+	RefCommit  string `json:"refCommit,omitempty"`
+	RefSubject string `json:"refSubject,omitempty"`
 }
 
 // Request is a request as the proxy saw it, before any credential was
@@ -276,6 +316,15 @@ func (j Job) Validate() error {
 		if j.Round != 1 {
 			return errors.New("a command job is asked once: there is nothing further to show")
 		}
+		if j.Stdin != nil && len(j.Stdin.Content) > MaxBodyBytes {
+			return errors.New("the input shown exceeds what a judge may be shown")
+		}
+		if j.Stdin != nil && j.Stdin.Content == "" && strings.TrimSpace(j.Stdin.Missing) == "" {
+			return errors.New("an input with nothing shown says why")
+		}
+		if err := j.Reported.validate(); err != nil {
+			return err
+		}
 	case KindRequest:
 		if j.Request == nil {
 			return errors.New("a request job requires the request observed")
@@ -318,6 +367,9 @@ func (j Job) Validate() error {
 	default:
 		return fmt.Errorf("unknown judge job kind %q", j.Kind)
 	}
+	if j.Kind != KindCommand && (j.Stdin != nil || j.Reported != nil) {
+		return errors.New("only a command job reads standard input or runs somewhere")
+	}
 	if len(j.Facts) > MaxFacts {
 		return fmt.Errorf("a job carries at most %d facts", MaxFacts)
 	}
@@ -332,6 +384,18 @@ func (j Job) Validate() error {
 	}
 	if len(data) > MaxInput {
 		return errors.New("the evidence for one job exceeds what a judge may be shown")
+	}
+	return nil
+}
+
+func (r *Reported) validate() error {
+	if r == nil {
+		return nil
+	}
+	for _, field := range []string{r.WorkingDirectory, r.RepositoryRoot, r.RefCommit, r.RefSubject} {
+		if len(field) > MaxReportedBytes {
+			return errors.New("what a discobox reports about where a command runs is a path or a line")
+		}
 	}
 	return nil
 }
