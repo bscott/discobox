@@ -3063,6 +3063,9 @@ func (r *DockerSandboxRuntime) materializeGitSource(ctx context.Context, source 
 		if err := r.restoreGitWorkspace(ctx, target, source, fetchURL, chownID(identity.UID), chownID(identity.GID)); err != nil {
 			return err
 		}
+		if err := configureUpstreamRemote(ctx, target, source, chownID(identity.UID), chownID(identity.GID)); err != nil {
+			return err
+		}
 		return markGitSourceMaterialized(target, chownID(user.UID), chownID(user.GID))
 	} else if !os.IsNotExist(err) {
 		return err
@@ -3087,7 +3090,41 @@ func (r *DockerSandboxRuntime) materializeGitSource(ctx context.Context, source 
 	if err := r.restoreGitWorkspace(ctx, target, source, fetchURL, chownID(identity.UID), chownID(identity.GID)); err != nil {
 		return err
 	}
+	if err := configureUpstreamRemote(ctx, target, source, chownID(identity.UID), chownID(identity.GID)); err != nil {
+		return err
+	}
 	return markGitSourceMaterialized(target, chownID(user.UID), chownID(user.GID))
+}
+
+// upstreamRemoteName is the remote a local source's own upstream is configured
+// as. It cannot be the name the client calls it — that is nearly always origin,
+// which in a sandbox is the client's repository (ensureOriginRemote) — so it is
+// one fixed name rather than a rename that applies only sometimes, and a name
+// an agent in any sandbox can count on finding. What it names is whatever the
+// client's branch tracks — a fork or a mirror as readily as the canonical
+// repository — so anything that pushes there checks its URL first.
+const upstreamRemoteName = "upstream"
+
+// configureUpstreamRemote adds the remote the client's checkout of this source
+// tracks, so the project's real remote is known inside the sandbox. Only the
+// remote is written: the checked-out branch keeps tracking origin, which is
+// what `discobox apply` and a rebase onto the client's work read.
+//
+// It runs once, as part of materialization, rather than on every create the
+// way ensureOriginRemote does. This remote is a starting point, not something
+// the sandbox depends on, so whoever works in the sandbox owns it afterwards
+// and a repair has no business putting a URL they changed back. Both keys are
+// replaced rather than added so a materialization retried after a failure
+// converges on one value each.
+func configureUpstreamRemote(ctx context.Context, repo string, source workerapimodel.GitSource, uid, gid int) error {
+	upstreamURL := strings.TrimSpace(optString(source.UpstreamUrl))
+	if upstreamURL == "" {
+		return nil
+	}
+	if err := runGit(ctx, repo, uid, gid, "config", "--replace-all", "remote."+upstreamRemoteName+".url", upstreamURL); err != nil {
+		return err
+	}
+	return runGit(ctx, repo, uid, gid, "config", "--replace-all", "remote."+upstreamRemoteName+".fetch", "+refs/heads/*:refs/remotes/"+upstreamRemoteName+"/*")
 }
 
 // cloneGitSource clones fetchURL into target, which git requires to be empty or

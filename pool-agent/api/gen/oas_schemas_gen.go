@@ -182,9 +182,12 @@ type GitSource struct {
 	Kind           GitSourceKind           `json:"kind"`
 	LocalDirectory OptString               `json:"localDirectory"`
 	// Stable URL-safe source slug used to address the source as a sandbox Git repository.
-	Slug      OptString             `json:"slug"`
-	URL       OptURI                `json:"url"`
-	Workspace OptGitSourceWorkspace `json:"workspace"`
+	Slug OptString `json:"slug"`
+	// URL to configure as the checkout's upstream remote once the source is materialized. The
+	// checked-out branch keeps tracking origin.
+	UpstreamUrl OptString             `json:"upstreamUrl"`
+	URL         OptURI                `json:"url"`
+	Workspace   OptGitSourceWorkspace `json:"workspace"`
 }
 
 // GetCheckout returns the value of Checkout.
@@ -220,6 +223,11 @@ func (s *GitSource) GetLocalDirectory() OptString {
 // GetSlug returns the value of Slug.
 func (s *GitSource) GetSlug() OptString {
 	return s.Slug
+}
+
+// GetUpstreamUrl returns the value of UpstreamUrl.
+func (s *GitSource) GetUpstreamUrl() OptString {
+	return s.UpstreamUrl
 }
 
 // GetURL returns the value of URL.
@@ -265,6 +273,11 @@ func (s *GitSource) SetLocalDirectory(val OptString) {
 // SetSlug sets the value of Slug.
 func (s *GitSource) SetSlug(val OptString) {
 	s.Slug = val
+}
+
+// SetUpstreamUrl sets the value of UpstreamUrl.
+func (s *GitSource) SetUpstreamUrl(val OptString) {
+	s.UpstreamUrl = val
 }
 
 // SetURL sets the value of URL.

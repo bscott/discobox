@@ -2026,6 +2026,9 @@ components:
                     maxLength: 63
                     pattern: ^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$
                     type: string
+                upstreamUrl:
+                    description: Network URL of the remote the local source's checked-out branch tracks on the client. The sandbox adds it as a remote named upstream when it materializes the source; the branch keeps tracking origin.
+                    type: string
                 url:
                     description: Remote Git source URL
                     format: uri

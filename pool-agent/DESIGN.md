@@ -760,6 +760,13 @@ flowchart LR
   create either builds volumes (`prepareSandboxVolumes`) or resumes a pushed
   source against an existing container (`materializePushedSources`), and each
   finishes with the source in place.
+- A local source whose client branch tracks a network remote carries that
+  remote's URL (`upstreamUrl`), and `configureUpstreamRemote` adds it as a
+  remote named `upstream` — always that name, because the client's is nearly
+  always `origin`, which here is the client's repository. Only the remote is
+  added: the branch keeps tracking `origin`. Unlike `origin` it is written once,
+  inside `materializeGitSource`: the sandbox depends on nothing it holds, so it
+  belongs to whoever works in the sandbox, and repair leaves it as they left it.
 - Normalize provider-owned source destination defaults before both mounting
   sources and writing the public sandbox manifest so manifest consumers observe
   the paths actually used by the runtime.

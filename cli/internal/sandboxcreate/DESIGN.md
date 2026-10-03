@@ -150,6 +150,16 @@ sandbox create requests.
   than bound: a bound origin is only ever the repository's own Git directory.
   See the CLI design doc's "A Repository Whose `.git` Is Not Its Git Directory"
   and [ADR 0093](../../../docs/adr/0093-a-local-sources-origin-is-its-git-directory.md).
+- A local source checked out at a branch records the URL of the remote that
+  branch tracks (`upstreamUrl`, `localUpstreamURL`), which the sandbox adds as
+  its `upstream` remote — its `origin` is this repository, so the project's real
+  remote is otherwise unknown there. It is the remote's first URL, the one Git
+  fetches from: as written when written in full, so this machine's `insteadOf`
+  rewrites (https to ssh for a key the sandbox lacks) stay here, and as Git
+  resolves it otherwise, so an alias like `gh:org/repo` arrives as a real URL.
+  Credentials written into it are dropped, and a remote the sandbox cannot
+  reach (another local branch, a path on this machine) sends nothing rather
+  than a broken remote.
 - Do not depend on `internal/cli` or `internal/tui`. Both frontends consume this
   package through their adapters.
 - Keep terminal waiting, attach, and rendering in the frontend packages; those

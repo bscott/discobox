@@ -836,6 +836,11 @@ func poolGitSource(in model.GitSource, dataKey string) (poolapimodel.GitSource, 
 			out.LocalDirectory = poolclient.NewOptString(*in.LocalDirectory)
 		}
 	}
+	// Forwarded in both delivery modes: it is a network remote the sandbox
+	// itself fetches from, not a location the pool is asked to reach.
+	if in.UpstreamURL != nil && *in.UpstreamURL != "" {
+		out.UpstreamUrl = poolclient.NewOptString(*in.UpstreamURL)
+	}
 	if in.Checkout != nil {
 		checkout := poolapimodel.GitSourceCheckout{}
 		if in.Checkout.Commit != nil {

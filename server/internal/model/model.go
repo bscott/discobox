@@ -460,10 +460,16 @@ type GitSource struct {
 	// clone-delivered source's origin is exactly that directory (ADR 0093), so
 	// there is nothing a sandbox can be bound to. Its commits stay in the user's
 	// repository, as NoLocalCommits' do.
-	NoLocalGitDirectory bool                  `json:"noLocalGitDirectory,omitempty" doc:"Whether localDirectory has no Git directory of its own at localDirectory/.git — a linked worktree or submodule checkout, whose .git is a file naming a Git directory elsewhere — so there is nothing at that path a sandbox's origin can be bound to. The client can only deliver it by push, and can still deliver it later."`
-	Checkout            *GitSourceCheckout    `json:"checkout,omitempty" doc:"Immutable checkout target and optional user-facing ref identity"`
-	Workspace           *GitSourceWorkspace   `json:"workspace,omitempty" doc:"Workspace materialization mode for this source"`
-	Destination         *GitSourceDestination `json:"destination,omitempty" doc:"Sandbox destination paths for this source"`
+	NoLocalGitDirectory bool `json:"noLocalGitDirectory,omitempty" doc:"Whether localDirectory has no Git directory of its own at localDirectory/.git — a linked worktree or submodule checkout, whose .git is a file naming a Git directory elsewhere — so there is nothing at that path a sandbox's origin can be bound to. The client can only deliver it by push, and can still deliver it later."`
+	// UpstreamURL is where the client's own checkout of a local source pushes
+	// and pulls: the remote its checked-out branch tracks. The sandbox's origin
+	// is the client's repository, so without this the box would not know the
+	// project's real remote at all. It is configured as a remote named
+	// upstream and nothing tracks it.
+	UpstreamURL *string               `json:"upstreamUrl,omitempty" doc:"Network URL of the remote the local source's checked-out branch tracks on the client. The sandbox adds it as a remote named upstream when it materializes the source; the branch keeps tracking origin."`
+	Checkout    *GitSourceCheckout    `json:"checkout,omitempty" doc:"Immutable checkout target and optional user-facing ref identity"`
+	Workspace   *GitSourceWorkspace   `json:"workspace,omitempty" doc:"Workspace materialization mode for this source"`
+	Destination *GitSourceDestination `json:"destination,omitempty" doc:"Sandbox destination paths for this source"`
 }
 
 // Root returns the normalized identity of the source repository, independent of

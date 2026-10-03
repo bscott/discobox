@@ -5719,6 +5719,12 @@ func (s *GitSource) encodeFields(e *jx.Encoder) {
 		}
 	}
 	{
+		if s.UpstreamUrl.Set {
+			e.FieldStart("upstreamUrl")
+			s.UpstreamUrl.Encode(e)
+		}
+	}
+	{
 		if s.URL.Set {
 			e.FieldStart("url")
 			s.URL.Encode(e)
@@ -5732,7 +5738,7 @@ func (s *GitSource) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfGitSource = [11]string{
+var jsonFieldsNameOfGitSource = [12]string{
 	0:  "checkout",
 	1:  "delivery",
 	2:  "destination",
@@ -5742,8 +5748,9 @@ var jsonFieldsNameOfGitSource = [11]string{
 	6:  "noLocalGitDirectory",
 	7:  "noLocalRepository",
 	8:  "slug",
-	9:  "url",
-	10: "workspace",
+	9:  "upstreamUrl",
+	10: "url",
+	11: "workspace",
 }
 
 // Decode decodes GitSource from json.
@@ -5844,6 +5851,16 @@ func (s *GitSource) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"slug\"")
+			}
+		case "upstreamUrl":
+			if err := func() error {
+				s.UpstreamUrl.Reset()
+				if err := s.UpstreamUrl.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"upstreamUrl\"")
 			}
 		case "url":
 			if err := func() error {

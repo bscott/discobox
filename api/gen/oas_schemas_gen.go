@@ -3169,6 +3169,10 @@ type GitSource struct {
 	NoLocalRepository OptBool `json:"noLocalRepository"`
 	// Stable URL-safe source slug used to address the source as a sandbox Git repository.
 	Slug OptString `json:"slug"`
+	// Network URL of the remote the local source's checked-out branch tracks on the client. The sandbox
+	// adds it as a remote named upstream when it materializes the source; the branch keeps tracking
+	// origin.
+	UpstreamUrl OptString `json:"upstreamUrl"`
 	// Remote Git source URL.
 	URL OptURI `json:"url"`
 	// Workspace materialization mode for this source.
@@ -3218,6 +3222,11 @@ func (s *GitSource) GetNoLocalRepository() OptBool {
 // GetSlug returns the value of Slug.
 func (s *GitSource) GetSlug() OptString {
 	return s.Slug
+}
+
+// GetUpstreamUrl returns the value of UpstreamUrl.
+func (s *GitSource) GetUpstreamUrl() OptString {
+	return s.UpstreamUrl
 }
 
 // GetURL returns the value of URL.
@@ -3273,6 +3282,11 @@ func (s *GitSource) SetNoLocalRepository(val OptBool) {
 // SetSlug sets the value of Slug.
 func (s *GitSource) SetSlug(val OptString) {
 	s.Slug = val
+}
+
+// SetUpstreamUrl sets the value of UpstreamUrl.
+func (s *GitSource) SetUpstreamUrl(val OptString) {
+	s.UpstreamUrl = val
 }
 
 // SetURL sets the value of URL.

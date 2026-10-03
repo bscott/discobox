@@ -124,6 +124,12 @@ things, and they behave differently:
   nothing is bound. `origin` is that real remote, and a push is a live push
   upstream. Do not push there unless the user asked for it.
 
+A source cloned from the user's disk may also have an **`upstream`** remote:
+the URL the user's own checkout of that branch tracks — their GitHub remote, a
+fork, or a mirror. It is live, it is not what your branch tracks, and a push
+there is a push to the real remote. The same rule holds: not unless the user
+asked, and check its URL first.
+
 The user runs `discobox apply` on their side, which cherry-picks your commits
 onto their working tree with your commit boundaries preserved.
 
