@@ -861,7 +861,7 @@ func TestMaterializeGitSourceAddsTheClientsUpstreamRemote(t *testing.T) {
 	if err := runtime.ensureOriginRemote(ctx, target, source, "primary", currentUser()); err != nil {
 		t.Fatalf("ensure origin remote: %v", err)
 	}
-	if got := gitOutput(t, target, "remote", "get-url", "upstream"); got != upstreamURL {
+	if got := gitOutput(t, target, "config", "remote.upstream.url"); got != upstreamURL {
 		t.Fatalf("upstream remote = %q, want %q", got, upstreamURL)
 	}
 	if got, want := gitOutput(t, target, "config", "--get-all", "remote.upstream.fetch"), "+refs/heads/*:refs/remotes/upstream/*"; got != want {
@@ -884,7 +884,7 @@ func TestMaterializeGitSourceAddsTheClientsUpstreamRemote(t *testing.T) {
 	if err := runtime.ensureOriginRemote(ctx, target, source, "primary", currentUser()); err != nil {
 		t.Fatalf("ensure origin remote again: %v", err)
 	}
-	if got := gitOutput(t, target, "remote", "get-url", "upstream"); got != changed {
+	if got := gitOutput(t, target, "config", "remote.upstream.url"); got != changed {
 		t.Fatalf("upstream remote after a later create = %q, want the sandbox's own %q", got, changed)
 	}
 }
@@ -908,7 +908,7 @@ func TestMaterializeGitSourceAddsUpstreamToAPushedSource(t *testing.T) {
 	if err := runtime.materializeGitSource(ctx, source, target, origin, currentUser()); err != nil {
 		t.Fatalf("materialize push source: %v", err)
 	}
-	if got := gitOutput(t, target, "remote", "get-url", "upstream"); got != upstreamURL {
+	if got := gitOutput(t, target, "config", "remote.upstream.url"); got != upstreamURL {
 		t.Fatalf("upstream remote = %q, want %q", got, upstreamURL)
 	}
 	if got := gitOutput(t, target, "config", "branch.main.remote"); got != "origin" {
