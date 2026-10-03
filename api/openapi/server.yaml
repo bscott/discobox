@@ -440,11 +440,8 @@ components:
                 envVar:
                     description: Environment variable the discobox's agent receives the credential in. Required without wellKnownId.
                     type: string
-                host:
-                    description: A host the credential may be sent to, before any in hosts. Naming neither defaults to the secret's host, or the well-known credential's first; one is required.
-                    type: string
                 hosts:
-                    description: Hosts the credential may be sent to, after host (ADR 26-10-02-393). Each must sit inside the secret's binding, or the well-known credential's hosts.
+                    description: Hosts the credential may be sent to (ADR 26-10-02-393). Left out, the secret's host, or the well-known credential's first; one is required. Each must sit inside the secret's binding, or the well-known credential's hosts.
                     items:
                         type: string
                     type: array
@@ -3069,9 +3066,6 @@ components:
                 grantId:
                     description: Grant authorizing the uses
                     type: string
-                host:
-                    description: The first of hosts, for a pool agent that reads one; it pins an activation there and refuses the rest
-                    type: string
                 hosts:
                     description: Hosts the credential may be sent to; a destination any of them covers (ADR 26-10-02-393)
                     items:
@@ -3095,7 +3089,7 @@ components:
             required:
                 - name
                 - envVar
-                - host
+                - hosts
                 - secretId
                 - grantId
                 - sentinel
@@ -3135,11 +3129,8 @@ components:
                     maximum: 2592000
                     minimum: 0
                     type: integer
-                host:
-                    description: A destination host the credential will be sent to, before any in hosts. One host, here or in hosts, is required, because approving this request may not mint a host-unscoped grant.
-                    type: string
                 hosts:
-                    description: Destination hosts the credential will be sent to, after host (ADR 26-10-02-393).
+                    description: Destination hosts the credential will be sent to (ADR 26-10-02-393). At least one is required, because approving this request may not mint a host-unscoped grant; a well-known credential's ID supplies its first when none is named.
                     items:
                         type: string
                     type: array
@@ -4469,11 +4460,8 @@ components:
                     description: Grant duration in seconds; 0 grants one that never expires. Omitted, the grant lasts what the request asked for, else an hour, within the secret's limit; for a discobox approver, also within the delegation grant it approves under, and a named duration that outlasts that delegation is refused.
                     format: int64
                     type: integer
-                host:
-                    description: A host the minted grant is limited to, before any in hosts. Naming neither defaults to the hosts the request named, and an empty host alone names none. Approving a protocol-originated request with no host at all is rejected; a wildcard grant stays an explicit administrative act.
-                    type: string
                 hosts:
-                    description: Hosts the minted grant is limited to, after host (ADR 26-10-02-393).
+                    description: Hosts the minted grant is limited to (ADR 26-10-02-393). Left out, the hosts the request named; an empty list names none. Approving a protocol-originated request with no host at all is rejected; a wildcard grant stays an explicit administrative act.
                     items:
                         type: string
                     type: array
@@ -4567,11 +4555,8 @@ components:
                     description: Grant duration in seconds; defaults to the secret's default. 0 never expires.
                     format: int64
                     type: integer
-                host:
-                    description: A host the grant is limited to, before any in hosts. Naming neither defaults to the secret's host; an empty host alone matches any host
-                    type: string
                 hosts:
-                    description: Hosts the grant is limited to, after host (ADR 26-10-02-393)
+                    description: Hosts the grant is limited to (ADR 26-10-02-393). Left out, the secret's host; an empty list matches any host.
                     items:
                         type: string
                     type: array
@@ -4881,9 +4866,6 @@ components:
                 grantedBy:
                     description: Principal ID that created the grant
                     type: string
-                host:
-                    description: The first of hosts, for a reader that reads one
-                    type: string
                 hosts:
                     description: Hosts the grant is limited to; a destination any of them covers. Empty matches any host (ADR 26-10-02-393)
                     items:
@@ -5107,9 +5089,6 @@ components:
                     description: How long the agent asked the grant to live, in seconds -- the lifetime an approval starts from. At most thirty days. Absent when it asked for nothing in particular; never forever.
                     format: int64
                     type: integer
-                host:
-                    description: The first of hosts, for a reader that reads one
-                    type: string
                 hosts:
                     description: Hosts named at request time (ADR 26-10-02-393)
                     items:

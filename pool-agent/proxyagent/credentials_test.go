@@ -77,7 +77,7 @@ func allowVerdict() agentcreds.Verdict {
 // why, and that only holds if the record actually lands.
 func TestGetRecordsTheVerdictBeforeMintingTheValue(t *testing.T) {
 	broker, fake := newFakeControlPlane(t, []credentialDoc{{
-		EnvVar: "GITHUB_TOKEN", Host: "api.github.com", Sentinel: "STABLE-1",
+		EnvVar: "GITHUB_TOKEN", Hosts: []string{"api.github.com"}, Sentinel: "STABLE-1",
 		Uses: []credentialUseDoc{{UseID: "use-1", Description: "open a PR"}},
 	}})
 	b := &credentialBroker{sandboxID: "sb-1", controlPlan: broker, activations: newActivations()}
@@ -107,7 +107,7 @@ func TestGetRecordsTheVerdictBeforeMintingTheValue(t *testing.T) {
 
 func TestGetRefusesAMissingVerdict(t *testing.T) {
 	broker, fake := newFakeControlPlane(t, []credentialDoc{{
-		EnvVar: "GITHUB_TOKEN", Host: "api.github.com", Sentinel: "STABLE-1",
+		EnvVar: "GITHUB_TOKEN", Hosts: []string{"api.github.com"}, Sentinel: "STABLE-1",
 		Uses: []credentialUseDoc{{UseID: "use-1", Description: "open a PR"}},
 	}})
 	b := &credentialBroker{sandboxID: "sb-1", controlPlan: broker, activations: newActivations()}
@@ -126,7 +126,7 @@ func TestGetRefusesAMissingVerdict(t *testing.T) {
 // courtesy alongside it.
 func TestGetMintsNothingWhenRecordingTheVerdictFails(t *testing.T) {
 	broker, fake := newFakeControlPlane(t, []credentialDoc{{
-		EnvVar: "GITHUB_TOKEN", Host: "api.github.com", Sentinel: "STABLE-1",
+		EnvVar: "GITHUB_TOKEN", Hosts: []string{"api.github.com"}, Sentinel: "STABLE-1",
 		Uses: []credentialUseDoc{{UseID: "use-1", Description: "open a PR"}},
 	}})
 	fake.verdictErr = errors.New("database unavailable")
@@ -176,7 +176,7 @@ func TestRequestPassesAWellKnownIDOnAsSent(t *testing.T) {
 		t.Fatalf("requests = %d, want one", len(fake.requests))
 	}
 	got := fake.requests[0]
-	if got.ID != "com.github.api" || got.Name != "" || got.EnvVar != "GITHUB_TOKEN" || got.Host != "" {
+	if got.ID != "com.github.api" || got.Name != "" || got.EnvVar != "GITHUB_TOKEN" || got.Hosts != nil {
 		t.Fatalf("request = %+v, want the ask as the agent sent it", got)
 	}
 
@@ -186,11 +186,11 @@ func TestRequestPassesAWellKnownIDOnAsSent(t *testing.T) {
 	}
 }
 
-// A use granted for several hosts is spent at any of them, and nowhere else;
-// list reports them all, and host as the first (ADR 26-10-02-393 §§2, 4).
+// A use granted for several hosts is spent at any of them, and nowhere else,
+// and list reports them all (ADR 26-10-02-393 §2).
 func TestAUseGrantedForSeveralHostsIsSpentAtEach(t *testing.T) {
 	broker, _ := newFakeControlPlane(t, []credentialDoc{{
-		Name: "github", EnvVar: "GH_TOKEN", Host: "api.github.com", Sentinel: "STABLE-1",
+		Name: "github", EnvVar: "GH_TOKEN", Sentinel: "STABLE-1",
 		Hosts: []string{"api.github.com", "api.githubcopilot.com"},
 		Uses:  []credentialUseDoc{{UseID: "use-1", Description: "run copilot"}},
 	}})
@@ -201,8 +201,8 @@ func TestAUseGrantedForSeveralHostsIsSpentAtEach(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(listed) != 1 || listed[0].Host != "api.github.com" || strings.Join(listed[0].Hosts, ",") != "api.github.com,api.githubcopilot.com" {
-		t.Fatalf("listed = %+v, want both hosts, and the first as host", listed)
+	if len(listed) != 1 || strings.Join(listed[0].Hosts, ",") != "api.github.com,api.githubcopilot.com" {
+		t.Fatalf("listed = %+v, want both hosts", listed)
 	}
 
 	out, err := b.Get(context.Background(), agentcreds.UseBody{UseID: "use-1", Command: []string{"copilot"}, Verdict: allowVerdict()})
@@ -224,16 +224,16 @@ func TestAUseGrantedForSeveralHostsIsSpentAtEach(t *testing.T) {
 	}
 }
 
-// A server that predates the list sends host alone, and the activation is
-// pinned there. One that sends no host at all mints an activation that covers
-// nothing — never the wildcard an empty scope would otherwise read as.
+// An activation is pinned to the hosts its use was granted for. One minted
+// from a credential that names no host covers nothing — never the wildcard an
+// empty scope would otherwise read as.
 func TestAnActivationIsNeverPinnedToNoHost(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		doc  credentialDoc
 		at   map[string]bool
 	}{
-		{"host alone", credentialDoc{Host: "api.github.com"}, map[string]bool{"api.github.com": true, "api.githubcopilot.com": false}},
+		{"one host", credentialDoc{Hosts: []string{"api.github.com"}}, map[string]bool{"api.github.com": true, "api.githubcopilot.com": false}},
 		{"no host", credentialDoc{}, map[string]bool{"api.github.com": false, "evil.example.com": false}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -257,18 +257,17 @@ func TestAnActivationIsNeverPinnedToNoHost(t *testing.T) {
 	}
 }
 
-// An ask's hosts reach the control plane as the agent sent them, host and
-// hosts both, for the control plane to read together.
+// An ask's hosts reach the control plane as the agent sent them.
 func TestRequestPassesEveryHostOn(t *testing.T) {
 	broker, fake := newFakeControlPlane(t, nil)
 	b := &credentialBroker{sandboxID: "sb-1", controlPlan: broker, activations: newActivations()}
 	if _, err := b.Request(context.Background(), agentcreds.RequestBody{
-		Name: "github", EnvVar: "GH_TOKEN", Host: "api.github.com", Hosts: []string{"api.githubcopilot.com"},
+		Name: "github", EnvVar: "GH_TOKEN", Hosts: []string{"api.github.com", "api.githubcopilot.com"},
 		Uses: []agentcreds.RequestedUse{{Description: "run copilot"}},
 	}); err != nil {
 		t.Fatalf("request: %v", err)
 	}
-	if len(fake.requests) != 1 || fake.requests[0].Host != "api.github.com" || strings.Join(fake.requests[0].Hosts, ",") != "api.githubcopilot.com" {
-		t.Fatalf("relayed = %+v, want host and hosts as sent", fake.requests)
+	if len(fake.requests) != 1 || strings.Join(fake.requests[0].Hosts, ",") != "api.github.com,api.githubcopilot.com" {
+		t.Fatalf("relayed = %+v, want the hosts as sent", fake.requests)
 	}
 }

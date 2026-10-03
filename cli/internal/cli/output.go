@@ -634,7 +634,7 @@ func (a *App) writeSecretGrant(cmd *cobra.Command, grant *apimodel.SecretGrant) 
 	fmt.Fprintf(tw, "SECRET\t%s\n", grant.SecretId)
 	fmt.Fprintf(tw, "SCOPE\t%s\n", grant.Scope)
 	fmt.Fprintf(tw, "SCOPE KEY\t%s\n", grant.ScopeKey)
-	fmt.Fprintf(tw, "HOSTS\t%s\n", grantHostsText(grant.Host, grant.Hosts))
+	fmt.Fprintf(tw, "HOSTS\t%s\n", grantHostsText(grant.Hosts))
 	// A grant with uses came from an agent's request, and the uses are what an
 	// operator needs to see to decide whether it should still exist.
 	if uses, ok := grant.Uses.Get(); ok {
@@ -677,7 +677,7 @@ func (a *App) writeSecretGrants(cmd *cobra.Command, grants []apimodel.SecretGran
 			grant.SecretId,
 			grant.Scope,
 			grant.ScopeKey,
-			grantHostsText(grant.Host, grant.Hosts),
+			grantHostsText(grant.Hosts),
 			grant.Purpose,
 			formatGrantExpiry(&grant),
 		)
@@ -704,7 +704,7 @@ func (a *App) writeSecretRequest(cmd *cobra.Command, request *apimodel.SecretReq
 	fmt.Fprintf(tw, "ID\t%s\n", request.ID)
 	fmt.Fprintf(tw, "REQUESTED BY\t%s\n", request.RequestedBy)
 	fmt.Fprintf(tw, "TYPE\t%s\n", request.Type)
-	fmt.Fprintf(tw, "HOSTS\t%s\n", strings.Join(responseHosts(request.Host, request.Hosts), ", "))
+	fmt.Fprintf(tw, "HOSTS\t%s\n", strings.Join(request.Hosts, ", "))
 	fmt.Fprintf(tw, "STATUS\t%s\n", request.Status)
 	// What an agent asked for and why is the whole basis for approving it, so it
 	// belongs in the detail view rather than only in the JSON.
@@ -778,7 +778,7 @@ func (a *App) writeSecretRequests(cmd *cobra.Command, requests []apimodel.Secret
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			request.ID,
 			request.Type,
-			strings.Join(responseHosts(request.Host, request.Hosts), ","),
+			strings.Join(request.Hosts, ","),
 			purpose,
 			request.Status,
 			request.SecretId.Or(""),
@@ -1257,8 +1257,8 @@ func optString(value string) apiclientgen.OptString {
 
 // grantHostsText is where a grant lets its credential go, as a table says it:
 // its hosts, or "(any)" for the wildcard.
-func grantHostsText(host apiclientgen.OptString, hosts []string) string {
-	if hosts := responseHosts(host, hosts); len(hosts) > 0 {
+func grantHostsText(hosts []string) string {
+	if len(hosts) > 0 {
 		return strings.Join(hosts, ",")
 	}
 	return "(any)"

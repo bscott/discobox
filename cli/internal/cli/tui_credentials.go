@@ -190,9 +190,7 @@ func toTUICredentialRequest(r apimodel.SecretRequest) tui.CredentialRequest {
 		WellKnownID:   strings.TrimSpace(r.WellKnownId.Or("")),
 		Created:       r.CreatedAt,
 	}
-	if hosts := responseHosts(r.Host, r.Hosts); len(hosts) > 0 {
-		req.Host, req.Hosts = hosts[0], hosts
-	}
+	req.Hosts = r.Hosts
 	if r.Reason.Or("") == apiclientgen.SecretRequestReasonRefresh {
 		req.Refresh = &tui.RefreshAsk{
 			SecretID: strings.TrimSpace(r.SecretId.Or("")),
@@ -624,7 +622,7 @@ func (d *apiDataSource) Grants(ctx context.Context, server, secretID string) ([]
 			SecretID:  g.SecretId,
 			Scope:     string(g.Scope),
 			ScopeKey:  strings.TrimSpace(g.ScopeKey),
-			Host:      strings.Join(responseHosts(g.Host, g.Hosts), ", "),
+			Host:      strings.Join(g.Hosts, ", "),
 			Delegate:  g.Purpose == apiclientgen.SecretGrantPurposeDelegate,
 			GrantedBy: strings.TrimSpace(g.GrantedBy.Or("")),
 			Granted:   g.GrantedAt,
@@ -661,9 +659,12 @@ func (d *apiDataSource) CreateGrant(ctx context.Context, server string, grant tu
 	if grant.ScopeKey != "" {
 		body.SetScopeKey(apiclientgen.NewOptString(grant.ScopeKey))
 	}
-	// Set even when empty: an unset host takes the secret's own binding, and
-	// "anywhere the secret allows" has to be sayable.
-	body.SetHost(apiclientgen.NewOptString(grant.Host))
+	// Sent even when empty: a list left out takes the secret's own binding,
+	// and "anywhere the secret allows" — an empty list — has to be sayable.
+	body.SetHosts([]string{})
+	if host := strings.TrimSpace(grant.Host); host != "" {
+		body.SetHosts([]string{host})
+	}
 	// Said even when zero: the window asked how long it lives and was answered,
 	// and zero is the answer "never expires" — dropping it would quietly
 	// substitute the secret's limit for what the person typed.
@@ -689,7 +690,7 @@ func (d *apiDataSource) CreateGrant(ctx context.Context, server string, grant tu
 		SecretID: created.SecretId,
 		Scope:    string(created.Scope),
 		ScopeKey: strings.TrimSpace(created.ScopeKey),
-		Host:     strings.Join(responseHosts(created.Host, created.Hosts), ", "),
+		Host:     strings.Join(created.Hosts, ", "),
 	}, nil
 }
 

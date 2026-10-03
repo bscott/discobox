@@ -115,15 +115,14 @@ func (s *Service) describeOAuth(ctx context.Context, secret *model.Secret) {
 // the comparing.
 func normalizeHost(host string) string { return hostscope.Normalize(host) }
 
-// askedHosts reads the hosts a request body names. A body may spell them as
-// host, hosts, or both, and they are host followed by hosts: an older writer
-// sends host alone, and asks for the one host it meant (ADR 26-10-02-393 §4).
+// askedHosts reads the hosts a request body names, normalized
+// (ADR 26-10-02-393 §1).
 //
-// named reports whether the body named any at all. A host given as empty is
-// named, and names none: it is how a body asks for the wildcard, where a body
-// that leaves both out takes whatever default the caller has.
-func askedHosts(host apigen.OptString, hosts []string) (list []string, named bool) {
-	return hostscope.List(append([]string{host.Or("")}, hosts...)...), host.IsSet() || len(hosts) > 0
+// named reports whether the body gave the list at all. An empty list is named,
+// and names none: it is how a body asks for the wildcard, where a body that
+// leaves it out takes whatever default the caller has.
+func askedHosts(hosts []string) (list []string, named bool) {
+	return hostscope.List(hosts...), hosts != nil
 }
 
 func (s *Service) CreateSecret(ctx context.Context, projectID string, input services.CreateSecretBody) (*model.Secret, error) {
@@ -381,7 +380,7 @@ func (s *Service) ApproveSecretRequest(ctx context.Context, projectID, requestID
 	principal, _ := auth.PrincipalFromContext(ctx)
 	approverIsSandbox := principal.Type == auth.PrincipalTypeSandbox
 	// The hosts the approver named, else the ones the request did.
-	hosts, named := askedHosts(input.Host, input.Hosts)
+	hosts, named := askedHosts(input.Hosts)
 	if !named {
 		hosts = req.Hosts
 	}
@@ -765,7 +764,7 @@ func (s *Service) CreateSecretGrant(ctx context.Context, projectID string, input
 		return nil, err
 	}
 	// The hosts named, else the secret's own.
-	hosts, named := askedHosts(input.Host, input.Hosts)
+	hosts, named := askedHosts(input.Hosts)
 	if !named {
 		hosts = hostscope.List(secret.Host)
 	}

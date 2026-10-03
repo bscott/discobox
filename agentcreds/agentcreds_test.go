@@ -79,7 +79,7 @@ func TestListReportsUsesAndNeverValues(t *testing.T) {
 	svc := &fakeService{credentials: []agentcreds.Credential{{
 		Name:   "github",
 		EnvVar: "GITHUB_TOKEN",
-		Host:   "api.github.com",
+		Hosts:  []string{"api.github.com"},
 		Uses:   []agentcreds.Use{{UseID: "use-1", Description: "open a PR"}},
 	}}}
 	credentials, err := newTestClient(t, svc).List(context.Background())
@@ -169,7 +169,7 @@ func TestWaitForRequestPollsUntilSettled(t *testing.T) {
 		{RequestID: "req-1", Status: agentcreds.StatusGranted, Uses: []agentcreds.Use{{UseID: "use-1", Description: "open a PR"}}},
 	}}
 	client := newTestClient(t, svc)
-	status, err := client.Request(context.Background(), agentcreds.RequestBody{Name: "github", EnvVar: "GITHUB_TOKEN", Host: "api.github.com"})
+	status, err := client.Request(context.Background(), agentcreds.RequestBody{Name: "github", EnvVar: "GITHUB_TOKEN", Hosts: []string{"api.github.com"}})
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}

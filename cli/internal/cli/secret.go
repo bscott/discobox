@@ -140,7 +140,7 @@ func (a *App) newSecretGrantCreateCommand() *cobra.Command {
 		if strings.TrimSpace(scopeKey) != "" {
 			body.SetScopeKey(apiclientgen.NewOptString(strings.TrimSpace(scopeKey)))
 		}
-		body.Host, body.Hosts = grantHosts(hosts)
+		body.Hosts = grantHosts(hosts)
 		seconds, given, err := grantLifetime(cmd.Flags(), "grant-ttl", ttl)
 		if err != nil {
 			return err
@@ -177,7 +177,7 @@ func (a *App) newSecretGrantCreateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&secretRef, "secret", "", "Secret to grant, by name or ID")
 	cmd.Flags().StringVar(&scope, "scope", "", "Grant scope: sandbox, harnessConfig, or project")
 	cmd.Flags().StringVar(&scopeKey, "scope-key", "", "Discobox ID or harness config ID the scope resolves against (defaults to project ID for project scope)")
-	cmd.Flags().StringArrayVar(&hosts, "host", nil, "Limit the grant to a host (repeatable, for a credential sent to several); defaults to the secret's host")
+	cmd.Flags().StringSliceVar(&hosts, "hosts", nil, "Limit the grant to these hosts, comma-separated or repeated; defaults to the secret's host")
 	cmd.Flags().StringVar(&ttl, "grant-ttl", "", grantTTLCreateFlagUsage)
 	cmd.Flags().StringArrayVar(&uses, "use", nil, "What the credential may be used for (repeatable). With uses the credential is never injected into the discobox: only `discobox-access` can take it, one use at a time. Sandbox scope and a host are required")
 	cmd.Flags().StringVar(&envVar, "env-var", "", "Environment variable an agent receives the credential in; required with --use")
@@ -599,7 +599,7 @@ func (a *App) newSecretRequestApproveCommand() *cobra.Command {
 			}
 			body.SetScope(apiclientgen.NewOptApproveSecretRequestBodyScope(typedScope))
 		}
-		body.Host, body.Hosts = grantHosts(hosts)
+		body.Hosts = grantHosts(hosts)
 		// Uses are only ever narrowed here. Omitting --use approves what the
 		// agent asked for as written, which is the common case: the approver read
 		// the request and said yes to it.
@@ -622,44 +622,23 @@ func (a *App) newSecretRequestApproveCommand() *cobra.Command {
 	}}
 	cmd.Flags().StringVar(&secretID, "secret-id", "", "Secret to grant, by name or ID")
 	cmd.Flags().StringVar(&scope, "scope", "", "Grant scope: sandbox, harnessConfig, or project (defaults to sandbox for sandbox requests, else project)")
-	cmd.Flags().StringArrayVar(&hosts, "host", nil, "Host the grant is limited to (repeatable; defaults to the hosts the request named)")
+	cmd.Flags().StringSliceVar(&hosts, "hosts", nil, "Hosts the grant is limited to, comma-separated or repeated; defaults to the hosts the request named")
 	cmd.Flags().StringArrayVar(&uses, "use", nil, "Replace an agent's declared uses with these (repeatable); omit to approve them as asked")
 	cmd.Flags().StringVar(&ttl, "grant-ttl", "", grantTTLApproveFlagUsage)
 	return cmd
 }
 
-// grantHosts spells repeated --host values the way a grant or approval body
-// takes them: the first as host, which a server that predates the list still
-// reads, and the rest as hosts (ADR 26-10-02-393 §4). An empty value is
-// dropped, and none at all names no host, leaving the server its default.
-// Hosts is nil, never empty, when there is only one: an empty list is still
-// sent, and a server that predates the field refuses the body for it.
-func grantHosts(values []string) (apiclientgen.OptString, []string) {
+// grantHosts are the --hosts values as a body takes them: trimmed, with empty
+// ones dropped. None at all is nil, which leaves the list out and the server
+// its default.
+func grantHosts(values []string) []string {
 	var hosts []string
 	for _, value := range values {
 		if value = strings.TrimSpace(value); value != "" {
 			hosts = append(hosts, value)
 		}
 	}
-	if len(hosts) == 0 {
-		return apiclientgen.OptString{}, nil
-	}
-	if len(hosts) == 1 {
-		return apiclientgen.NewOptString(hosts[0]), nil
-	}
-	return apiclientgen.NewOptString(hosts[0]), hosts[1:]
-}
-
-// responseHosts are the hosts a grant or request names: its hosts, or the one
-// host a server that predates the list sends as host.
-func responseHosts(host apiclientgen.OptString, hosts []string) []string {
-	if len(hosts) > 0 {
-		return hosts
-	}
-	if host := strings.TrimSpace(host.Or("")); host != "" {
-		return []string{host}
-	}
-	return nil
+	return hosts
 }
 
 func approveSecretRequestBodyScope(value string) (apiclientgen.ApproveSecretRequestBodyScope, error) {

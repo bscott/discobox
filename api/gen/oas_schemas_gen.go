@@ -258,11 +258,9 @@ type ApproveSecretRequestBody struct {
 	// the delegation grant it approves under, and a named duration that outlasts that delegation is
 	// refused.
 	GrantTTLSeconds OptInt64 `json:"grantTTLSeconds"`
-	// A host the minted grant is limited to, before any in hosts. Naming neither defaults to the hosts
-	// the request named, and an empty host alone names none. Approving a protocol-originated request
-	// with no host at all is rejected; a wildcard grant stays an explicit administrative act.
-	Host OptString `json:"host"`
-	// Hosts the minted grant is limited to, after host (ADR 26-10-02-393).
+	// Hosts the minted grant is limited to (ADR 26-10-02-393). Left out, the hosts the request named; an
+	// empty list names none. Approving a protocol-originated request with no host at all is rejected; a
+	// wildcard grant stays an explicit administrative act.
 	Hosts []string `json:"hosts"`
 	// How widely the minted grant applies. Defaults to sandbox for sandbox-originated requests,
 	// otherwise project.
@@ -294,11 +292,6 @@ func (s *ApproveSecretRequestBody) GetSchema() OptURI {
 // GetGrantTTLSeconds returns the value of GrantTTLSeconds.
 func (s *ApproveSecretRequestBody) GetGrantTTLSeconds() OptInt64 {
 	return s.GrantTTLSeconds
-}
-
-// GetHost returns the value of Host.
-func (s *ApproveSecretRequestBody) GetHost() OptString {
-	return s.Host
 }
 
 // GetHosts returns the value of Hosts.
@@ -339,11 +332,6 @@ func (s *ApproveSecretRequestBody) SetSchema(val OptURI) {
 // SetGrantTTLSeconds sets the value of GrantTTLSeconds.
 func (s *ApproveSecretRequestBody) SetGrantTTLSeconds(val OptInt64) {
 	s.GrantTTLSeconds = val
-}
-
-// SetHost sets the value of Host.
-func (s *ApproveSecretRequestBody) SetHost(val OptString) {
-	s.Host = val
 }
 
 // SetHosts sets the value of Hosts.
@@ -1145,10 +1133,9 @@ type CreateSandboxCredentialRequestBody struct {
 	// approver starts from, not a term. 0 or absent asks for nothing in particular; forever cannot be
 	// asked for, and neither can a span longer than the ceiling.
 	GrantTTLSeconds OptInt64 `json:"grantTTLSeconds"`
-	// A destination host the credential will be sent to, before any in hosts. One host, here or in hosts,
-	//  is required, because approving this request may not mint a host-unscoped grant.
-	Host OptString `json:"host"`
-	// Destination hosts the credential will be sent to, after host (ADR 26-10-02-393).
+	// Destination hosts the credential will be sent to (ADR 26-10-02-393). At least one is required,
+	// because approving this request may not mint a host-unscoped grant; a well-known credential's ID
+	// supplies its first when none is named.
 	Hosts []string `json:"hosts"`
 	// What the agent asks the credential for, one or the other and never both. use (the default) asks to
 	// use it. delegate asks to delegate it to other discoboxes; approving it mints a delegation grant,
@@ -1180,11 +1167,6 @@ func (s *CreateSandboxCredentialRequestBody) GetEnvVar() string {
 // GetGrantTTLSeconds returns the value of GrantTTLSeconds.
 func (s *CreateSandboxCredentialRequestBody) GetGrantTTLSeconds() OptInt64 {
 	return s.GrantTTLSeconds
-}
-
-// GetHost returns the value of Host.
-func (s *CreateSandboxCredentialRequestBody) GetHost() OptString {
-	return s.Host
 }
 
 // GetHosts returns the value of Hosts.
@@ -1235,11 +1217,6 @@ func (s *CreateSandboxCredentialRequestBody) SetEnvVar(val string) {
 // SetGrantTTLSeconds sets the value of GrantTTLSeconds.
 func (s *CreateSandboxCredentialRequestBody) SetGrantTTLSeconds(val OptInt64) {
 	s.GrantTTLSeconds = val
-}
-
-// SetHost sets the value of Host.
-func (s *CreateSandboxCredentialRequestBody) SetHost(val OptString) {
-	s.Host = val
 }
 
 // SetHosts sets the value of Hosts.
@@ -1898,10 +1875,8 @@ type CreateSecretGrantBody struct {
 	Schema OptURI `json:"$schema"`
 	// Grant duration in seconds; defaults to the secret's default. 0 never expires.
 	GrantTTLSeconds OptInt64 `json:"grantTTLSeconds"`
-	// A host the grant is limited to, before any in hosts. Naming neither defaults to the secret's host;
-	// an empty host alone matches any host.
-	Host OptString `json:"host"`
-	// Hosts the grant is limited to, after host (ADR 26-10-02-393).
+	// Hosts the grant is limited to (ADR 26-10-02-393). Left out, the secret's host; an empty list
+	// matches any host.
 	Hosts []string `json:"hosts"`
 	// How widely the grant applies.
 	Scope CreateSecretGrantBodyScope `json:"scope"`
@@ -1932,11 +1907,6 @@ func (s *CreateSecretGrantBody) GetSchema() OptURI {
 // GetGrantTTLSeconds returns the value of GrantTTLSeconds.
 func (s *CreateSecretGrantBody) GetGrantTTLSeconds() OptInt64 {
 	return s.GrantTTLSeconds
-}
-
-// GetHost returns the value of Host.
-func (s *CreateSecretGrantBody) GetHost() OptString {
-	return s.Host
 }
 
 // GetHosts returns the value of Hosts.
@@ -1982,11 +1952,6 @@ func (s *CreateSecretGrantBody) SetSchema(val OptURI) {
 // SetGrantTTLSeconds sets the value of GrantTTLSeconds.
 func (s *CreateSecretGrantBody) SetGrantTTLSeconds(val OptInt64) {
 	s.GrantTTLSeconds = val
-}
-
-// SetHost sets the value of Host.
-func (s *CreateSecretGrantBody) SetHost(val OptString) {
-	s.Host = val
 }
 
 // SetHosts sets the value of Hosts.
@@ -18970,9 +18935,6 @@ type SandboxCredential struct {
 	Format OptString `json:"format"`
 	// Grant authorizing the uses.
 	GrantId string `json:"grantId"`
-	// The first of hosts, for a pool agent that reads one; it pins an activation there and refuses the
-	// rest.
-	Host string `json:"host"`
 	// Hosts the credential may be sent to; a destination any of them covers (ADR 26-10-02-393).
 	Hosts []string `json:"hosts"`
 	// Credential name.
@@ -19004,11 +18966,6 @@ func (s *SandboxCredential) GetFormat() OptString {
 // GetGrantId returns the value of GrantId.
 func (s *SandboxCredential) GetGrantId() string {
 	return s.GrantId
-}
-
-// GetHost returns the value of Host.
-func (s *SandboxCredential) GetHost() string {
-	return s.Host
 }
 
 // GetHosts returns the value of Hosts.
@@ -19054,11 +19011,6 @@ func (s *SandboxCredential) SetFormat(val OptString) {
 // SetGrantId sets the value of GrantId.
 func (s *SandboxCredential) SetGrantId(val string) {
 	s.GrantId = val
-}
-
-// SetHost sets the value of Host.
-func (s *SandboxCredential) SetHost(val string) {
-	s.Host = val
 }
 
 // SetHosts sets the value of Hosts.
@@ -20244,11 +20196,9 @@ type SandboxGrant struct {
 	SecretId OptString `json:"secretId"`
 	// Environment variable the discobox's agent receives the credential in. Required without wellKnownId.
 	EnvVar OptString `json:"envVar"`
-	// A host the credential may be sent to, before any in hosts. Naming neither defaults to the secret's
-	// host, or the well-known credential's first; one is required.
-	Host OptString `json:"host"`
-	// Hosts the credential may be sent to, after host (ADR 26-10-02-393). Each must sit inside the
-	// secret's binding, or the well-known credential's hosts.
+	// Hosts the credential may be sent to (ADR 26-10-02-393). Left out, the secret's host, or the
+	// well-known credential's first; one is required. Each must sit inside the secret's binding, or the
+	// well-known credential's hosts.
 	Hosts []string `json:"hosts"`
 	// What the credential may be used for. Use IDs are minted here; a supplied one is ignored.
 	Uses []SecretUse `json:"uses"`
@@ -20269,11 +20219,6 @@ func (s *SandboxGrant) GetSecretId() OptString {
 // GetEnvVar returns the value of EnvVar.
 func (s *SandboxGrant) GetEnvVar() OptString {
 	return s.EnvVar
-}
-
-// GetHost returns the value of Host.
-func (s *SandboxGrant) GetHost() OptString {
-	return s.Host
 }
 
 // GetHosts returns the value of Hosts.
@@ -20304,11 +20249,6 @@ func (s *SandboxGrant) SetSecretId(val OptString) {
 // SetEnvVar sets the value of EnvVar.
 func (s *SandboxGrant) SetEnvVar(val OptString) {
 	s.EnvVar = val
-}
-
-// SetHost sets the value of Host.
-func (s *SandboxGrant) SetHost(val OptString) {
-	s.Host = val
 }
 
 // SetHosts sets the value of Hosts.
@@ -23033,8 +22973,6 @@ type SecretGrant struct {
 	GrantedAt time.Time `json:"grantedAt"`
 	// Principal ID that created the grant.
 	GrantedBy OptString `json:"grantedBy"`
-	// The first of hosts, for a reader that reads one.
-	Host OptString `json:"host"`
 	// Hosts the grant is limited to; a destination any of them covers. Empty matches any host (ADR
 	// 26-10-02-393).
 	Hosts []string `json:"hosts"`
@@ -23090,11 +23028,6 @@ func (s *SecretGrant) GetGrantedAt() time.Time {
 // GetGrantedBy returns the value of GrantedBy.
 func (s *SecretGrant) GetGrantedBy() OptString {
 	return s.GrantedBy
-}
-
-// GetHost returns the value of Host.
-func (s *SecretGrant) GetHost() OptString {
-	return s.Host
 }
 
 // GetHosts returns the value of Hosts.
@@ -23170,11 +23103,6 @@ func (s *SecretGrant) SetGrantedAt(val time.Time) {
 // SetGrantedBy sets the value of GrantedBy.
 func (s *SecretGrant) SetGrantedBy(val OptString) {
 	s.GrantedBy = val
-}
-
-// SetHost sets the value of Host.
-func (s *SecretGrant) SetHost(val OptString) {
-	s.Host = val
 }
 
 // SetHosts sets the value of Hosts.
@@ -24034,8 +23962,6 @@ type SecretRequest struct {
 	// How long the agent asked the grant to live, in seconds -- the lifetime an approval starts from. At
 	// most thirty days. Absent when it asked for nothing in particular; never forever.
 	GrantTTLSeconds OptInt64 `json:"grantTTLSeconds"`
-	// The first of hosts, for a reader that reads one.
-	Host OptString `json:"host"`
 	// Hosts named at request time (ADR 26-10-02-393).
 	Hosts []string `json:"hosts"`
 	// Stable request ID.
@@ -24099,11 +24025,6 @@ func (s *SecretRequest) GetGrantId() OptString {
 // GetGrantTTLSeconds returns the value of GrantTTLSeconds.
 func (s *SecretRequest) GetGrantTTLSeconds() OptInt64 {
 	return s.GrantTTLSeconds
-}
-
-// GetHost returns the value of Host.
-func (s *SecretRequest) GetHost() OptString {
-	return s.Host
 }
 
 // GetHosts returns the value of Hosts.
@@ -24214,11 +24135,6 @@ func (s *SecretRequest) SetGrantId(val OptString) {
 // SetGrantTTLSeconds sets the value of GrantTTLSeconds.
 func (s *SecretRequest) SetGrantTTLSeconds(val OptInt64) {
 	s.GrantTTLSeconds = val
-}
-
-// SetHost sets the value of Host.
-func (s *SecretRequest) SetHost(val OptString) {
-	s.Host = val
 }
 
 // SetHosts sets the value of Hosts.

@@ -102,11 +102,10 @@ approves under (`hostscope.CoversEvery`), and `ApprovedUse`, which names the
 one host covering this destination so the judge is told where *this* request
 is approved for.
 
-The API keeps `host` beside `hosts`, because the CLI and pool agent are
-upgraded separately: a body's hosts are `host` then `hosts` (`askedHosts`), and
-a response's `host` is the first (`SecretGrant`/`SecretRequest.MarshalJSON`).
-An empty `host` alone is how a grant or approval names the wildcard; naming
-neither takes the default — the secret's host, or the request's hosts.
+`hosts` is the only spelling on the API (ADR 26-10-02-393 §4). A body that
+leaves it out takes the default — the secret's host for a grant, the request's
+hosts for an approval — and one that sends an empty list names none, which is
+how a grant asks for the wildcard (`askedHosts`).
 
 ## Two ways to reach the agent credentials shape
 

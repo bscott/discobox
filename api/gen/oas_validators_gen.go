@@ -5192,6 +5192,17 @@ func (s *SandboxCredential) Validate() error {
 
 	var failures []validate.FieldError
 	if err := func() error {
+		if s.Hosts == nil {
+			return errors.New("nil is invalid value")
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "hosts",
+			Error: err,
+		})
+	}
+	if err := func() error {
 		if value, ok := s.Uses.Get(); ok {
 			if err := func() error {
 				if value == nil {

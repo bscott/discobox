@@ -250,7 +250,7 @@ func sandboxGrantTarget(ctx context.Context, st *store.Store, projectID string, 
 	bad := func(format string, args ...any) (*model.Secret, string, []string, error) {
 		return nil, "", nil, apperrors.NewStatusError(http.StatusBadRequest, fmt.Sprintf(format, args...))
 	}
-	hosts, named := askedHosts(in.Host, in.Hosts)
+	hosts, named := askedHosts(in.Hosts)
 	id := strings.TrimSpace(in.WellKnownId.Or(""))
 	secretID, envName := strings.TrimSpace(in.SecretId.Or("")), strings.TrimSpace(in.EnvVar.Or(""))
 	if id == "" {

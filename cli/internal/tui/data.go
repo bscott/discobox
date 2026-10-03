@@ -1295,9 +1295,8 @@ type CredentialRequest struct {
 	// secret ID: choosing which secret answers it is the approval.
 	Name   string
 	EnvVar string
-	// Host is the first of Hosts, or a trust's endpoint; Hosts are every host
-	// a credential request asks the credential to be sent to (ADR
-	// 26-10-02-393).
+	// Hosts are every host a credential request asks the credential to be
+	// sent to (ADR 26-10-02-393); Host is a trust's endpoint.
 	Host          string
 	Hosts         []string
 	Type          string
@@ -1991,8 +1990,7 @@ func (r CredentialRequest) where() string {
 	return r.Host
 }
 
-// hosts are the hosts a credential request names, its one host when it names
-// no list.
+// hosts are the hosts a credential request names, or a trust's endpoint.
 func (r CredentialRequest) hosts() []string {
 	if len(r.Hosts) > 0 {
 		return r.Hosts

@@ -66,7 +66,7 @@ func TestAgentCredentialRequestForOtherUsesIsItsOwn(t *testing.T) {
 	ask := func(ttl int64, uses ...string) *model.SecretRequest {
 		t.Helper()
 		body := services.CreateSandboxCredentialRequestBody{
-			SandboxId: testSandboxID, Name: "github", EnvVar: "GITHUB_TOKEN", Host: serverapi.NewOptString("api.github.com"),
+			SandboxId: testSandboxID, Name: "github", EnvVar: "GITHUB_TOKEN", Hosts: []string{"api.github.com"},
 		}
 		for _, use := range uses {
 			body.Uses = append(body.Uses, apimodel.SecretUse{Description: use})
@@ -108,7 +108,7 @@ func TestAgentCredentialRequestRecordsTheLifetimeAskedFor(t *testing.T) {
 		SandboxId:       testSandboxID,
 		Name:            "github",
 		EnvVar:          "GITHUB_TOKEN",
-		Host:            serverapi.NewOptString("api.github.com"),
+		Hosts:           []string{"api.github.com"},
 		Uses:            []apimodel.SecretUse{{Description: "open a pull request"}},
 		GrantTTLSeconds: serverapi.NewOptInt64(4 * 3600),
 	})
@@ -133,7 +133,7 @@ func TestAgentCredentialRequestRecordsTheLifetimeAskedFor(t *testing.T) {
 			SandboxId:       testSandboxID,
 			Name:            "npm",
 			EnvVar:          "NPM_TOKEN",
-			Host:            serverapi.NewOptString("registry.npmjs.org"),
+			Hosts:           []string{"registry.npmjs.org"},
 			Uses:            []apimodel.SecretUse{{Description: "publish the package"}},
 			GrantTTLSeconds: serverapi.NewOptInt64(ask),
 		})
@@ -215,7 +215,7 @@ func TestApprovingAnAskToDelegateMintsADelegationGrant(t *testing.T) {
 		SandboxId: testSandboxID,
 		Name:      "github",
 		EnvVar:    "GITHUB_TOKEN",
-		Host:      serverapi.NewOptString("api.github.com"),
+		Hosts:     []string{"api.github.com"},
 		Uses:      []apimodel.SecretUse{{Description: "triage issues on discobox-ai/discobox"}},
 		Purpose:   serverapi.NewOptCreateSandboxCredentialRequestBodyPurpose(serverapi.CreateSandboxCredentialRequestBodyPurposeDelegate),
 	})
@@ -266,7 +266,7 @@ func TestAnAskToDelegateIsNotAnAskToUse(t *testing.T) {
 		SandboxId: testSandboxID,
 		Name:      "github",
 		EnvVar:    "GITHUB_TOKEN",
-		Host:      serverapi.NewOptString("api.github.com"),
+		Hosts:     []string{"api.github.com"},
 		Uses:      []apimodel.SecretUse{{Description: "open a pull request"}},
 		Purpose:   serverapi.NewOptCreateSandboxCredentialRequestBodyPurpose(serverapi.CreateSandboxCredentialRequestBodyPurposeDelegate),
 	})
@@ -463,7 +463,7 @@ func TestAgentCredentialCallsRefuseAnotherPoolsSandbox(t *testing.T) {
 		SandboxId: testSandboxID,
 		Name:      "github",
 		EnvVar:    "GITHUB_TOKEN",
-		Host:      serverapi.NewOptString("api.github.com"),
+		Hosts:     []string{"api.github.com"},
 		Uses:      []apimodel.SecretUse{{Description: "open a PR"}},
 	})
 	if err == nil {
@@ -537,7 +537,7 @@ func createAgentRequest(ctx context.Context, t *testing.T, svc *resourcesecrets.
 		SandboxId:     testSandboxID,
 		Name:          "github",
 		EnvVar:        "GITHUB_TOKEN",
-		Host:          serverapi.NewOptString("api.github.com"),
+		Hosts:         []string{"api.github.com"},
 		Justification: serverapi.NewOptString("the task asks me to open a PR"),
 		Uses:          []apimodel.SecretUse{{Description: "open a pull request"}},
 	})
@@ -617,7 +617,7 @@ func TestApprovedHostIsNormalizedToWhatTheProxyReports(t *testing.T) {
 
 			approved, err := svc.ApproveSecretRequest(ctx, "project-1", req.ID, services.ApproveSecretRequestBody{
 				SecretId: serverapi.NewOptString(secret.ID),
-				Host:     serverapi.NewOptString(tc.approved),
+				Hosts:    []string{tc.approved},
 			})
 			if err != nil {
 				t.Fatalf("approve: %v", err)
@@ -1017,7 +1017,7 @@ func TestAnApprovalNamingNoLifetimeGrantsWhatWasAsked(t *testing.T) {
 			svc, st := newAgentCredentialService(t)
 			secret := createBoundSecret(ctx, t, svc, "github", "", tc.limit)
 			req, err := svc.CreateSandboxCredentialRequest(ctx, testPoolID, services.CreateSandboxCredentialRequestBody{
-				SandboxId: testSandboxID, Name: "github", EnvVar: "GITHUB_TOKEN", Host: serverapi.NewOptString("api.github.com"),
+				SandboxId: testSandboxID, Name: "github", EnvVar: "GITHUB_TOKEN", Hosts: []string{"api.github.com"},
 				Uses:            []apimodel.SecretUse{{Description: "open a pull request"}},
 				GrantTTLSeconds: serverapi.NewOptInt64(tc.asked),
 			})

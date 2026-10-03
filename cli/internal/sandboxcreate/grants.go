@@ -14,8 +14,7 @@ import (
 // well-known credential, whose ID carries its secret and variable; the first
 // has a ":" before the "=" and the second does not. HOST may be several,
 // joined by commas, for a credential sent to more than one site (ADR
-// 26-10-02-393): the first goes as host, which a server that predates the
-// list still reads, and the rest as hosts. Values naming the same
+// 26-10-02-393). Values naming the same
 // credential, host, and variable are one grant with several uses, in the order
 // given. A secret is left as written, for the caller to resolve to an ID.
 func ParseGrants(values []string) ([]apimodel.SandboxGrant, error) {
@@ -43,14 +42,9 @@ func ParseGrants(values []string) ([]apimodel.SandboxGrant, error) {
 			} else {
 				grant.SetWellKnownId(apiclientgen.NewOptString(credential))
 			}
-			if len(hosts) > 0 {
-				grant.SetHost(apiclientgen.NewOptString(hosts[0]))
-			}
-			// Only when there are more: an empty list is still sent, and a
-			// server that predates the field refuses the body for it.
-			if len(hosts) > 1 {
-				grant.SetHosts(hosts[1:])
-			}
+			// None named leaves the list out, which takes the secret's host,
+			// or the well-known credential's.
+			grant.SetHosts(hosts)
 			grants = append(grants, grant)
 			i = len(grants) - 1
 			index[key] = i

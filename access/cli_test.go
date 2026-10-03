@@ -136,7 +136,7 @@ func TestListJSONCarriesUseIDsForTheNextCall(t *testing.T) {
 	serve(t, &fakeService{credentials: []agentcreds.Credential{{
 		Name:   "github",
 		EnvVar: "GITHUB_TOKEN",
-		Host:   "api.github.com",
+		Hosts:  []string{"api.github.com"},
 		Uses:   []agentcreds.Use{{UseID: "use_7f3c", Description: "Open a PR"}},
 	}}})
 
@@ -163,7 +163,7 @@ func TestRequestJSONPreservesShellHostileText(t *testing.T) {
 	body, err := json.Marshal(requestInput{
 		Name:          "github",
 		EnvVar:        "GITHUB_TOKEN",
-		Host:          "api.github.com",
+		Hosts:         []string{"api.github.com"},
 		Justification: justification,
 		Uses:          []agentcreds.RequestedUse{{Description: "Open a PR against the current repo"}},
 	})
@@ -190,7 +190,7 @@ func TestRequestCarriesTheLifetimeAskedFor(t *testing.T) {
 	svc := &fakeService{}
 	serve(t, svc)
 
-	body := `{"name":"github","envVar":"GITHUB_TOKEN","host":"api.github.com","uses":[{"description":"Open a PR"}],"grantTTLSeconds":14400}`
+	body := `{"name":"github","envVar":"GITHUB_TOKEN","hosts":["api.github.com"],"uses":[{"description":"Open a PR"}],"grantTTLSeconds":14400}`
 	if _, stderr, code := capture(t, body, func() int { return Run([]string{"request", "--json"}) }); code != exitOK {
 		t.Fatalf("exit = %d, want 0: %s", code, stderr)
 	}
@@ -198,7 +198,7 @@ func TestRequestCarriesTheLifetimeAskedFor(t *testing.T) {
 		t.Fatalf("grantTTLSeconds = %d, want the 14400 the JSON asked for", svc.gotRequest.GrantTTLSeconds)
 	}
 
-	flags := []string{"request", "--name", "github", "--env-var", "GITHUB_TOKEN", "--host", "api.github.com", "--use", "Open a PR"}
+	flags := []string{"request", "--name", "github", "--env-var", "GITHUB_TOKEN", "--hosts", "api.github.com", "--use", "Open a PR"}
 	svc.gotRequest = agentcreds.RequestBody{}
 	if _, stderr, code := capture(t, "", func() int { return Run(append(flags, "--grant-ttl", "30m")) }); code != exitOK {
 		t.Fatalf("exit = %d, want 0: %s", code, stderr)
@@ -211,14 +211,14 @@ func TestRequestCarriesTheLifetimeAskedFor(t *testing.T) {
 	if _, _, code := capture(t, "", func() int { return Run(append(flags, "--grant-ttl", "1500ms")) }); code != exitUsage {
 		t.Fatalf("exit = %d, want a usage error for a lifetime in fractions of a second", code)
 	}
-	negative := `{"name":"github","envVar":"GITHUB_TOKEN","host":"api.github.com","uses":[{"description":"Open a PR"}],"grantTTLSeconds":-1}`
+	negative := `{"name":"github","envVar":"GITHUB_TOKEN","hosts":["api.github.com"],"uses":[{"description":"Open a PR"}],"grantTTLSeconds":-1}`
 	if _, _, code := capture(t, negative, func() int { return Run([]string{"request", "--json"}) }); code != exitUsage {
 		t.Fatalf("exit = %d, want a usage error for a negative lifetime", code)
 	}
 	// The ceiling matters more than the floor: an ask nobody bounded is how a
 	// human ends up one keystroke from a credential that outlives the work, and
 	// one big enough to overflow a duration reads as forever.
-	tooLong := fmt.Sprintf(`{"name":"github","envVar":"GITHUB_TOKEN","host":"api.github.com","uses":[{"description":"Open a PR"}],"grantTTLSeconds":%d}`, int64(agentcreds.MaxGrantTTLSeconds)+1)
+	tooLong := fmt.Sprintf(`{"name":"github","envVar":"GITHUB_TOKEN","hosts":["api.github.com"],"uses":[{"description":"Open a PR"}],"grantTTLSeconds":%d}`, int64(agentcreds.MaxGrantTTLSeconds)+1)
 	if _, stderr, code := capture(t, tooLong, func() int { return Run([]string{"request", "--json"}) }); code != exitUsage {
 		t.Fatalf("exit = %d, want a usage error for an ask over the ceiling: %s", code, stderr)
 	}
@@ -358,7 +358,7 @@ func TestRequestNamesAWellKnownCredentialByID(t *testing.T) {
 func TestRequestJSONRejectsUnknownFields(t *testing.T) {
 	serve(t, &fakeService{})
 
-	_, stderr, code := capture(t, `{"name":"github","envVar":"T","host":"h","reason":"oops"}`, func() int {
+	_, stderr, code := capture(t, `{"name":"github","envVar":"T","hosts":["h"],"reason":"oops"}`, func() int {
 		return Run([]string{"request", "--json"})
 	})
 	if code != exitUsage {
@@ -496,7 +496,7 @@ func TestWaitReportsAGrantedRequestWithItsUseIDs(t *testing.T) {
 		Uses:      []agentcreds.Use{{UseID: "use_7f3c", Description: "Open a PR"}},
 	}})
 
-	body := `{"name":"github","envVar":"GITHUB_TOKEN","host":"api.github.com",` +
+	body := `{"name":"github","envVar":"GITHUB_TOKEN","hosts":["api.github.com"],` +
 		`"uses":[{"description":"Open a PR"}],"wait":true,"timeoutSeconds":5}`
 	stdout, stderr, code := capture(t, body, func() int { return Run([]string{"request", "--json"}) })
 	if code != exitOK {
@@ -517,7 +517,7 @@ func TestWaitReportsAGrantedRequestWithItsUseIDs(t *testing.T) {
 func TestWaitOnADeniedRequestExitsNonZero(t *testing.T) {
 	serve(t, &fakeService{status: agentcreds.RequestStatus{RequestID: "sreq_1", Status: agentcreds.StatusDenied}})
 
-	body := `{"name":"github","envVar":"GITHUB_TOKEN","host":"api.github.com",` +
+	body := `{"name":"github","envVar":"GITHUB_TOKEN","hosts":["api.github.com"],` +
 		`"uses":[{"description":"Open a PR"}],"wait":true,"timeoutSeconds":5}`
 	_, _, code := capture(t, body, func() int { return Run([]string{"request", "--json"}) })
 	if code == exitOK {
@@ -534,19 +534,26 @@ func TestUnknownCommandIsAUsageError(t *testing.T) {
 
 var _ = time.Second
 
-// A credential sent to several sites is one request: --host repeats, its
-// first goes out as host so a service that predates the list still hears it,
-// and --json carries hosts as written (ADR 26-10-02-393 §4).
+// A credential sent to several sites is one request: --hosts takes them
+// comma-separated, repeated, or both, and --json takes them as a list
+// (ADR 26-10-02-393).
 func TestRequestNamesSeveralHosts(t *testing.T) {
 	svc := &fakeService{}
 	serve(t, svc)
 
-	args := []string{"request", "com.github.api", "--host", "api.github.com", "--host", "githubcopilot.com", "--use", "run copilot"}
-	if _, stderr, code := capture(t, "", func() int { return Run(args) }); code != exitOK {
-		t.Fatalf("exit = %d, want 0: %s", code, stderr)
-	}
-	if got := svc.gotRequest; got.Host != "api.github.com" || strings.Join(got.Hosts, ",") != "githubcopilot.com" {
-		t.Fatalf("request = host %q, hosts %q; want the first as host and the rest as hosts", got.Host, got.Hosts)
+	for _, args := range [][]string{
+		{"--hosts", "api.github.com,githubcopilot.com"},
+		{"--hosts", "api.github.com", "--hosts", "githubcopilot.com"},
+		{"--hosts", " api.github.com, ", "--hosts", "githubcopilot.com"},
+	} {
+		svc.gotRequest = agentcreds.RequestBody{}
+		full := append([]string{"request", "com.github.api"}, append(args, "--use", "run copilot")...)
+		if _, stderr, code := capture(t, "", func() int { return Run(full) }); code != exitOK {
+			t.Fatalf("%q: exit = %d, want 0: %s", args, code, stderr)
+		}
+		if got := strings.Join(svc.gotRequest.Hosts, ","); got != "api.github.com,githubcopilot.com" {
+			t.Fatalf("%q: hosts = %q, want both, in order", args, got)
+		}
 	}
 
 	svc.gotRequest = agentcreds.RequestBody{}
@@ -554,21 +561,7 @@ func TestRequestNamesSeveralHosts(t *testing.T) {
 	if _, stderr, code := capture(t, body, func() int { return Run([]string{"request", "--json"}) }); code != exitOK {
 		t.Fatalf("exit = %d, want 0: %s", code, stderr)
 	}
-	if got := svc.gotRequest.AllHosts(); strings.Join(got, ",") != "api.github.com,githubcopilot.com" {
+	if got := strings.Join(svc.gotRequest.Hosts, ","); got != "api.github.com,githubcopilot.com" {
 		t.Fatalf("hosts = %q, want both as written", got)
-	}
-}
-
-// --json naming hosts alone still sends the first as host, which a service
-// that predates the list reads alone.
-func TestRequestJSONWithHostsAloneSendsTheFirstAsHost(t *testing.T) {
-	svc := &fakeService{}
-	serve(t, svc)
-	body := `{"name":"github","envVar":"GH_TOKEN","hosts":["api.github.com","githubcopilot.com"],"uses":[{"description":"run copilot"}]}`
-	if _, stderr, code := capture(t, body, func() int { return Run([]string{"request", "--json"}) }); code != exitOK {
-		t.Fatalf("exit = %d, want 0: %s", code, stderr)
-	}
-	if got := svc.gotRequest; got.Host != "api.github.com" || strings.Join(got.Hosts, ",") != "githubcopilot.com" {
-		t.Fatalf("request = host %q, hosts %q; want the first as host", got.Host, got.Hosts)
 	}
 }

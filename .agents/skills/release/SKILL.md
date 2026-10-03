@@ -150,7 +150,7 @@ discobox-access request --json <<'EOF'
 {
   "name": "github",
   "envVar": "GH_TOKEN",
-  "host": "github.com",
+  "hosts": ["github.com"],
   "justification": "Cutting discobox release vX.Y.Z with the /release skill: push main, watch CI until it is green, tag the green commit, then check the release and the dev Homebrew formula. git uses the token over https to github.com and gh uses it against api.github.com. Needed for about two hours, since CI can take several rounds.",
   "uses": [
     {"description": "git push the local main branch to https://github.com/discobox-ai/discobox.git main"},

@@ -130,13 +130,13 @@ func usage(w io.Writer) {
       you wait for an answer.
 
       ID names a well-known credential (com.github.api), which says its own
-      name, variable, and host; give only --use and --why. --host may still
+      name, variable, and host; give only --use and --why. --hosts may still
       name the hosts beneath the ID's you will reach: com.github.api for
-      Copilot CLI is --host api.github.com --host githubcopilot.com.
+      Copilot CLI is --hosts api.github.com,githubcopilot.com.
 
-      A credential sent to several sites is one request: repeat --host, or
-      give "hosts" beside "host" in --json. Each host covers the hosts
-      beneath it.
+      A credential sent to several sites is one request: --hosts takes them
+      comma-separated or repeated, and --json takes "hosts" as a list. Each
+      host covers the hosts beneath it.
 
       With --json, the request is read from stdin, which keeps quotes and
       apostrophes in your justification out of the shell's hands:
@@ -145,7 +145,7 @@ func usage(w io.Writer) {
         {
           "name": "github",
           "envVar": "GITHUB_TOKEN",
-          "host": "api.github.com",
+          "hosts": ["api.github.com"],
           "justification": "the user's task asks me to open a PR",
           "uses": [{"description": "Open a PR against the current repo"}],
           "grantTTLSeconds": 14400,
@@ -164,7 +164,7 @@ func usage(w io.Writer) {
       for the uses you name, and run nothing with it yourself. Leave it out to
       ask to use the credential. Someone who needs both asks twice.
 
-      With flags: --name, --env-var, --host, --why, --use (repeatable),
+      With flags: --name, --env-var, --hosts, --why, --use (repeatable),
       --grant-ttl, --delegate, --wait, --timeout. --grant-ttl takes a Go
       duration -- "30m", "4h", "96h" for four days -- and the same thirty-day
       ceiling.

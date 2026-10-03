@@ -29,7 +29,7 @@ func githubGrant(secretID string) serverapi.SandboxGrant {
 	return serverapi.SandboxGrant{
 		SecretId: serverapi.NewOptString(secretID),
 		EnvVar:   serverapi.NewOptString("GH_TOKEN"),
-		Host:     serverapi.NewOptString("github.com"),
+		Hosts:    []string{"github.com"},
 		Uses:     []serverapi.SecretUse{{Description: "push a branch to org/repo"}},
 	}
 }
@@ -184,7 +184,7 @@ func TestACreateThatCannotGiveItsGrantsCreatesNothing(t *testing.T) {
 	noUses := githubGrant(secret.ID)
 	noUses.Uses = nil
 	noHost := githubGrant(secret.ID)
-	noHost.Host = serverapi.OptString{}
+	noHost.Hosts = nil
 	other := createSecretNamed(ctx, t, svc, projectID, "gitlab")
 	twoForOneVariable := githubGrant(other.ID)
 
@@ -247,7 +247,7 @@ func TestADiscoboxIsGivenAWellKnownCredentialByID(t *testing.T) {
 			Uses:        []serverapi.SecretUse{{Description: "read issues in org/repo"}},
 		}
 		if host != "" {
-			grant.Host = serverapi.NewOptString(host)
+			grant.Hosts = []string{host}
 		}
 		return grant
 	}

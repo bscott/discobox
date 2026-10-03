@@ -57,7 +57,7 @@ func TestAnAskByWellKnownIDCarriesWhatTheIDNames(t *testing.T) {
 	narrower, err := svc.CreateSandboxCredentialRequest(ctx, testPoolID, services.CreateSandboxCredentialRequestBody{
 		SandboxId: testSandboxID,
 		ID:        serverapi.NewOptString(wellknown.GitHubAPI),
-		Host:      serverapi.NewOptString("api.github.com"),
+		Hosts:     []string{"api.github.com"},
 		Uses:      []apimodel.SecretUse{{Description: "read the issues in org/repo"}},
 	})
 	if err != nil || !slices.Equal(narrower.Hosts, []string{"api.github.com"}) || narrower.EnvName != "GH_TOKEN" {
@@ -67,7 +67,7 @@ func TestAnAskByWellKnownIDCarriesWhatTheIDNames(t *testing.T) {
 	for name, body := range map[string]services.CreateSandboxCredentialRequestBody{
 		"an unknown ID":             {SandboxId: testSandboxID, ID: serverapi.NewOptString("com.example.nothing")},
 		"a variable it contradicts": {SandboxId: testSandboxID, ID: serverapi.NewOptString(wellknown.GitHubAPI), EnvVar: "GITHUB_TOKEN"},
-		"a host it is not sent to":  {SandboxId: testSandboxID, ID: serverapi.NewOptString(wellknown.GitHubAPI), Host: serverapi.NewOptString("gitlab.com")},
+		"a host it is not sent to":  {SandboxId: testSandboxID, ID: serverapi.NewOptString(wellknown.GitHubAPI), Hosts: []string{"gitlab.com"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			body.Uses = []apimodel.SecretUse{{Description: "open a pull request"}}
@@ -140,7 +140,7 @@ func TestAnAskByIDDoesNotReuseAPlainAsk(t *testing.T) {
 		SandboxId: testSandboxID,
 		Name:      "github",
 		EnvVar:    "GH_TOKEN",
-		Host:      serverapi.NewOptString("github.com"),
+		Hosts:     []string{"github.com"},
 		Uses:      []apimodel.SecretUse{{Description: "read the issues in org/repo"}},
 	})
 	if err != nil {
@@ -212,7 +212,7 @@ func TestTheDiscoboxAPIsHostIsAskedForOnlyByID(t *testing.T) {
 			SandboxId: testSandboxID,
 			Name:      "discobox",
 			EnvVar:    "DISCOBOX_TOKEN",
-			Host:      serverapi.NewOptString(host),
+			Hosts:     []string{host},
 			Uses:      []apimodel.SecretUse{{Description: "create a discobox"}},
 		})
 		requireStatus(t, err, http.StatusBadRequest)

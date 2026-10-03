@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/discobox-ai/discobox/agentcreds"
-	"github.com/discobox-ai/discobox/hostscope"
 	"github.com/discobox-ai/discobox/wellknown"
 )
 
@@ -50,11 +49,8 @@ type credentialUseDoc struct {
 }
 
 type credentialDoc struct {
-	Name   string `json:"name"`
-	EnvVar string `json:"envVar"`
-	// Host is the first of Hosts, and all a server that predates the list
-	// sends (ADR 26-10-02-393 §4); hosts reads the two together.
-	Host      string             `json:"host"`
+	Name      string             `json:"name"`
+	EnvVar    string             `json:"envVar"`
 	Hosts     []string           `json:"hosts,omitempty"`
 	SecretID  string             `json:"secretId"`
 	GrantID   string             `json:"grantId"`
@@ -62,13 +58,6 @@ type credentialDoc struct {
 	Format    string             `json:"format,omitempty"`
 	ExpiresAt *time.Time         `json:"expiresAt,omitempty"`
 	Uses      []credentialUseDoc `json:"uses,omitempty"`
-}
-
-// hosts are where the credential may go: host, then hosts. A server that
-// predates the list sends host alone, which is then the one host — never no
-// host, which an activation would otherwise read as anywhere.
-func (d credentialDoc) hosts() []string {
-	return hostscope.List(append([]string{d.Host}, d.Hosts...)...)
 }
 
 type listCredentialsDoc struct {
@@ -96,7 +85,6 @@ type createCredentialRequestDoc struct {
 	ID              string             `json:"id,omitempty"`
 	Name            string             `json:"name"`
 	EnvVar          string             `json:"envVar"`
-	Host            string             `json:"host,omitempty"`
 	Hosts           []string           `json:"hosts,omitempty"`
 	Justification   string             `json:"justification,omitempty"`
 	Uses            []credentialUseDoc `json:"uses"`
@@ -252,17 +240,12 @@ func (b *credentialBroker) List(ctx context.Context) ([]agentcreds.Credential, e
 		// Sentinel and format stay here. list is what the sandbox sees, and the
 		// stable sentinel is the one thing on the trusted side that would let a
 		// sandbox address the credential directly.
-		hosts := doc.hosts()
-		credential := agentcreds.Credential{
+		out = append(out, agentcreds.Credential{
 			Name:   doc.Name,
 			EnvVar: doc.EnvVar,
-			Hosts:  hosts,
+			Hosts:  doc.Hosts,
 			Uses:   protocolUses(doc.Uses, doc.ExpiresAt),
-		}
-		if len(hosts) > 0 {
-			credential.Host = hosts[0]
-		}
-		out = append(out, credential)
+		})
 	}
 	return out, nil
 }
@@ -284,7 +267,6 @@ func (b *credentialBroker) Request(ctx context.Context, body agentcreds.RequestB
 		ID:              body.ID,
 		Name:            body.Name,
 		EnvVar:          body.EnvVar,
-		Host:            body.Host,
 		Hosts:           body.Hosts,
 		Justification:   body.Justification,
 		Uses:            uses,
@@ -338,7 +320,7 @@ func (b *credentialBroker) Get(ctx context.Context, body agentcreds.UseBody) (ag
 			if err := b.controlPlan.recordVerdict(ctx, b.sandboxID, useID, body.Command, body.Verdict, false); err != nil {
 				return agentcreds.UseResponse{}, err
 			}
-			record, err := b.activations.mint(b.sandboxID, doc.Sentinel, useID, doc.hosts(), doc.Format, body.Command)
+			record, err := b.activations.mint(b.sandboxID, doc.Sentinel, useID, doc.Hosts, doc.Format, body.Command)
 			if err != nil {
 				return agentcreds.UseResponse{}, err
 			}

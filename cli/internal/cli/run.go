@@ -165,7 +165,7 @@ means what its flag does, and no other run flag may be given beside it:
     "harness": "codex",
     "grants": [
       {"id": "com.github.api", "uses": [{"description": "push a branch to org/repo"}]},
-      {"secret": "npm", "envVar": "NPM_TOKEN", "host": "registry.npmjs.org",
+      {"secret": "npm", "envVar": "NPM_TOKEN", "hosts": ["registry.npmjs.org"],
        "uses": [{"description": "publish @org/pkg"}]}
     ],
     "env": ["MODE=test"],

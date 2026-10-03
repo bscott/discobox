@@ -67,7 +67,7 @@ discobox-access request --json <<'EOF'
 {
   "name": "github",
   "envVar": "GH_TOKEN",
-  "host": "api.github.com",
+  "hosts": ["api.github.com"],
   "justification": "the task asks me to open a pull request with the review fixes",
   "uses": [{"description": "Open a pull request against the current repo"}],
   "grantTTLSeconds": 3600,
@@ -80,7 +80,9 @@ EOF
 - `name` — what the credential is called, in ordinary words (`github`, `npm`).
 - `envVar` — the variable the command expects it in. Get this right: it is the
   variable your command will actually read.
-- `host` — where it will be sent. As narrow as the truth allows.
+- `hosts` — where it will be sent, as narrow as the truth allows. A tool that
+  sends one credential to several sites gets them all in one request: Copilot
+  CLI sends its GitHub token to `["api.github.com", "githubcopilot.com"]`.
 - `justification` — why *this task* needs it. A person reads this to decide.
 - `uses` — one sentence per thing you intend to do with it. **Write these as
   what you will actually run**, because a model later checks your command
@@ -102,12 +104,12 @@ EOF
 ### Well-known credentials
 
 Some credentials Discobox already knows the shape of. Ask for one of these by
-its ID, and leave out `name`, `envVar`, and `host` — the ID says them, and
+its ID, and leave out `name`, `envVar`, and `hosts` — the ID says them, and
 getting them wrong is then impossible:
 
 | ID | What it is for | Delivered in | Sent to |
 | --- | --- | --- | --- |
-| `com.github.api` | GitHub: repositories over HTTPS, and the REST and GraphQL API as `gh` uses it | `GH_TOKEN` | `github.com`, and the hosts beneath it such as `api.github.com` |
+| `com.github.api` | GitHub: repositories over HTTPS, the REST and GraphQL API as `gh` uses it, and the Copilot API | `GH_TOKEN` | `github.com`, and the hosts beneath it such as `api.github.com`; `githubcopilot.com` too when named, as `--hosts api.github.com,githubcopilot.com` for Copilot CLI |
 | `ai.discobox.sandbox` | The discobox API: create, list, and get discoboxes, read and type into the terminals of the ones you created and start and stop them, and answer credential requests | `DISCOBOX_TOKEN` | `api.discobox.internal`, through this discobox's pool |
 
 ```bash
@@ -117,7 +119,7 @@ discobox-access request com.github.api --use "Open a pull request against the cu
 or `"id": "com.github.api"` in the `--json` body. Everything else — `uses`,
 `justification`, `grantTTLSeconds`, `purpose`, `wait` — is asked for exactly
 as above.
-For anything not in this table, spell out `name`, `envVar`, and `host`.
+For anything not in this table, spell out `name`, `envVar`, and `hosts`.
 
 `ai.discobox.sandbox` is how you drive other discoboxes; §5 says how to ask
 for it and launch them.

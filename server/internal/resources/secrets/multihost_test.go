@@ -26,15 +26,14 @@ func TestOneRequestAndGrantNameSeveralHosts(t *testing.T) {
 
 	req, err := svc.CreateSandboxCredentialRequest(ctx, testPoolID, services.CreateSandboxCredentialRequestBody{
 		SandboxId: testSandboxID, Name: "github", EnvVar: "GH_TOKEN",
-		Host:  serverapi.NewOptString("API.GitHub.com"),
-		Hosts: []string{"api.githubcopilot.com", "api.github.com"},
+		Hosts: []string{"API.GitHub.com", "api.githubcopilot.com", "api.github.com"},
 		Uses:  []apimodel.SecretUse{{Description: "run copilot against org/repo"}},
 	})
 	if err != nil {
 		t.Fatalf("create credential request: %v", err)
 	}
 	if !slices.Equal(req.Hosts, copilotHosts) {
-		t.Fatalf("request hosts = %q, want %q: host, then hosts, normalized and deduplicated", req.Hosts, copilotHosts)
+		t.Fatalf("request hosts = %q, want %q: normalized and deduplicated, in the order given", req.Hosts, copilotHosts)
 	}
 
 	approved, err := svc.ApproveSecretRequest(ctx, "project-1", req.ID, services.ApproveSecretRequestBody{SecretId: serverapi.NewOptString(secret.ID)})
@@ -121,8 +120,7 @@ func TestEveryHostOfAGrantMustSitInsideTheSecretsBinding(t *testing.T) {
 	grant, err := svc.CreateSecretGrant(ctx, "project-1", services.CreateSecretGrantBody{
 		SecretId: unbound.ID,
 		Scope:    serverapi.CreateSecretGrantBodyScopeProject,
-		Host:     serverapi.NewOptString("api.github.com"),
-		Hosts:    []string{"api.githubcopilot.com"},
+		Hosts:    []string{"api.github.com", "api.githubcopilot.com"},
 	})
 	if err != nil {
 		t.Fatalf("a secret bound to nothing refused a grant for two hosts: %v", err)
@@ -131,11 +129,12 @@ func TestEveryHostOfAGrantMustSitInsideTheSecretsBinding(t *testing.T) {
 		t.Fatalf("grant hosts = %q, want %q", grant.Hosts, copilotHosts)
 	}
 
-	// An empty host alone is still how a grant asks for every host.
+	// An empty list is how a grant asks for every host; leaving it out takes
+	// the secret's own.
 	wildcard, err := svc.CreateSecretGrant(ctx, "project-1", services.CreateSecretGrantBody{
 		SecretId: unbound.ID,
 		Scope:    serverapi.CreateSecretGrantBodyScopeProject,
-		Host:     serverapi.NewOptString(""),
+		Hosts:    []string{},
 	})
 	if err != nil || len(wildcard.Hosts) != 0 {
 		t.Fatalf("wildcard grant = %v, %v; want one with no hosts", wildcard, err)

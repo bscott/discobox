@@ -44,7 +44,7 @@ func TestAgentCredentialRoutesRequireTheBrokerScope(t *testing.T) {
 
 	listPath := "/api/pools/" + routeTestPoolID + "/sandbox-credentials?sandboxId=" + routeTestSandboxID
 	requestBody := `{"sandboxId":"` + routeTestSandboxID + `","name":"github","envVar":"GITHUB_TOKEN",` +
-		`"host":"api.github.com","uses":[{"description":"Open a PR"}]}`
+		`"hosts":["api.github.com"],"uses":[{"description":"Open a PR"}]}`
 	requestPath := "/api/pools/" + routeTestPoolID + "/sandbox-credential-requests"
 
 	for _, tc := range []struct {
@@ -109,7 +109,7 @@ func TestAgentCredentialRequestAndPollOverHTTP(t *testing.T) {
 	token := signPoolAssertion(t, projectID, routeTestPoolID, privateKey, poolauth.ScopeCredentialBroker)
 
 	body := `{"sandboxId":"` + routeTestSandboxID + `","name":"github","envVar":"GITHUB_TOKEN",` +
-		`"host":"api.github.com","justification":"the task asks me to open a PR",` +
+		`"hosts":["api.github.com"],"justification":"the task asks me to open a PR",` +
 		`"uses":[{"description":"Open a PR against the current repo"}]}`
 	resp := callRoute(t, router, http.MethodPost, "/api/pools/"+routeTestPoolID+"/sandbox-credential-requests", body, token)
 	if resp.Code != http.StatusOK {

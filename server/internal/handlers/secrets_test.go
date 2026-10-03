@@ -428,9 +428,8 @@ func TestResolveSandboxSecretNamesTheSecret(t *testing.T) {
 	}
 }
 
-// A grant and a request carry their hosts, and host beside them as the first,
-// for a reader that reads one (ADR 26-10-02-393 §4).
-func TestSecretGrantsAndRequestsCarryHostBesideHosts(t *testing.T) {
+// A grant and a request carry their hosts (ADR 26-10-02-393).
+func TestSecretGrantsAndRequestsCarryTheirHosts(t *testing.T) {
 	h := New(svcapi.Services{Secrets: fakeSecretService{}})
 	ctx := context.Background()
 	want := []string{"api.github.com", "api.githubcopilot.com"}
@@ -440,16 +439,15 @@ func TestSecretGrantsAndRequestsCarryHostBesideHosts(t *testing.T) {
 		t.Fatalf("list grants: %v", err)
 	}
 	grants := listRes.(*serverapi.ListSecretGrantsBody).SecretGrants
-	if len(grants) != 1 || !slices.Equal(grants[0].Hosts, want) || grants[0].Host.Or("") != want[0] {
-		t.Fatalf("grants = %+v, want hosts %q and host %q", grants, want, want[0])
+	if len(grants) != 1 || !slices.Equal(grants[0].Hosts, want) {
+		t.Fatalf("grants = %+v, want hosts %q", grants, want)
 	}
 
 	getRes, err := h.GetSecretRequest(ctx, serverapi.GetSecretRequestParams{ProjectId: "project-1", RequestId: "request-1"})
 	if err != nil {
 		t.Fatalf("get request: %v", err)
 	}
-	request := getRes.(*serverapi.SecretRequest)
-	if !slices.Equal(request.Hosts, want) || request.Host.Or("") != want[0] {
-		t.Fatalf("request = %+v, want hosts %q and host %q", request, want, want[0])
+	if request := getRes.(*serverapi.SecretRequest); !slices.Equal(request.Hosts, want) {
+		t.Fatalf("request = %+v, want hosts %q", request, want)
 	}
 }

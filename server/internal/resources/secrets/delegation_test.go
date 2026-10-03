@@ -17,7 +17,7 @@ func delegationGrant(secretID string) services.CreateSecretGrantBody {
 		SecretId: secretID,
 		Scope:    serverapi.CreateSecretGrantBodyScopeSandbox,
 		ScopeKey: serverapi.NewOptString(testSandboxID),
-		Host:     serverapi.NewOptString("github.com"),
+		Hosts:    []string{"github.com"},
 		EnvVar:   serverapi.NewOptString("GH_TOKEN"),
 		Uses:     serverapi.NewOptNilSecretUseArray([]serverapi.SecretUse{{Description: "push a branch to org/repo"}}),
 		Purpose:  serverapi.NewOptCreateSecretGrantBodyPurpose(serverapi.CreateSecretGrantBodyPurposeDelegate),

@@ -204,7 +204,7 @@ func TestCredentialsEndpointIdentifiesTheSandboxByItsCertificate(t *testing.T) {
 	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sawSandboxIDs = append(sawSandboxIDs, r.URL.Query().Get("sandboxId"))
 		_ = json.NewEncoder(w).Encode(listCredentialsDoc{Credentials: []credentialDoc{{
-			Name: "github", EnvVar: "GITHUB_TOKEN", Host: "api.github.com",
+			Name: "github", EnvVar: "GITHUB_TOKEN", Hosts: []string{"api.github.com"},
 			SecretID: "sec-1", GrantID: "grant-1", Sentinel: "STABLE-SENTINEL",
 			Format: "ghp_{base62:36}",
 			Uses:   []credentialUseDoc{{UseID: "use-1", Description: "Open a PR"}},

@@ -236,11 +236,6 @@ func (h *Handler) ListSandboxCredentials(ctx context.Context, params serverapi.L
 			GrantId:  credential.Grant.ID,
 			Sentinel: credential.Assignment.Sentinel,
 		}
-		// A pool agent that reads one host pins an activation to the first
-		// and refuses the rest (ADR 26-10-02-393 §4).
-		if len(credential.Grant.Hosts) > 0 {
-			item.Host = credential.Grant.Hosts[0]
-		}
 		if credential.Format != "" {
 			item.SetFormat(serverapi.NewOptString(credential.Format))
 		}

@@ -149,7 +149,7 @@ func TestGrantRefusesASecretBoundToAnotherHost(t *testing.T) {
 	_, err = svc.CreateSecretGrant(ctx, "project-1", services.CreateSecretGrantBody{
 		SecretId: openai.ID,
 		Scope:    serverapi.CreateSecretGrantBodyScopeProject,
-		Host:     serverapi.NewOptString("api.github.com"),
+		Hosts:    []string{"api.github.com"},
 	})
 	if err == nil {
 		t.Fatal("granted an OpenAI-bound secret for GitHub; the real key would be swapped into GitHub requests")
@@ -167,7 +167,7 @@ func TestGrantRefusesASecretBoundToAnotherHost(t *testing.T) {
 	if _, err := svc.CreateSecretGrant(ctx, "project-1", services.CreateSecretGrantBody{
 		SecretId: openai.ID,
 		Scope:    serverapi.CreateSecretGrantBodyScopeProject,
-		Host:     serverapi.NewOptString(""),
+		Hosts:    []string{},
 	}); err == nil {
 		t.Fatal("granted a host-bound secret for every host")
 	}
@@ -176,7 +176,7 @@ func TestGrantRefusesASecretBoundToAnotherHost(t *testing.T) {
 	if _, err := svc.CreateSecretGrant(ctx, "project-1", services.CreateSecretGrantBody{
 		SecretId: openai.ID,
 		Scope:    serverapi.CreateSecretGrantBodyScopeProject,
-		Host:     serverapi.NewOptString("API.OpenAI.com"),
+		Hosts:    []string{"API.OpenAI.com"},
 	}); err != nil {
 		t.Fatalf("grant for the secret's own host refused: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestGrantAllowsAnyHostForAnUnboundSecret(t *testing.T) {
 		if _, err := svc.CreateSecretGrant(ctx, "project-1", services.CreateSecretGrantBody{
 			SecretId: secret.ID,
 			Scope:    serverapi.CreateSecretGrantBodyScopeProject,
-			Host:     serverapi.NewOptString(host),
+			Hosts:    []string{host},
 		}); err != nil {
 			t.Fatalf("grant for %q refused: %v", host, err)
 		}
@@ -234,7 +234,7 @@ func TestGrantMayNarrowASecretToASubdomain(t *testing.T) {
 	grant, err := svc.CreateSecretGrant(ctx, "project-1", services.CreateSecretGrantBody{
 		SecretId: site.ID,
 		Scope:    serverapi.CreateSecretGrantBodyScopeProject,
-		Host:     serverapi.NewOptString("api.github.com"),
+		Hosts:    []string{"api.github.com"},
 	})
 	if err != nil {
 		t.Fatalf("a grant narrower than the binding was refused: %v", err)
@@ -256,7 +256,7 @@ func TestGrantMayNarrowASecretToASubdomain(t *testing.T) {
 	if _, err := svc.CreateSecretGrant(ctx, "project-1", services.CreateSecretGrantBody{
 		SecretId: api.ID,
 		Scope:    serverapi.CreateSecretGrantBodyScopeProject,
-		Host:     serverapi.NewOptString("github.com"),
+		Hosts:    []string{"github.com"},
 	}); err == nil {
 		t.Fatal("a secret bound to the API was granted for the whole site")
 	}
@@ -284,7 +284,7 @@ func TestABoundSecretResolvesOnlyWithinItsBinding(t *testing.T) {
 		SecretId: secret.ID,
 		Scope:    serverapi.CreateSecretGrantBodyScopeSandbox,
 		ScopeKey: serverapi.NewOptString(testSandboxID),
-		Host:     serverapi.NewOptString("github.com"),
+		Hosts:    []string{"github.com"},
 	}); err != nil {
 		t.Fatalf("create grant: %v", err)
 	}
@@ -334,7 +334,7 @@ func TestARefusalNamesTheBindingThatWouldWork(t *testing.T) {
 	_, err = svc.CreateSecretGrant(ctx, "project-1", services.CreateSecretGrantBody{
 		SecretId: secret.ID,
 		Scope:    serverapi.CreateSecretGrantBodyScopeProject,
-		Host:     serverapi.NewOptString("github.com"),
+		Hosts:    []string{"github.com"},
 	})
 	if err == nil {
 		t.Fatal("a secret bound to the API was granted for the whole site")
@@ -397,7 +397,7 @@ func TestAGrantWithUsesIsTakenOnlyThroughTheCLI(t *testing.T) {
 		SecretId: secret.ID,
 		Scope:    serverapi.CreateSecretGrantBodyScopeSandbox,
 		ScopeKey: serverapi.NewOptString(testSandboxID),
-		Host:     serverapi.NewOptString("api.github.com"),
+		Hosts:    []string{"api.github.com"},
 		EnvVar:   serverapi.NewOptString("GH_TOKEN"),
 		Uses: serverapi.NewOptNilSecretUseArray([]serverapi.SecretUse{
 			{Description: "Open a pull request against the current repo"},
@@ -454,16 +454,16 @@ func TestAGrantWithUsesRefusesTheWrongShape(t *testing.T) {
 	}{
 		{"no host", services.CreateSecretGrantBody{
 			SecretId: secret.ID, Scope: serverapi.CreateSecretGrantBodyScopeSandbox,
-			ScopeKey: serverapi.NewOptString(testSandboxID), Host: serverapi.NewOptString(""),
+			ScopeKey: serverapi.NewOptString(testSandboxID), Hosts: []string{},
 			EnvVar: serverapi.NewOptString("GH_TOKEN"), Uses: use,
 		}, "requires a host"},
 		{"no environment variable", services.CreateSecretGrantBody{
 			SecretId: secret.ID, Scope: serverapi.CreateSecretGrantBodyScopeSandbox,
-			ScopeKey: serverapi.NewOptString(testSandboxID), Host: serverapi.NewOptString("api.github.com"), Uses: use,
+			ScopeKey: serverapi.NewOptString(testSandboxID), Hosts: []string{"api.github.com"}, Uses: use,
 		}, "environment variable"},
 		{"a variable with no uses", services.CreateSecretGrantBody{
 			SecretId: secret.ID, Scope: serverapi.CreateSecretGrantBodyScopeSandbox,
-			ScopeKey: serverapi.NewOptString(testSandboxID), Host: serverapi.NewOptString("api.github.com"),
+			ScopeKey: serverapi.NewOptString(testSandboxID), Hosts: []string{"api.github.com"},
 			EnvVar: serverapi.NewOptString("GH_TOKEN"),
 		}, "only meaningful with uses"},
 	} {
@@ -491,7 +491,7 @@ func TestAWiderGrantBindsWhenTheAgentFirstAsks(t *testing.T) {
 	if _, err := svc.CreateSecretGrant(ctx, "project-1", services.CreateSecretGrantBody{
 		SecretId: secret.ID,
 		Scope:    serverapi.CreateSecretGrantBodyScopeProject,
-		Host:     serverapi.NewOptString("api.github.com"),
+		Hosts:    []string{"api.github.com"},
 		EnvVar:   serverapi.NewOptString("GH_TOKEN"),
 		Uses: serverapi.NewOptNilSecretUseArray([]serverapi.SecretUse{
 			{Description: "Open a pull request against the current repo"},
@@ -560,10 +560,10 @@ func TestTheNarrowerGrantKeepsTheVariable(t *testing.T) {
 
 	for _, g := range []services.CreateSecretGrantBody{
 		{SecretId: theirs.ID, Scope: serverapi.CreateSecretGrantBodyScopeProject,
-			Host: serverapi.NewOptString("api.github.com"), EnvVar: serverapi.NewOptString("GH_TOKEN"), Uses: use},
+			Hosts: []string{"api.github.com"}, EnvVar: serverapi.NewOptString("GH_TOKEN"), Uses: use},
 		{SecretId: mine.ID, Scope: serverapi.CreateSecretGrantBodyScopeSandbox,
 			ScopeKey: serverapi.NewOptString(testSandboxID),
-			Host:     serverapi.NewOptString("api.github.com"), EnvVar: serverapi.NewOptString("GH_TOKEN"), Uses: use},
+			Hosts:    []string{"api.github.com"}, EnvVar: serverapi.NewOptString("GH_TOKEN"), Uses: use},
 	} {
 		if _, err := svc.CreateSecretGrant(ctx, "project-1", g); err != nil {
 			t.Fatalf("grant: %v", err)

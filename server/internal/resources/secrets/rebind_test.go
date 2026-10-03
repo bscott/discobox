@@ -185,7 +185,7 @@ func projectUseGrant(secretID string) services.CreateSecretGrantBody {
 	return services.CreateSecretGrantBody{
 		SecretId: secretID,
 		Scope:    serverapi.CreateSecretGrantBodyScopeProject,
-		Host:     serverapi.NewOptString("api.github.com"),
+		Hosts:    []string{"api.github.com"},
 		EnvVar:   serverapi.NewOptString("GITHUB_TOKEN"),
 		Uses:     serverapi.NewOptNilSecretUseArray([]serverapi.SecretUse{{Description: "open a pull request"}}),
 	}

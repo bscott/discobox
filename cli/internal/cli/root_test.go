@@ -2157,7 +2157,7 @@ func TestSecretGrantCreateMakesADelegationGrant(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&created); err != nil {
 				t.Fatalf("decode grant body: %v", err)
 			}
-			_, _ = w.Write([]byte(`{"id":"grant-1","projectId":"project-1","secretId":"` + secretID + `","scope":"sandbox","scopeKey":"sbx-1","host":"github.com","envName":"GH_TOKEN","uses":[{"useId":"use_1","description":"push a branch"}],"purpose":"delegate","grantedAt":"2026-06-17T00:00:00Z","createdAt":"2026-06-17T00:00:00Z","updatedAt":"2026-06-17T00:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"id":"grant-1","projectId":"project-1","secretId":"` + secretID + `","scope":"sandbox","scopeKey":"sbx-1","hosts":["github.com"],"envName":"GH_TOKEN","uses":[{"useId":"use_1","description":"push a branch"}],"purpose":"delegate","grantedAt":"2026-06-17T00:00:00Z","createdAt":"2026-06-17T00:00:00Z","updatedAt":"2026-06-17T00:00:00Z"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/projects/project-1/secrets":
 			_, _ = w.Write([]byte(`{"secrets":[{"id":"` + secretID + `","projectId":"project-1","name":"github","type":"token","maxGrantTTLSeconds":3600,"createdAt":"2026-06-17T00:00:00Z","updatedAt":"2026-06-17T00:00:01Z"}]}`))
 		default:
@@ -2170,7 +2170,7 @@ func TestSecretGrantCreateMakesADelegationGrant(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetArgs([]string{"--server", server.URL, "--project", "project-1", "secret", "grant", "create",
-		"--secret", secretID, "--scope", "sandbox", "--scope-key", "sbx-1", "--host", "github.com",
+		"--secret", secretID, "--scope", "sandbox", "--scope-key", "sbx-1", "--hosts", "github.com",
 		"--env-var", "GH_TOKEN", "--use", "push a branch", "--delegate"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute secret grant create: %v", err)
@@ -2255,6 +2255,51 @@ func TestUnknownFlagsThatAreNotABareRunAreNotPointedAtNew(t *testing.T) {
 		}
 		if hinted := withNewFlagHint(found, err); hinted.Error() != err.Error() {
 			t.Fatalf("`discobox %s`: error = %q, want cobra's own %q", strings.Join(args, " "), hinted, err)
+		}
+	}
+}
+
+// --hosts takes a credential's hosts comma-separated, repeated, or both, and
+// sends them as one list (ADR 26-10-02-393).
+func TestSecretGrantCreateTakesHostsEitherWay(t *testing.T) {
+	const secretID = "secret-1"
+	for _, args := range [][]string{
+		{"--hosts", "api.github.com,githubcopilot.com"},
+		{"--hosts", "api.github.com", "--hosts", "githubcopilot.com"},
+	} {
+		var created map[string]any
+		server := httptest.NewServer(ignoringPortProbe(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case r.Method == http.MethodPost && r.URL.Path == "/projects/project-1/secret-grants":
+				if err := json.NewDecoder(r.Body).Decode(&created); err != nil {
+					t.Fatalf("decode grant body: %v", err)
+				}
+				_, _ = w.Write([]byte(`{"id":"grant-1","projectId":"project-1","secretId":"` + secretID + `","scope":"project","scopeKey":"project-1","hosts":["api.github.com","githubcopilot.com"],"purpose":"use","grantedAt":"2026-06-17T00:00:00Z","createdAt":"2026-06-17T00:00:00Z","updatedAt":"2026-06-17T00:00:00Z"}`))
+			case r.Method == http.MethodGet && r.URL.Path == "/projects/project-1/secrets":
+				_, _ = w.Write([]byte(`{"secrets":[{"id":"` + secretID + `","projectId":"project-1","name":"github","type":"token","maxGrantTTLSeconds":3600,"createdAt":"2026-06-17T00:00:00Z","updatedAt":"2026-06-17T00:00:01Z"}]}`))
+			default:
+				t.Fatalf("unexpected request = %s %s", r.Method, r.URL.Path)
+			}
+		}))
+		cmd := NewRootCommand()
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetArgs(append([]string{"--server", server.URL, "--project", "project-1", "secret", "grant", "create",
+			"--secret", secretID, "--scope", "project"}, args...))
+		err := cmd.Execute()
+		server.Close()
+		if err != nil {
+			t.Fatalf("%q: execute secret grant create: %v", args, err)
+		}
+		if got := strings.Join(grantHostsOf(created), ","); got != "api.github.com,githubcopilot.com" {
+			t.Fatalf("%q: posted hosts = %s, want both as one list", args, got)
+		}
+		if _, ok := created["host"]; ok {
+			t.Fatalf("%q: posted a host field beside hosts: %#v", args, created)
+		}
+		if !strings.Contains(out.String(), "api.github.com,githubcopilot.com") {
+			t.Fatalf("%q: output = %q, want both hosts", args, out.String())
 		}
 	}
 }

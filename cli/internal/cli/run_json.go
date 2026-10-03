@@ -42,7 +42,6 @@ type runJSONGrant struct {
 	ID     string       `json:"id"`
 	Secret string       `json:"secret"`
 	EnvVar string       `json:"envVar"`
-	Host   string       `json:"host"`
 	Hosts  []string     `json:"hosts"`
 	Uses   []runJSONUse `json:"uses"`
 }
@@ -119,14 +118,7 @@ func (req runJSONRequest) grants() ([]apimodel.SandboxGrant, error) {
 		default:
 			return nil, fmt.Errorf(`--json: grants[%d]: want {"id": ID} for a well-known credential, such as com.github.api, or {"secret": SECRET, "envVar": ENV_VAR}, not both`, i)
 		}
-		if host := strings.TrimSpace(in.Host); host != "" {
-			grant.SetHost(apiclientgen.NewOptString(host))
-		}
-		// Only when given: an empty list is still sent, and a server that
-		// predates the field refuses the body for it.
-		if len(in.Hosts) > 0 {
-			grant.SetHosts(in.Hosts)
-		}
+		grant.SetHosts(in.Hosts)
 		for _, use := range in.Uses {
 			if description := strings.TrimSpace(use.Description); description != "" {
 				grant.Uses = append(grant.Uses, apimodel.SecretUse{Description: description})

@@ -1038,9 +1038,8 @@ proxy would recognize it.
   unless the activation is live, belongs to the calling sandbox, and the
   destination is covered by one of the hosts its use was approved for
   ([ADR 26-10-02-393](../docs/adr/26-10-02-393-a-credential-request-and-its-grant-may-name-several-hosts.md)).
-  The hosts are the credential's `host` then `hosts`, so a control plane that
-  predates the list pins the activation to its one host, and an activation
-  with no host covers nothing rather than everything; only then is it
+  An activation with no host covers nothing rather than everything; only then
+  is it
   translated to the stable sentinel and resolved normally. The control plane
   never learns ephemeral sentinels exist.
 - **`policyPublisher` owns the proxy's per-client policy**, merging the stable

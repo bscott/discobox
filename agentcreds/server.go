@@ -66,11 +66,30 @@ func NewHandler(svc Service) http.Handler {
 		writeJSON(w, http.StatusOK, ListResponse{Credentials: credentials})
 	})
 	mux.HandleFunc("POST "+PathRequests, func(w http.ResponseWriter, r *http.Request) {
-		var body RequestBody
+		// host is the field a request once named its destination by. A client
+		// that predates hosts sends it on every ask, empty when it named none,
+		// which is an ask for nothing in particular and is read as one. A host
+		// it did name is refused rather than dropped (ADR 26-10-02-393 §4):
+		// dropped, a free-form ask would name no destination, and an ask by a
+		// well-known ID would widen from the host it named to the ID's whole
+		// site — wider than it meant, and what a person would be shown to
+		// approve. Such a client cannot send hosts, so the refusal says what
+		// it can do: be replaced.
+		var body struct {
+			RequestBody
+			Host *string `json:"host"`
+		}
 		if !decode(w, r, &body) {
 			return
 		}
-		status, err := svc.Request(r.Context(), body)
+		if body.Host != nil && strings.TrimSpace(*body.Host) != "" {
+			writeJSON(w, http.StatusBadRequest, ErrorResponse{
+				Error: `"host" is no longer read; destinations are "hosts", a list. A client that sends "host" predates it: upgrade or recreate this sandbox for one that does`,
+				Code:  CodeInvalid,
+			})
+			return
+		}
+		status, err := svc.Request(r.Context(), body.RequestBody)
 		if err != nil {
 			writeError(w, err)
 			return

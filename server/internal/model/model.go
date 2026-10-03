@@ -1288,15 +1288,6 @@ func (r *SecretRequest) FromProtocol() bool { return len(r.Uses) > 0 }
 
 func (SecretRequest) TableName() string { return "secret_requests" }
 
-// MarshalJSON writes host beside hosts, as SecretGrant's does.
-func (r SecretRequest) MarshalJSON() ([]byte, error) {
-	type plain SecretRequest
-	return json.Marshal(struct {
-		plain
-		Host string `json:"host,omitempty"`
-	}{plain(r), firstHost(r.Hosts)})
-}
-
 func (r *SecretRequest) BeforeCreate(_ *gorm.DB) error {
 	if r.ID == "" {
 		var err error
@@ -1371,25 +1362,6 @@ func (g *SecretGrant) FindUse(useID string) (SecretUse, bool) {
 }
 
 func (SecretGrant) TableName() string { return "secret_grants" }
-
-// MarshalJSON writes host beside hosts: the first of them, for a reader that
-// reads one (ADR 26-10-02-393 §4). It is the API's spelling, and only the API's;
-// nothing here reads it back.
-func (g SecretGrant) MarshalJSON() ([]byte, error) {
-	type plain SecretGrant
-	return json.Marshal(struct {
-		plain
-		Host string `json:"host,omitempty"`
-	}{plain(g), firstHost(g.Hosts)})
-}
-
-// firstHost is the one host a list stands as for a reader that reads one.
-func firstHost(hosts []string) string {
-	if len(hosts) == 0 {
-		return ""
-	}
-	return hosts[0]
-}
 
 func (g *SecretGrant) BeforeCreate(_ *gorm.DB) error {
 	if g.ID == "" {

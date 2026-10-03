@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -88,7 +89,7 @@ func TestRunGivesItsGrants(t *testing.T) {
 		strings.Join(grantUses(grants[0]), "|") != "push a branch to org/repo" {
 		t.Fatalf("first grant = %#v, want com.github.api by its ID", grants[0])
 	}
-	if grants[1]["secretId"] != "sec_npm" || grants[1]["envVar"] != "NPM_TOKEN" || grants[1]["host"] != "registry.npmjs.org" {
+	if grants[1]["secretId"] != "sec_npm" || grants[1]["envVar"] != "NPM_TOKEN" || !slices.Equal(grantHostsOf(grants[1]), []string{"registry.npmjs.org"}) {
 		t.Fatalf("second grant = %#v, want npm resolved to its ID", grants[1])
 	}
 	if !strings.Contains(out.String(), runJSONSandboxID) {
@@ -184,4 +185,16 @@ func TestRunJSONRefusesWhatItCannotMean(t *testing.T) {
 			}
 		})
 	}
+}
+
+// grantHostsOf is the hosts a posted grant names.
+func grantHostsOf(grant map[string]any) []string {
+	var out []string
+	hosts, _ := grant["hosts"].([]any)
+	for _, host := range hosts {
+		if host, ok := host.(string); ok {
+			out = append(out, host)
+		}
+	}
+	return out
 }

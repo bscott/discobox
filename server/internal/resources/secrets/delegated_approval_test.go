@@ -71,7 +71,7 @@ func delegate(t *testing.T, st *store.Store, secret *model.Secret, host string, 
 func workerRequest(t *testing.T, svc *resourcesecrets.Service, change func(*services.CreateSandboxCredentialRequestBody)) *model.SecretRequest {
 	t.Helper()
 	body := services.CreateSandboxCredentialRequestBody{
-		SandboxId: testSandboxID, Name: "github", EnvVar: "GITHUB_TOKEN", Host: serverapi.NewOptString("api.github.com"),
+		SandboxId: testSandboxID, Name: "github", EnvVar: "GITHUB_TOKEN", Hosts: []string{"api.github.com"},
 		Uses: []apimodel.SecretUse{{Description: "read issue 43"}},
 	}
 	if change != nil {
@@ -226,7 +226,7 @@ func TestADiscoboxHandsOnAWellKnownCredentialOnlyByItsSecret(t *testing.T) {
 	delegate(t, st, unmarked, "github.com", time.Hour)
 	wellKnown := func(b *services.CreateSandboxCredentialRequestBody) {
 		b.ID = serverapi.NewOptString("com.github.api")
-		b.Name, b.EnvVar, b.Host = "", "", serverapi.NewOptString("")
+		b.Name, b.EnvVar, b.Hosts = "", "", nil
 	}
 	_, err := approveAsLead(svc, workerRequest(t, svc, wellKnown), services.ApproveSecretRequestBody{})
 	requireStatus(t, err, http.StatusForbidden)
@@ -446,7 +446,7 @@ func TestACreatesGrantsAreHeldToTheirDelegationsWhenStored(t *testing.T) {
 
 	grants, err := svc.PrepareSandboxGrants(asLead(), "project-1", "sbx-new", []apimodel.SandboxGrant{{
 		SecretId: serverapi.NewOptString(secret.ID), EnvVar: serverapi.NewOptString("GH_TOKEN"),
-		Host: serverapi.NewOptString("api.github.com"), Uses: []apimodel.SecretUse{{Description: "read issue 43"}},
+		Hosts: []string{"api.github.com"}, Uses: []apimodel.SecretUse{{Description: "read issue 43"}},
 	}})
 	if err != nil {
 		t.Fatalf("prepare grants: %v", err)
@@ -480,7 +480,7 @@ func TestACreatesSecretNotDelegatedAnswersAsIfItDidNotExist(t *testing.T) {
 	grant := func(secretID string) []apimodel.SandboxGrant {
 		return []apimodel.SandboxGrant{{
 			SecretId: serverapi.NewOptString(secretID), EnvVar: serverapi.NewOptString("GH_TOKEN"),
-			Host: serverapi.NewOptString("api.github.com"), Uses: []apimodel.SecretUse{{Description: "read issue 43"}},
+			Hosts: []string{"api.github.com"}, Uses: []apimodel.SecretUse{{Description: "read issue 43"}},
 		}}
 	}
 	for _, named := range []string{other.ID, other.ID[:len(other.ID)-3], "sec_doesnotexist"} {
@@ -520,9 +520,9 @@ func TestEachGrantACreateGivesIsJudged(t *testing.T) {
 	delegate(t, st, secret, "github.com", time.Hour)
 	grants := []apimodel.SandboxGrant{
 		{SecretId: serverapi.NewOptString(secret.ID), EnvVar: serverapi.NewOptString("GH_TOKEN"),
-			Host: serverapi.NewOptString("api.github.com"), Uses: []apimodel.SecretUse{{Description: "read issue 43"}}},
+			Hosts: []string{"api.github.com"}, Uses: []apimodel.SecretUse{{Description: "read issue 43"}}},
 		{SecretId: serverapi.NewOptString(secret.ID), EnvVar: serverapi.NewOptString("GH_TOKEN"),
-			Host: serverapi.NewOptString("api.github.com"), Uses: []apimodel.SecretUse{{Description: "read issue 44"}}},
+			Hosts: []string{"api.github.com"}, Uses: []apimodel.SecretUse{{Description: "read issue 44"}}},
 	}
 	judging := &countingJudge{allow: true}
 	svc.SetJudge(judging)

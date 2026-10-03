@@ -22,7 +22,7 @@ func judgeCredentials() []agentcreds.Credential {
 	return []agentcreds.Credential{{
 		Name:   "github",
 		EnvVar: "GITHUB_TOKEN",
-		Host:   "api.github.com",
+		Hosts:  []string{"api.github.com"},
 		Uses:   []agentcreds.Use{{UseID: "use_7f3c", Description: "Open a PR against the current repo"}},
 	}}
 }

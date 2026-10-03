@@ -16,11 +16,7 @@
 // docs/adr/0031-agent-credentials-are-a-portable-protocol-with-ephemeral-sentinels.md.
 package agentcreds
 
-import (
-	"slices"
-	"strings"
-	"time"
-)
+import "time"
 
 // Version is the protocol version every route is served under.
 const Version = "v1"
@@ -96,22 +92,13 @@ type Use struct {
 }
 
 // Credential is one credential the caller may use, as reported by list. It
-// never carries a value.
-//
-// Hosts are where it may be sent; Host is the first of them, for a client
-// that reads one (ADR 26-10-02-393 §4). An implementation that predates the
-// list reports Host alone, and AllHosts reads the two together.
+// never carries a value. Hosts are where it may be sent (ADR 26-10-02-393).
 type Credential struct {
 	Name   string   `json:"name"`
 	EnvVar string   `json:"envVar"`
-	Host   string   `json:"host,omitempty"`
 	Hosts  []string `json:"hosts,omitempty"`
 	Uses   []Use    `json:"uses,omitempty"`
 }
-
-// AllHosts are where the credential may be sent: Host, then Hosts, without
-// repeats.
-func (c Credential) AllHosts() []string { return joinHosts(c.Host, c.Hosts) }
 
 // ListResponse is the list operation's body.
 type ListResponse struct {
@@ -187,10 +174,8 @@ const (
 //
 // Purpose is PurposeUse or PurposeDelegate; empty asks for PurposeUse.
 //
-// Host and Hosts are where the credential will be sent: Host, then Hosts
-// (ADR 26-10-02-393 §4). A client asking for one host may name it either way;
-// Host alone is what a client that predates the list sends, and means the one
-// host it meant.
+// Hosts are where the credential will be sent, one or several
+// (ADR 26-10-02-393).
 type RequestBody struct {
 	// ID names a well-known credential — a reverse-DNS ID such as
 	// "com.github.api" — in place of Name, EnvVar, and the hosts, which an
@@ -199,30 +184,11 @@ type RequestBody struct {
 	ID              string         `json:"id,omitempty"`
 	Name            string         `json:"name"`
 	EnvVar          string         `json:"envVar"`
-	Host            string         `json:"host"`
 	Hosts           []string       `json:"hosts,omitempty"`
 	Justification   string         `json:"justification,omitempty"`
 	Uses            []RequestedUse `json:"uses,omitempty"`
 	GrantTTLSeconds int64          `json:"grantTTLSeconds,omitempty"`
 	Purpose         string         `json:"purpose,omitempty"`
-}
-
-// AllHosts are where the request asks the credential to be sent: Host, then
-// Hosts, without repeats.
-func (b RequestBody) AllHosts() []string { return joinHosts(b.Host, b.Hosts) }
-
-// joinHosts is host followed by hosts, trimmed, with empties and repeats
-// dropped. It does not normalize further: the implementation reads a host the
-// way its own destinations are read, and is the one to say what two spellings
-// mean.
-func joinHosts(host string, hosts []string) []string {
-	var out []string
-	for _, h := range append([]string{host}, hosts...) {
-		if h = strings.TrimSpace(h); h != "" && !slices.Contains(out, h) {
-			out = append(out, h)
-		}
-	}
-	return out
 }
 
 // RequestStatus is what request and its poll both answer with. Uses is

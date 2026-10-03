@@ -175,7 +175,7 @@ func judgePrompt(credential agentcreds.Credential, use agentcreds.Use, command [
 	var b strings.Builder
 	fmt.Fprintf(&b, "Approved use: %s\n", use.Description)
 	fmt.Fprintf(&b, "Credential: %s, delivered in the environment variable %s\n", credential.Name, credential.EnvVar)
-	if hosts := credential.AllHosts(); len(hosts) == 1 {
+	if hosts := credential.Hosts; len(hosts) == 1 {
 		fmt.Fprintf(&b, "Approved host: %s\n", hosts[0])
 	} else {
 		fmt.Fprintf(&b, "Approved hosts: %s\n", strings.Join(hosts, ", "))

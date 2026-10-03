@@ -58,7 +58,7 @@ func (s *Service) CreateSandboxCredentialRequest(ctx context.Context, poolID str
 	}
 	name := strings.TrimSpace(input.Name)
 	envName := strings.TrimSpace(input.EnvVar)
-	hosts, _ := askedHosts(input.Host, input.Hosts)
+	hosts, _ := askedHosts(input.Hosts)
 	// A well-known credential names its own name, variable, and hosts, which an
 	// ask must agree with (see wellknown.go).
 	wellKnownID := strings.TrimSpace(input.ID.Or(""))

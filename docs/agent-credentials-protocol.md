@@ -76,7 +76,6 @@ GET /v1/credentials
     {
       "name": "github",
       "envVar": "GITHUB_TOKEN",
-      "host": "api.github.com",
       "hosts": ["api.github.com"],
       "uses": [
         {
@@ -92,9 +91,7 @@ GET /v1/credentials
 
 `list` never returns values. `expiresAt` is when the approval behind the use
 lapses; an absent `expiresAt` means it does not expire on its own. `hosts` are
-where the credential may be sent, and `host` is the first of them, for a
-client that reads one; an implementation that predates `hosts` reports `host`
-alone.
+where the credential may be sent.
 
 ## `request` — ask for something new
 
@@ -106,7 +103,7 @@ POST /v1/credentials/requests
 {
   "name": "github",
   "envVar": "GITHUB_TOKEN",
-  "host": "api.github.com",
+  "hosts": ["api.github.com"],
   "justification": "The task asks me to open a PR with the fix.",
   "uses": [{ "description": "Open a pull request against the current repository" }],
   "grantTTLSeconds": 14400
@@ -140,13 +137,16 @@ not report it and `use` does not take a value under it. Any other value is
 implementation recorded; one that predates purposes reports none, and has
 recorded an ask to use.
 
-`host` is the destination the credential will be sent to, and `hosts` names
-more, for a credential one tool sends to several sites — Copilot CLI sends one
-GitHub token to `api.github.com` and to `githubcopilot.com`. The destinations
-are `host` followed by `hosts`; either alone is fine, and a client that
-predates `hosts` sends `host` and means the one host. Each covers the hosts
-beneath it, and the approval is one grant and one set of uses, spent at any of
+`hosts` are the destinations the credential will be sent to: one, or several
+for a credential one tool sends to more than one site — Copilot CLI sends one
+GitHub token to `api.github.com` and to `githubcopilot.com`. Each covers the
+hosts beneath it, and the approval is one grant and one set of uses, spent at any of
 them ([ADR 26-10-02-393](adr/26-10-02-393-a-credential-request-and-its-grant-may-name-several-hosts.md)).
+`hosts` replaced `host` in place, under `v1`: the protocol's only clients are
+Discobox's own `discobox-access`, which a discobox upgrade or recreation
+replaces. A body that still names a destination as `host` is `invalid`,
+rather than read without it; an empty `host`, which such a client sends when
+it named none, is no destination.
 A destination is required by the Discobox implementation, which refuses to mint
 a host-unscoped approval through this flow. Discobox also requires `name`, a valid `envVar`, and at least one use
 with a description, and answers `invalid` without them. A second ask for the
@@ -363,7 +363,7 @@ discobox-access request --json <<'EOF'
 {
   "name": "github",
   "envVar": "GITHUB_TOKEN",
-  "host": "api.github.com",
+  "hosts": ["api.github.com"],
   "justification": "the user's task asks me to open a PR",
   "uses": [{"description": "Open a PR against the current repo"}],
   "wait": true
