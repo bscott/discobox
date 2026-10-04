@@ -14,6 +14,7 @@ import (
 	"github.com/discobox-ai/discobox/server/internal/apperrors"
 	"github.com/discobox-ai/discobox/server/internal/auth"
 	"github.com/discobox-ai/discobox/server/internal/model"
+	resourcesecrets "github.com/discobox-ai/discobox/server/internal/resources/secrets"
 	sandbox "github.com/discobox-ai/discobox/server/internal/sandbox"
 	"github.com/discobox-ai/discobox/server/internal/sandboxexport"
 	services "github.com/discobox-ai/discobox/server/internal/services"
@@ -348,7 +349,7 @@ func (s *Service) ImportSandbox(ctx context.Context, projectID string, archive i
 	}
 	sb.PoolID = landedPool
 
-	created, err := s.createSandboxIntent(ctx, sb, assignments, nil)
+	created, err := s.createSandboxIntent(ctx, sb, assignments, resourcesecrets.SandboxGrants{})
 	if err != nil {
 		return nil, err
 	}
@@ -439,7 +440,7 @@ func (s *Service) importSecretBindings(ctx context.Context, projectID string, sb
 				env, binding.Secret))
 			continue
 		}
-		format := secretFormat(ctx, s.store, secret)
+		format := s.store.SentinelFormat(ctx, secret)
 		sentinel, err := secretformat.MintSentinel(format)
 		if err != nil {
 			return nil, nil, err

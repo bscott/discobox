@@ -53,7 +53,11 @@ func (a *App) selectSandbox(cmd *cobra.Command, sandboxArg string) (app *App, pr
 	}
 	if strings.TrimSpace(sandboxArg) != "" {
 		if len(set) > 1 {
-			return a.findOnEveryServer(cmd.Context(), set, sandboxArg)
+			target, projectID, sandboxID, client, err := a.findOnEveryServer(cmd.Context(), set, sandboxArg)
+			if err != nil {
+				return nil, "", "", nil, err
+			}
+			return target.app, projectID, sandboxID, client, nil
 		}
 		projectID, err = a.projectIDValue()
 		if err != nil {
@@ -71,24 +75,46 @@ func (a *App) selectSandbox(cmd *cobra.Command, sandboxArg string) (app *App, pr
 	if err != nil {
 		return nil, "", "", nil, err
 	}
+	target, sandboxID, err := a.pickServerSandbox(cmd, set, candidates, unreachable,
+		"no discoboxes were started from this directory; start one with `discobox new`, or name one with --discobox-id",
+		"more than one discobox was started from this directory; pass --discobox-id")
+	if err != nil {
+		return nil, "", "", nil, err
+	}
+	projectID, client, err = target.projectClient(cmd.Context())
+	if err != nil {
+		return nil, "", "", nil, err
+	}
+	return target.app, projectID, sandboxID, client, nil
+}
+
+// pickServerSandbox is the picker over candidates already listed across every
+// server (sandboxCandidates), so a caller that listed them to match a name
+// against does not list them a second time to offer them. It answers with the
+// server the picked discobox is on and the discobox's ID.
+//
+// The caller says what an empty or ambiguous list means in its own words,
+// since which flag or argument would have named one is the caller's; the rest
+// of the picker's options are the same for every caller.
+func (a *App) pickServerSandbox(cmd *cobra.Command, set []*server, candidates []serverSandbox, unreachable []unansweredServer, empty, ambiguous string) (*server, string, error) {
 	note := printedNotes(cmd.ErrOrStderr())
 	for _, silent := range unreachable {
 		note("%s did not answer, so its discoboxes are not offered: %v", silent.server.name, silent.err)
 	}
 	several := len(set) > 1
-	projectID, err = a.projectIDValue()
+	projectID, err := a.projectIDValue()
 	if err != nil {
-		return nil, "", "", nil, err
+		return nil, "", err
 	}
 	picked, err := pickOne(cmd, "Select a discobox", serverSandboxPickerItems(candidates, "", several), pickerOptions{
-		empty:     "no discoboxes were started from this directory; start one with `discobox new`, or name one with --discobox-id",
-		ambiguous: "more than one discobox was started from this directory; pass --discobox-id",
+		empty:     empty,
+		ambiguous: ambiguous,
 		// The remembered pick is per project, because the candidate list is.
 		recentKey: "sandbox:" + projectID,
 		expand:    a.everyServerExpansion(cmd.Context(), several),
 	})
 	if err != nil {
-		return nil, "", "", nil, err
+		return nil, "", err
 	}
 	// A row from a registered server is keyed by the server's name as well as
 	// the discobox's ID (serverSandboxPickerItems), which is what says where to
@@ -96,19 +122,37 @@ func (a *App) selectSandbox(cmd *cobra.Command, sandboxArg string) (app *App, pr
 	target, sandboxID := set[0], picked
 	if name, id, ok := strings.Cut(picked, "/"); ok {
 		if target, ok = serverNamed(set[1:], name); !ok {
-			return nil, "", "", nil, fmt.Errorf("picked a discobox on %s, which is not a server this command knows", name)
+			return nil, "", fmt.Errorf("picked a discobox on %s, which is not a server this command knows", name)
 		}
 		sandboxID = id
 	}
-	projectID, err = target.app.projectIDValue()
-	if err != nil {
-		return nil, "", "", nil, err
+	return target, sandboxID, nil
+}
+
+// matchServerSandboxArg is matchSandboxArg over candidates listed across every
+// server: a name or a short ID matched among them under the same rules, and the
+// server the matching row was listed from. IDs are unique across servers, so a
+// match names one row.
+//
+// A full generated ID is not looked for here. matchSandboxArg trusts one by its
+// shape alone, and which server holds it is a question for findOnEveryServer,
+// which asks every server rather than this directory's listing; callers send it
+// there first.
+func matchServerSandboxArg(arg string, candidates []serverSandbox, match nameMatch) (*server, string, bool, error) {
+	sandboxes := make([]apimodel.Sandbox, 0, len(candidates))
+	for _, row := range candidates {
+		sandboxes = append(sandboxes, row.sandbox)
 	}
-	client, err = target.app.apiClient()
-	if err != nil {
-		return nil, "", "", nil, err
+	id, ok, err := matchSandboxArg(arg, sandboxes, match)
+	if err != nil || !ok {
+		return nil, "", false, err
 	}
-	return target.app, projectID, sandboxID, client, nil
+	for _, row := range candidates {
+		if row.sandbox.ID == id {
+			return row.server, id, true, nil
+		}
+	}
+	return nil, "", false, nil
 }
 
 // sandboxCandidates is the picker's list across every server: what `discobox

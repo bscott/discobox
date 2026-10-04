@@ -150,17 +150,17 @@ func TestWindowsDrivePathIsOnlyAPathOnWindows(t *testing.T) {
 // is positional, and this command supplies options of its own, so the assembled
 // list is what decides whether a path is read as a path.
 func TestSCPArgsPlacesEverythingWhereSCPReadsIt(t *testing.T) {
-	bridge := scpBridgeArgs(45678, "/state/id_ed25519", "/tmp/known_hosts")
+	session := sshClientOptions("/state/id_ed25519", "/tmp/known_hosts", "prj_1.discobox.internal", "discobox admin ssh-proxy")
 
 	t.Run("upload", func(t *testing.T) {
 		args := scpArgs(scpInvocation{
-			bridge:   bridge,
+			session:  session,
 			options:  []string{"-r"},
-			operands: []string{"./dist", "sbx_devbox00000001@127.0.0.1:/tmp/dist"},
+			operands: []string{"./dist", "sbx_devbox00000001@sbx_devbox00000001.discobox.internal:/tmp/dist"},
 			remote:   []bool{false, true},
 		})
 		joined := strings.Join(args, " ")
-		for _, want := range []string{"-P 45678", "-i /state/id_ed25519", "-F none", "-r -- ./dist sbx_devbox00000001@127.0.0.1:/tmp/dist"} {
+		for _, want := range []string{"-o ProxyCommand=discobox admin ssh-proxy", "-i /state/id_ed25519", "-F none", "-r -- ./dist sbx_devbox00000001@sbx_devbox00000001.discobox.internal:/tmp/dist"} {
 			if !strings.Contains(joined, want) {
 				t.Errorf("args %v missing %q", args, want)
 			}
@@ -172,13 +172,13 @@ func TestSCPArgsPlacesEverythingWhereSCPReadsIt(t *testing.T) {
 
 	t.Run("discobox to discobox", func(t *testing.T) {
 		args := scpArgs(scpInvocation{
-			bridge:   bridge,
-			operands: []string{"sbx_a@127.0.0.1:/tmp/a", "sbx_b@127.0.0.1:/tmp/a"},
+			session:  session,
+			operands: []string{"sbx_a@sbx_a.discobox.internal:/tmp/a", "sbx_b@sbx_b.discobox.internal:/tmp/a"},
 			remote:   []bool{true, true},
 		})
 		// The direct remote-to-remote path has the source sandbox dial the
-		// destination, which is a loopback port that exists only on this
-		// machine. -3 is pinned so no client default can take it.
+		// destination, whose alias only this machine's ProxyCommand reaches.
+		// -3 is pinned so no client default can take it.
 		if !slices.Contains(args, "-3") {
 			t.Fatalf("args %v missing -3", args)
 		}
@@ -186,8 +186,8 @@ func TestSCPArgsPlacesEverythingWhereSCPReadsIt(t *testing.T) {
 
 	t.Run("two downloads are not a remote-to-remote copy", func(t *testing.T) {
 		args := scpArgs(scpInvocation{
-			bridge:   bridge,
-			operands: []string{"sbx_a@127.0.0.1:/tmp/a", "sbx_b@127.0.0.1:/tmp/b", "./here"},
+			session:  session,
+			operands: []string{"sbx_a@sbx_a.discobox.internal:/tmp/a", "sbx_b@sbx_b.discobox.internal:/tmp/b", "./here"},
 			remote:   []bool{true, true, false},
 		})
 		if slices.Contains(args, "-3") {

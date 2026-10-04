@@ -7,7 +7,7 @@ require (
 	github.com/charmbracelet/ultraviolet v0.0.0-20260703014108-f5a850f9c2b7
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/charmbracelet/x/vt v0.0.0-20260713092006-0d683c34c74b
-	github.com/discobox-ai/x v0.0.0-20260917050848-32cef8aa6b78
+	github.com/discobox-ai/x v0.0.0-20260928053835-39c36487e906
 )
 
 require (
@@ -30,6 +30,8 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 )
 
-replace github.com/charmbracelet/x/ansi => github.com/discobox-ai/charm-x/ansi v0.11.9-0.20260813023456-57e8cef06953
+replace github.com/charmbracelet/x/ansi => github.com/discobox-ai/charm-x/ansi v0.11.9-0.20260926040046-9d904b1c7255
 
-replace github.com/charmbracelet/x/vt => github.com/discobox-ai/charm-x/vt v0.0.0-20260918234547-859a09c25845
+replace github.com/charmbracelet/x/vt => github.com/discobox-ai/charm-x/vt v0.0.0-20260926040046-9d904b1c7255
+
+replace github.com/charmbracelet/ultraviolet => github.com/discobox-ai/ultraviolet v0.0.0-20260926043624-eff2d8acf8a4

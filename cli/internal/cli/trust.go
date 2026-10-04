@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/discobox-ai/discobox/agentcreds"
 	apiclientgen "github.com/discobox-ai/discobox/api/gen"
 	apimodel "github.com/discobox-ai/discobox/api/model"
 	"github.com/discobox-ai/discobox/cli/internal/lifetime"
@@ -311,7 +312,7 @@ func (a *App) writeTrustRequest(cmd *cobra.Command, request *apimodel.HostTrustR
 	for _, use := range request.Uses.Or(nil) {
 		fmt.Fprintf(tw, "USE\t%s\n", use.Description)
 	}
-	if asked := lifetime.FromRequest(request.GrantTTLSeconds.Or(0)); asked > 0 {
+	if asked := agentcreds.AskedGrantTTL(request.GrantTTLSeconds.Or(0)); asked > 0 {
 		fmt.Fprintf(tw, "WANTED FOR\t%s\n", lifetime.Label(asked))
 	}
 	if err := tw.Flush(); err != nil {

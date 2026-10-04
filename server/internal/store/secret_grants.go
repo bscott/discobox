@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -16,6 +17,19 @@ import (
 type GrantScope struct {
 	Scope    string
 	ScopeKey string
+}
+
+// SandboxGrantScopes is every scope a grant may cover a discobox through:
+// itself, the harness config it runs, and its project, narrowest first.
+func SandboxGrantScopes(sandbox *model.Sandbox) []GrantScope {
+	scopes := []GrantScope{{Scope: model.SecretGrantScopeSandbox, ScopeKey: sandbox.ID}}
+	if sandbox.HarnessConfigID != nil && strings.TrimSpace(*sandbox.HarnessConfigID) != "" {
+		scopes = append(scopes, GrantScope{
+			Scope:    model.SecretGrantScopeHarnessConfig,
+			ScopeKey: strings.TrimSpace(*sandbox.HarnessConfigID),
+		})
+	}
+	return append(scopes, GrantScope{Scope: model.SecretGrantScopeProject, ScopeKey: sandbox.ProjectID})
 }
 
 func (s *Store) CreateSecretGrant(ctx context.Context, grant *model.SecretGrant) error {
@@ -92,8 +106,8 @@ func (s *Store) FindLiveGrant(ctx context.Context, projectID, secretID, host str
 		return nil, err
 	}
 	now := time.Now().UTC()
-	// The host is matched in Go rather than in SQL: a grant covers its own
-	// host and everything beneath it (hostscope.Covers), which is a relation
+	// The host is matched in Go rather than in SQL: a grant covers each of its
+	// hosts and everything beneath them (hostscope.CoversAny), which is a relation
 	// SQL equality cannot express and which must read identically here, in the
 	// pool agent's activation check, and in the guard on what a grant may point
 	// a secret at.
@@ -125,7 +139,7 @@ func (s *Store) FindLiveGrant(ctx context.Context, projectID, secretID, host str
 		if _, ok := allowed[GrantScope{Scope: c.Scope, ScopeKey: c.ScopeKey}]; !ok {
 			continue
 		}
-		if !hostscope.Covers(c.Host, host) {
+		if !hostscope.CoversAny(c.Hosts, host) {
 			continue
 		}
 		// A grant its holder may only delegate authorizes nothing it sends.
@@ -140,6 +154,26 @@ func (s *Store) FindLiveGrant(ctx context.Context, projectID, secretID, host str
 		return nil, ErrNotFound
 	}
 	return best, nil
+}
+
+// ListLiveDelegationGrants returns the live delegation grants a discobox holds
+// (purpose delegate, scoped to it), newest first: what bounds the grants it may
+// hand on by approving a request (ADR 26-09-30-782 §3). Every other live-grant
+// query leaves these out, since a delegation grant authorizes nothing its
+// holder sends.
+func (s *Store) ListLiveDelegationGrants(ctx context.Context, projectID, sandboxID string) ([]model.SecretGrant, error) {
+	read, err := s.getRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []model.SecretGrant
+	err = read.
+		Where("project_id = ? AND purpose = ? AND scope = ? AND scope_key = ?",
+			projectID, model.SecretGrantPurposeDelegate, model.SecretGrantScopeSandbox, sandboxID).
+		Where("expires_at IS NULL OR expires_at > ?", time.Now().UTC()).
+		Order("granted_at DESC").
+		Find(&out).Error
+	return out, err
 }
 
 // ListLiveAgentGrants returns the live grants that carry uses and cover one of
@@ -197,5 +231,5 @@ func isMoreSpecificGrant(candidate, current *model.SecretGrant, scopeRank map[st
 	}
 	// Between two grants that both cover the destination, the narrower one
 	// wins: the host itself, then a parent of it, then the wildcard.
-	return hostscope.Specificity(candidate.Host, host) < hostscope.Specificity(current.Host, host)
+	return hostscope.SpecificityAny(candidate.Hosts, host) < hostscope.SpecificityAny(current.Hosts, host)
 }

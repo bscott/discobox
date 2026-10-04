@@ -54,7 +54,10 @@
 //
 // Every known trust store is seeded unconditionally rather than detecting a
 // distro: seeding a path an image never reads costs nothing. Anything the
-// container already declares is left alone, so an explicit user choice wins.
+// container already declares is left alone, so an explicit user choice wins —
+// except a value naming the sandbox's loopback forwarder, which is the
+// sandbox's own proxy env copied in rather than a choice, and is retargeted
+// like an injected value (ADR 26-10-01-425).
 package runcca
 
 import (
@@ -222,6 +225,14 @@ func Adjust(bundleDir, containerID string, cfg Config) (bool, error) {
 		return false, err
 	}
 	if addEnv(spec, env) {
+		changed = true
+	}
+	// addEnv never touches a name the container already sets, but a value
+	// naming the sandbox's loopback forwarder is not a user choice: it is this
+	// sandbox's own proxy env, copied in by a tool that forwards the caller's
+	// environment (kind's node containers, `docker run -e HTTP_PROXY`,
+	// compose's bare `environment:` entries). ADR 26-10-01-425.
+	if retargetLoopback(spec, cfg) {
 		changed = true
 	}
 	// After the manifest, never over it: addEnv only adds a name nothing has
@@ -675,6 +686,58 @@ func proxyEnv(cfg Config) (map[string]string, error) {
 		env[name] = value
 	}
 	return env, nil
+}
+
+// retargetLoopback rewrites any env value the container already carries that
+// names the sandbox-local forwarder to the nested-Docker one, as proxyEnv does
+// for injected values. With no nested forwarder published the entry is
+// dropped, for proxyEnv's reason: set-but-unreachable hangs, unset fails
+// plainly.
+//
+// A container sharing the sandbox's network namespace (`--network host`) is
+// left alone: its loopback is the sandbox's, so the value works as written.
+func retargetLoopback(spec map[string]any, cfg Config) bool {
+	loopback := bridgeListenAddress(cfg.LoopbackBridge)
+	if loopback == "" || !ownNetworkNamespace(spec) {
+		return false
+	}
+	nested := bridgeListenAddress(cfg.NestedBridge)
+	process, ok := spec["process"].(map[string]any)
+	if !ok {
+		return false
+	}
+	list, _ := process["env"].([]any)
+	out := list[:0:0]
+	changed := false
+	for _, e := range list {
+		entry, ok := e.(string)
+		if !ok || !strings.Contains(entry, loopback) {
+			out = append(out, e)
+			continue
+		}
+		changed = true
+		if nested != "" {
+			out = append(out, strings.ReplaceAll(entry, loopback, nested))
+		}
+	}
+	if changed {
+		process["env"] = out
+	}
+	return changed
+}
+
+// ownNetworkNamespace reports whether the spec gives the container a network
+// namespace other than the runtime's own, which is what a missing "network"
+// entry under linux.namespaces means.
+func ownNetworkNamespace(spec map[string]any) bool {
+	linux, _ := spec["linux"].(map[string]any)
+	namespaces, _ := linux["namespaces"].([]any)
+	for _, ns := range namespaces {
+		if entry, ok := ns.(map[string]any); ok && entry["type"] == "network" {
+			return true
+		}
+	}
+	return false
 }
 
 // bridgeListenAddress reads one forwarder's listen address, returning "" when

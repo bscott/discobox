@@ -160,6 +160,9 @@ type styles struct {
 	// move. Not reverse video either — that is how a selection is drawn, and
 	// two things that mean different things must not look the same.
 	hover lipgloss.Style
+	// match is what a search found, lit inside the text it was found in: the
+	// accent, and bold so a terminal with no color still shows it.
+	match lipgloss.Style
 }
 
 func newStyles(color bool) *styles {
@@ -222,6 +225,7 @@ func newStyles(color bool) *styles {
 	}
 	s.dialogTitle = paint(colGold).Bold(true)
 	s.key = paint(colGold)
+	s.match = paint(colGold).Bold(true)
 	s.hover = paint(colGold).Bold(true)
 	return s
 }

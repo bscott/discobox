@@ -1,0 +1,30 @@
+{
+  "name": "approve-reads-the-request-first-with-facts",
+  "why": "The read of the request it is about to approve, with what the control plane knows: whose request it is.",
+  "expect": "allow",
+  "job": {
+    "kind": "request",
+    "purpose": "discobox secret request approve <request-id> [--secret-id <secret-id>] [--use <use>]: approve a pending credential request (the server lets me answer only my own discoboxes' requests, within the delegation grants I hold)",
+    "host": "api.discobox.internal",
+    "credential": "ai.discobox.sandbox",
+    "round": 1,
+    "request": {
+      "method": "GET",
+      "url": "https://api.discobox.internal/projects/default/secret-requests/sreq_66te2j428g3dykhs",
+      "headers": {
+        "Accept": [
+          "application/json"
+        ],
+        "Authorization": [
+          "[redacted]"
+        ],
+        "User-Agent": [
+          "discobox/dev"
+        ]
+      }
+    },
+    "facts": [
+      "sreq_66te2j428g3dykhs, the secret request this request reads, was made by sbx_4kq2m8w1zt6hd0pa, a discobox the asking discobox created."
+    ]
+  }
+}

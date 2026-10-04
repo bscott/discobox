@@ -11,83 +11,6 @@ import (
 	"github.com/go-faster/jx"
 )
 
-// What a judge decided about one command, and what it was given to decide from.
-// Ref: #/components/schemas/AgentCredentialVerdict
-type AgentCredentialVerdict struct {
-	// A URL to the JSON Schema for this object.
-	Schema OptURI `json:"$schema"`
-	// True if the judge allowed the command.
-	Allow bool `json:"allow"`
-	// How long the judge took to answer, in milliseconds.
-	LatencyMs OptInt64 `json:"latencyMs"`
-	// The exact prompt the judge was given, including the facts block.
-	Prompt string `json:"prompt"`
-	// The judge's own sentence, addressed to the agent that asked.
-	Reason OptString `json:"reason"`
-	// The role discobox-prompt was asked for (e.g. "judge"), never a vendor model id.
-	Role string `json:"role"`
-}
-
-// GetSchema returns the value of Schema.
-func (s *AgentCredentialVerdict) GetSchema() OptURI {
-	return s.Schema
-}
-
-// GetAllow returns the value of Allow.
-func (s *AgentCredentialVerdict) GetAllow() bool {
-	return s.Allow
-}
-
-// GetLatencyMs returns the value of LatencyMs.
-func (s *AgentCredentialVerdict) GetLatencyMs() OptInt64 {
-	return s.LatencyMs
-}
-
-// GetPrompt returns the value of Prompt.
-func (s *AgentCredentialVerdict) GetPrompt() string {
-	return s.Prompt
-}
-
-// GetReason returns the value of Reason.
-func (s *AgentCredentialVerdict) GetReason() OptString {
-	return s.Reason
-}
-
-// GetRole returns the value of Role.
-func (s *AgentCredentialVerdict) GetRole() string {
-	return s.Role
-}
-
-// SetSchema sets the value of Schema.
-func (s *AgentCredentialVerdict) SetSchema(val OptURI) {
-	s.Schema = val
-}
-
-// SetAllow sets the value of Allow.
-func (s *AgentCredentialVerdict) SetAllow(val bool) {
-	s.Allow = val
-}
-
-// SetLatencyMs sets the value of LatencyMs.
-func (s *AgentCredentialVerdict) SetLatencyMs(val OptInt64) {
-	s.LatencyMs = val
-}
-
-// SetPrompt sets the value of Prompt.
-func (s *AgentCredentialVerdict) SetPrompt(val string) {
-	s.Prompt = val
-}
-
-// SetReason sets the value of Reason.
-func (s *AgentCredentialVerdict) SetReason(val OptString) {
-	s.Reason = val
-}
-
-// SetRole sets the value of Role.
-func (s *AgentCredentialVerdict) SetRole(val string) {
-	s.Role = val
-}
-
 // Records one successful discobox apply of a source's commits into a host working tree.
 // Client-declared provenance, like Origin, since the server cannot observe host-side Git state.
 // Ref: #/components/schemas/AppliedSourceCommit
@@ -253,12 +176,15 @@ func (s *ApprovalRequestKind) UnmarshalText(data []byte) error {
 type ApproveSecretRequestBody struct {
 	// A URL to the JSON Schema for this object.
 	Schema OptURI `json:"$schema"`
-	// Grant duration in seconds; overrides the secret's default.
+	// Grant duration in seconds; 0 grants one that never expires. Omitted, the grant lasts what the
+	// request asked for, else an hour, within the secret's limit; for a discobox approver, also within
+	// the delegation grant it approves under, and a named duration that outlasts that delegation is
+	// refused.
 	GrantTTLSeconds OptInt64 `json:"grantTTLSeconds"`
-	// Host the minted grant is limited to. Defaults to the host the request named. Approving a
-	// protocol-originated request with no host at all is rejected; a wildcard grant stays an explicit
-	// administrative act.
-	Host OptString `json:"host"`
+	// Hosts the minted grant is limited to (ADR 26-10-02-393). Left out, the hosts the request named; an
+	// empty list names none. Approving a protocol-originated request with no host at all is rejected; a
+	// wildcard grant stays an explicit administrative act.
+	Hosts []string `json:"hosts"`
 	// How widely the minted grant applies. Defaults to sandbox for sandbox-originated requests,
 	// otherwise project.
 	Scope OptApproveSecretRequestBodyScope `json:"scope"`
@@ -266,9 +192,11 @@ type ApproveSecretRequestBody struct {
 	// Applied only if the approval goes through, in the same write, so a refused approval leaves the
 	// secret as it was. Refused for a gate.
 	SecretHost OptString `json:"secretHost"`
-	// Secret ID selected by the approver. Required unless the request names a well-known credential
-	// whose secret is already marked; naming one for it the first time marks it as the one that answers
-	// every later request for that ID.
+	// Secret ID selected by the approver. A person must name one unless the request names a well-known
+	// credential whose secret is already marked; naming one for it the first time marks it as the one
+	// that answers every later request for that ID. A discobox approver answers with the secret of a
+	// delegation grant it holds, and names one, by its full ID, only to choose among the secrets it was
+	// delegated.
 	SecretId OptString `json:"secretId"`
 	// Sets the answering secret's grant limit, in seconds, as part of the approval; 0 allows grants that
 	// never expire. Applied only if the approval goes through, in the same write.
@@ -289,9 +217,9 @@ func (s *ApproveSecretRequestBody) GetGrantTTLSeconds() OptInt64 {
 	return s.GrantTTLSeconds
 }
 
-// GetHost returns the value of Host.
-func (s *ApproveSecretRequestBody) GetHost() OptString {
-	return s.Host
+// GetHosts returns the value of Hosts.
+func (s *ApproveSecretRequestBody) GetHosts() []string {
+	return s.Hosts
 }
 
 // GetScope returns the value of Scope.
@@ -329,9 +257,9 @@ func (s *ApproveSecretRequestBody) SetGrantTTLSeconds(val OptInt64) {
 	s.GrantTTLSeconds = val
 }
 
-// SetHost sets the value of Host.
-func (s *ApproveSecretRequestBody) SetHost(val OptString) {
-	s.Host = val
+// SetHosts sets the value of Hosts.
+func (s *ApproveSecretRequestBody) SetHosts(val []string) {
+	s.Hosts = val
 }
 
 // SetScope sets the value of Scope.
@@ -1128,9 +1056,10 @@ type CreateSandboxCredentialRequestBody struct {
 	// approver starts from, not a term. 0 or absent asks for nothing in particular; forever cannot be
 	// asked for, and neither can a span longer than the ceiling.
 	GrantTTLSeconds OptInt64 `json:"grantTTLSeconds"`
-	// Destination host the credential will be sent to. Required, because approving this request may not
-	// mint a host-unscoped grant.
-	Host string `json:"host"`
+	// Destination hosts the credential will be sent to (ADR 26-10-02-393). At least one is required,
+	// because approving this request may not mint a host-unscoped grant; a well-known credential's ID
+	// supplies its first when none is named.
+	Hosts []string `json:"hosts"`
 	// What the agent asks the credential for, one or the other and never both. use (the default) asks to
 	// use it. delegate asks to delegate it to other discoboxes; approving it mints a delegation grant,
 	// which authorizes nothing the asking discobox sends itself.
@@ -1163,9 +1092,9 @@ func (s *CreateSandboxCredentialRequestBody) GetGrantTTLSeconds() OptInt64 {
 	return s.GrantTTLSeconds
 }
 
-// GetHost returns the value of Host.
-func (s *CreateSandboxCredentialRequestBody) GetHost() string {
-	return s.Host
+// GetHosts returns the value of Hosts.
+func (s *CreateSandboxCredentialRequestBody) GetHosts() []string {
+	return s.Hosts
 }
 
 // GetPurpose returns the value of Purpose.
@@ -1213,9 +1142,9 @@ func (s *CreateSandboxCredentialRequestBody) SetGrantTTLSeconds(val OptInt64) {
 	s.GrantTTLSeconds = val
 }
 
-// SetHost sets the value of Host.
-func (s *CreateSandboxCredentialRequestBody) SetHost(val string) {
-	s.Host = val
+// SetHosts sets the value of Hosts.
+func (s *CreateSandboxCredentialRequestBody) SetHosts(val []string) {
+	s.Hosts = val
 }
 
 // SetPurpose sets the value of Purpose.
@@ -1682,6 +1611,11 @@ type CreateSecretBody struct {
 	Schema OptURI `json:"$schema"`
 	// Longest a grant on this secret may live, in seconds; 0 allows grants that never expire.
 	MaxGrantTTLSeconds OptInt64 `json:"maxGrantTTLSeconds"`
+	// Template the sentinels for this secret are minted from: literal text with {charset:length} tokens,
+	// such as sk-ant-oat01-{base64url:95}. Charsets are digits, hex, HEX, lower, upper, alnum, base62,
+	// base32, base64url, and base64. Omitted or empty reads the shape from the value. A format set here
+	// is kept when the value is replaced.
+	Format OptString `json:"format"`
 	// Optional host used to match requests (e.g. github.com).
 	Host OptString `json:"host"`
 	// A command a person's client may run to produce a new value, as an argument vector run without a
@@ -1714,6 +1648,11 @@ func (s *CreateSecretBody) GetSchema() OptURI {
 // GetMaxGrantTTLSeconds returns the value of MaxGrantTTLSeconds.
 func (s *CreateSecretBody) GetMaxGrantTTLSeconds() OptInt64 {
 	return s.MaxGrantTTLSeconds
+}
+
+// GetFormat returns the value of Format.
+func (s *CreateSecretBody) GetFormat() OptString {
+	return s.Format
 }
 
 // GetHost returns the value of Host.
@@ -1764,6 +1703,11 @@ func (s *CreateSecretBody) SetSchema(val OptURI) {
 // SetMaxGrantTTLSeconds sets the value of MaxGrantTTLSeconds.
 func (s *CreateSecretBody) SetMaxGrantTTLSeconds(val OptInt64) {
 	s.MaxGrantTTLSeconds = val
+}
+
+// SetFormat sets the value of Format.
+func (s *CreateSecretBody) SetFormat(val OptString) {
+	s.Format = val
 }
 
 // SetHost sets the value of Host.
@@ -1854,8 +1798,9 @@ type CreateSecretGrantBody struct {
 	Schema OptURI `json:"$schema"`
 	// Grant duration in seconds; defaults to the secret's default. 0 never expires.
 	GrantTTLSeconds OptInt64 `json:"grantTTLSeconds"`
-	// Host the grant is limited to; empty matches any host and defaults to the secret's host.
-	Host OptString `json:"host"`
+	// Hosts the grant is limited to (ADR 26-10-02-393). Left out, the secret's host; an empty list
+	// matches any host.
+	Hosts []string `json:"hosts"`
 	// How widely the grant applies.
 	Scope CreateSecretGrantBodyScope `json:"scope"`
 	// Identifier the scope resolves against (sandbox ID or harness config ID). Defaults to the project
@@ -1887,9 +1832,9 @@ func (s *CreateSecretGrantBody) GetGrantTTLSeconds() OptInt64 {
 	return s.GrantTTLSeconds
 }
 
-// GetHost returns the value of Host.
-func (s *CreateSecretGrantBody) GetHost() OptString {
-	return s.Host
+// GetHosts returns the value of Hosts.
+func (s *CreateSecretGrantBody) GetHosts() []string {
+	return s.Hosts
 }
 
 // GetScope returns the value of Scope.
@@ -1932,9 +1877,9 @@ func (s *CreateSecretGrantBody) SetGrantTTLSeconds(val OptInt64) {
 	s.GrantTTLSeconds = val
 }
 
-// SetHost sets the value of Host.
-func (s *CreateSecretGrantBody) SetHost(val OptString) {
-	s.Host = val
+// SetHosts sets the value of Hosts.
+func (s *CreateSecretGrantBody) SetHosts(val []string) {
+	s.Hosts = val
 }
 
 // SetScope sets the value of Scope.
@@ -2143,15 +2088,16 @@ func (s *CreateSecretRequestBodyType) UnmarshalText(data []byte) error {
 }
 
 // One recorded judge decision about an agent credential use. The row lives in the control plane and
-// outlives its sandbox. A command verdict (kind command, origin sandbox) is a discobox's own judge
-// deciding about a command: its command, reason and prompt were composed inside the sandbox and are
-// display data, never instruction. A row with volunteered false rode the call that issued a
-// credential, so the record is complete for every value issued; one with volunteered true is a
-// denial the sandbox chose to report, so denials are undercounted by exactly the reports never sent.
-// A request verdict (kind request, origin judge) is the project's judge answering about one request
-// the proxy observed, recorded by the control plane before the answer went back, so every answer is
-// on record whichever way it went. Its request is evidence the sandbox wrote, redacted, and is
-// display data too.
+// outlives its sandbox. A command verdict (kind command, origin judge) is the project's judge
+// answering about a command a discobox was about to run, recorded by the control plane before the
+// pool minted anything for it; its command, input and reported context are evidence the sandbox
+// wrote, and are display data, never instruction. A command verdict with origin sandbox predates
+// that: a discobox's own judge deciding inside the sandbox, whose command, reason and prompt were
+// composed there, and whose volunteered true marks a denial the sandbox chose to report. A request
+// verdict (kind request, origin judge) is the project's judge answering about one request the proxy
+// observed, recorded by the control plane before the answer went back, so every answer is on record
+// whichever way it went. Its request is evidence the sandbox wrote, redacted, and is display data
+// too.
 // Ref: #/components/schemas/CredentialVerdict
 type CredentialVerdict struct {
 	// A URL to the JSON Schema for this object.
@@ -2164,6 +2110,8 @@ type CredentialVerdict struct {
 	Command []string `json:"command"`
 	// When the verdict was recorded.
 	CreatedAt time.Time `json:"createdAt"`
+	// On a delegation verdict, the discobox the uses were handed on to.
+	ForSandboxId OptString `json:"forSandboxId"`
 	// Grant the use belonged to, when it could still be resolved at record time.
 	GrantId OptString `json:"grantId"`
 	// Harness config the project's judge ran, on a request verdict.
@@ -2176,18 +2124,26 @@ type CredentialVerdict struct {
 	ImageDigest OptString `json:"imageDigest"`
 	// The project's judge that answered, on a request verdict. It may no longer exist.
 	JudgeSandboxId OptString `json:"judgeSandboxId"`
-	// What was judged: a command about to run, or a request the proxy observed. A server that predates
-	// request verdicts leaves it out, and every verdict it has is a command verdict.
+	// What was judged: a command about to run, a request the proxy observed, or a discobox about to hand
+	// a credential on by approving another's request. A server that predates request verdicts leaves it
+	// out, and every verdict it has is a command verdict.
 	Kind OptCredentialVerdictKind `json:"kind"`
 	// Round trip from asking the judge to its answer, in milliseconds, timed by whoever asked:
 	// discobox-access around its wrapper for a command verdict, the control plane around the call to the
 	// judge for a request verdict.
-	LatencyMs OptInt64     `json:"latencyMs"`
-	Need      OptJudgeNeed `json:"need"`
+	LatencyMs OptInt64 `json:"latencyMs"`
+	// The Jev model that answered, as Jev reported it, on a verdict from a server that judges with Jev
+	// rather than a judge discobox. judgeSandboxId, harnessConfigId and image are empty then.
+	Model OptString    `json:"model"`
+	Need  OptJudgeNeed `json:"need"`
 	// Who judged: sandbox, a discobox's own judge, whose verdict is that discobox's word; or judge, the
 	// project's judge, which no sandbox can claim. A server that predates request verdicts leaves it out,
 	//  and every verdict it has is the sandbox's.
 	Origin OptCredentialVerdictOrigin `json:"origin"`
+	// On a Jev verdict, the probability of yes Jev gave each question, by question ID. The verdict was
+	// decided from these against thresholds the server holds; promptVersion names the questions and
+	// thresholds.
+	Probabilities OptCredentialVerdictProbabilities `json:"probabilities"`
 	// Project ID.
 	ProjectId string `json:"projectId"`
 	// The exact prompt the judge was given. On a command verdict it includes the facts block; on a
@@ -2204,6 +2160,9 @@ type CredentialVerdict struct {
 	Round OptInt64 `json:"round"`
 	// Sandbox the command ran in, or the request came from. It may no longer exist.
 	SandboxId string `json:"sandboxId"`
+	// On a delegation verdict, the secret request the discobox was approving; the request names the
+	// grant the approval minted.
+	SecretRequestId OptString `json:"secretRequestId"`
 	// The route this allow was let stand for, on a request verdict whose judge asked for one and whose
 	// route the control plane admitted. Requests matching it from the same discobox, under the same use,
 	// to the same host, were allowed until standingUntil without asking the judge.
@@ -2237,6 +2196,11 @@ func (s *CredentialVerdict) GetCommand() []string {
 // GetCreatedAt returns the value of CreatedAt.
 func (s *CredentialVerdict) GetCreatedAt() time.Time {
 	return s.CreatedAt
+}
+
+// GetForSandboxId returns the value of ForSandboxId.
+func (s *CredentialVerdict) GetForSandboxId() OptString {
+	return s.ForSandboxId
 }
 
 // GetGrantId returns the value of GrantId.
@@ -2279,6 +2243,11 @@ func (s *CredentialVerdict) GetLatencyMs() OptInt64 {
 	return s.LatencyMs
 }
 
+// GetModel returns the value of Model.
+func (s *CredentialVerdict) GetModel() OptString {
+	return s.Model
+}
+
 // GetNeed returns the value of Need.
 func (s *CredentialVerdict) GetNeed() OptJudgeNeed {
 	return s.Need
@@ -2287,6 +2256,11 @@ func (s *CredentialVerdict) GetNeed() OptJudgeNeed {
 // GetOrigin returns the value of Origin.
 func (s *CredentialVerdict) GetOrigin() OptCredentialVerdictOrigin {
 	return s.Origin
+}
+
+// GetProbabilities returns the value of Probabilities.
+func (s *CredentialVerdict) GetProbabilities() OptCredentialVerdictProbabilities {
+	return s.Probabilities
 }
 
 // GetProjectId returns the value of ProjectId.
@@ -2327,6 +2301,11 @@ func (s *CredentialVerdict) GetRound() OptInt64 {
 // GetSandboxId returns the value of SandboxId.
 func (s *CredentialVerdict) GetSandboxId() string {
 	return s.SandboxId
+}
+
+// GetSecretRequestId returns the value of SecretRequestId.
+func (s *CredentialVerdict) GetSecretRequestId() OptString {
+	return s.SecretRequestId
 }
 
 // GetStandingRoute returns the value of StandingRoute.
@@ -2374,6 +2353,11 @@ func (s *CredentialVerdict) SetCreatedAt(val time.Time) {
 	s.CreatedAt = val
 }
 
+// SetForSandboxId sets the value of ForSandboxId.
+func (s *CredentialVerdict) SetForSandboxId(val OptString) {
+	s.ForSandboxId = val
+}
+
 // SetGrantId sets the value of GrantId.
 func (s *CredentialVerdict) SetGrantId(val OptString) {
 	s.GrantId = val
@@ -2414,6 +2398,11 @@ func (s *CredentialVerdict) SetLatencyMs(val OptInt64) {
 	s.LatencyMs = val
 }
 
+// SetModel sets the value of Model.
+func (s *CredentialVerdict) SetModel(val OptString) {
+	s.Model = val
+}
+
 // SetNeed sets the value of Need.
 func (s *CredentialVerdict) SetNeed(val OptJudgeNeed) {
 	s.Need = val
@@ -2422,6 +2411,11 @@ func (s *CredentialVerdict) SetNeed(val OptJudgeNeed) {
 // SetOrigin sets the value of Origin.
 func (s *CredentialVerdict) SetOrigin(val OptCredentialVerdictOrigin) {
 	s.Origin = val
+}
+
+// SetProbabilities sets the value of Probabilities.
+func (s *CredentialVerdict) SetProbabilities(val OptCredentialVerdictProbabilities) {
+	s.Probabilities = val
 }
 
 // SetProjectId sets the value of ProjectId.
@@ -2464,6 +2458,11 @@ func (s *CredentialVerdict) SetSandboxId(val string) {
 	s.SandboxId = val
 }
 
+// SetSecretRequestId sets the value of SecretRequestId.
+func (s *CredentialVerdict) SetSecretRequestId(val OptString) {
+	s.SecretRequestId = val
+}
+
 // SetStandingRoute sets the value of StandingRoute.
 func (s *CredentialVerdict) SetStandingRoute(val OptString) {
 	s.StandingRoute = val
@@ -2489,13 +2488,15 @@ func (s *CredentialVerdict) SetVolunteered(val bool) {
 	s.Volunteered = val
 }
 
-// What was judged: a command about to run, or a request the proxy observed. A server that predates
-// request verdicts leaves it out, and every verdict it has is a command verdict.
+// What was judged: a command about to run, a request the proxy observed, or a discobox about to hand
+// a credential on by approving another's request. A server that predates request verdicts leaves it
+// out, and every verdict it has is a command verdict.
 type CredentialVerdictKind string
 
 const (
-	CredentialVerdictKindCommand CredentialVerdictKind = "command"
-	CredentialVerdictKindRequest CredentialVerdictKind = "request"
+	CredentialVerdictKindCommand    CredentialVerdictKind = "command"
+	CredentialVerdictKindRequest    CredentialVerdictKind = "request"
+	CredentialVerdictKindDelegation CredentialVerdictKind = "delegation"
 )
 
 // AllValues returns all CredentialVerdictKind values.
@@ -2503,6 +2504,7 @@ func (CredentialVerdictKind) AllValues() []CredentialVerdictKind {
 	return []CredentialVerdictKind{
 		CredentialVerdictKindCommand,
 		CredentialVerdictKindRequest,
+		CredentialVerdictKindDelegation,
 	}
 }
 
@@ -2512,6 +2514,8 @@ func (s CredentialVerdictKind) MarshalText() ([]byte, error) {
 	case CredentialVerdictKindCommand:
 		return []byte(s), nil
 	case CredentialVerdictKindRequest:
+		return []byte(s), nil
+	case CredentialVerdictKindDelegation:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -2526,6 +2530,9 @@ func (s *CredentialVerdictKind) UnmarshalText(data []byte) error {
 		return nil
 	case CredentialVerdictKindRequest:
 		*s = CredentialVerdictKindRequest
+		return nil
+	case CredentialVerdictKindDelegation:
+		*s = CredentialVerdictKindDelegation
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -2575,6 +2582,20 @@ func (s *CredentialVerdictOrigin) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// On a Jev verdict, the probability of yes Jev gave each question, by question ID. The verdict was
+// decided from these against thresholds the server holds; promptVersion names the questions and
+// thresholds.
+type CredentialVerdictProbabilities map[string]float64
+
+func (s *CredentialVerdictProbabilities) init() CredentialVerdictProbabilities {
+	m := *s
+	if m == nil {
+		m = map[string]float64{}
+		*s = m
+	}
+	return m
 }
 
 // One DNS query a sandbox asked of its pool, which answered it over the sandbox's mTLS channel and
@@ -2988,6 +3009,7 @@ func (*ErrorModelStatusCode) getSecretRes()                        {}
 func (*ErrorModelStatusCode) getServerInfoRes()                    {}
 func (*ErrorModelStatusCode) getServerPeerRes()                    {}
 func (*ErrorModelStatusCode) getTrustRequestRes()                  {}
+func (*ErrorModelStatusCode) judgeCommandForPoolRes()              {}
 func (*ErrorModelStatusCode) judgeForPoolRes()                     {}
 func (*ErrorModelStatusCode) listApprovalRequestsRes()             {}
 func (*ErrorModelStatusCode) listCredentialVerdictsRes()           {}
@@ -2997,6 +3019,7 @@ func (*ErrorModelStatusCode) listHarnessConfigSecretBindingsRes()  {}
 func (*ErrorModelStatusCode) listHarnessConfigsRes()               {}
 func (*ErrorModelStatusCode) listJobsRes()                         {}
 func (*ErrorModelStatusCode) listPeersRes()                        {}
+func (*ErrorModelStatusCode) listPoolHeldSandboxesRes()            {}
 func (*ErrorModelStatusCode) listPoolHostTrustsRes()               {}
 func (*ErrorModelStatusCode) listPoolsRes()                        {}
 func (*ErrorModelStatusCode) listProjectsRes()                     {}
@@ -3016,7 +3039,6 @@ func (*ErrorModelStatusCode) mintSandboxAgentStatusTokensRes()     {}
 func (*ErrorModelStatusCode) purgeSandboxRes()                     {}
 func (*ErrorModelStatusCode) reconcilePoolRes()                    {}
 func (*ErrorModelStatusCode) reconcileSandboxRes()                 {}
-func (*ErrorModelStatusCode) recordCredentialVerdictRes()          {}
 func (*ErrorModelStatusCode) refreshHarnessConfigImageRes()        {}
 func (*ErrorModelStatusCode) refreshSecretRes()                    {}
 func (*ErrorModelStatusCode) registerPoolRes()                     {}
@@ -3147,6 +3169,10 @@ type GitSource struct {
 	NoLocalRepository OptBool `json:"noLocalRepository"`
 	// Stable URL-safe source slug used to address the source as a sandbox Git repository.
 	Slug OptString `json:"slug"`
+	// Network URL of the remote the local source's checked-out branch tracks on the client. The sandbox
+	// adds it as a remote named upstream when it materializes the source; the branch keeps tracking
+	// origin.
+	UpstreamUrl OptString `json:"upstreamUrl"`
 	// Remote Git source URL.
 	URL OptURI `json:"url"`
 	// Workspace materialization mode for this source.
@@ -3196,6 +3222,11 @@ func (s *GitSource) GetNoLocalRepository() OptBool {
 // GetSlug returns the value of Slug.
 func (s *GitSource) GetSlug() OptString {
 	return s.Slug
+}
+
+// GetUpstreamUrl returns the value of UpstreamUrl.
+func (s *GitSource) GetUpstreamUrl() OptString {
+	return s.UpstreamUrl
 }
 
 // GetURL returns the value of URL.
@@ -3251,6 +3282,11 @@ func (s *GitSource) SetNoLocalRepository(val OptBool) {
 // SetSlug sets the value of Slug.
 func (s *GitSource) SetSlug(val OptString) {
 	s.Slug = val
+}
+
+// SetUpstreamUrl sets the value of UpstreamUrl.
+func (s *GitSource) SetUpstreamUrl(val OptString) {
+	s.UpstreamUrl = val
 }
 
 // SetURL sets the value of URL.
@@ -3529,6 +3565,10 @@ type HTTPAuditExchange struct {
 	SandboxId string `json:"sandboxId"`
 	// Response status; zero when no response was received.
 	Status int `json:"status"`
+	// Secrets whose values were swapped into this request, by ID, whatever kind of sentinel stood in for
+	// them. It is optional because a pool agent older than ADR 26-10-01-240 does not send it, and absent
+	// means no secret was named.
+	SwappedSecretIds []string `json:"swappedSecretIds"`
 	// Approved credential uses whose sentinels were swapped into this request. Joins to credential
 	// verdicts by useId.
 	SwappedUseIds []string `json:"swappedUseIds"`
@@ -3608,6 +3648,11 @@ func (s *HTTPAuditExchange) GetSandboxId() string {
 // GetStatus returns the value of Status.
 func (s *HTTPAuditExchange) GetStatus() int {
 	return s.Status
+}
+
+// GetSwappedSecretIds returns the value of SwappedSecretIds.
+func (s *HTTPAuditExchange) GetSwappedSecretIds() []string {
+	return s.SwappedSecretIds
 }
 
 // GetSwappedUseIds returns the value of SwappedUseIds.
@@ -3698,6 +3743,11 @@ func (s *HTTPAuditExchange) SetSandboxId(val string) {
 // SetStatus sets the value of Status.
 func (s *HTTPAuditExchange) SetStatus(val int) {
 	s.Status = val
+}
+
+// SetSwappedSecretIds sets the value of SwappedSecretIds.
+func (s *HTTPAuditExchange) SetSwappedSecretIds(val []string) {
+	s.SwappedSecretIds = val
 }
 
 // SetSwappedUseIds sets the value of SwappedUseIds.
@@ -3795,6 +3845,10 @@ type HTTPAuditExchangeDetail struct {
 	StreamRecorded OptBool `json:"streamRecorded"`
 	// The upgraded stream's session.
 	StreamSessionId OptString `json:"streamSessionId"`
+	// Secrets whose values were swapped into this request, by ID, whatever kind of sentinel stood in for
+	// them. It is optional because a pool agent older than ADR 26-10-01-240 does not send it, and absent
+	// means no secret was named.
+	SwappedSecretIds []string `json:"swappedSecretIds"`
 	// Approved credential uses whose sentinels were swapped into this request. Joins to credential
 	// verdicts by useId.
 	SwappedUseIds []string `json:"swappedUseIds"`
@@ -3980,6 +4034,11 @@ func (s *HTTPAuditExchangeDetail) GetStreamRecorded() OptBool {
 // GetStreamSessionId returns the value of StreamSessionId.
 func (s *HTTPAuditExchangeDetail) GetStreamSessionId() OptString {
 	return s.StreamSessionId
+}
+
+// GetSwappedSecretIds returns the value of SwappedSecretIds.
+func (s *HTTPAuditExchangeDetail) GetSwappedSecretIds() []string {
+	return s.SwappedSecretIds
 }
 
 // GetSwappedUseIds returns the value of SwappedUseIds.
@@ -4185,6 +4244,11 @@ func (s *HTTPAuditExchangeDetail) SetStreamRecorded(val OptBool) {
 // SetStreamSessionId sets the value of StreamSessionId.
 func (s *HTTPAuditExchangeDetail) SetStreamSessionId(val OptString) {
 	s.StreamSessionId = val
+}
+
+// SetSwappedSecretIds sets the value of SwappedSecretIds.
+func (s *HTTPAuditExchangeDetail) SetSwappedSecretIds(val []string) {
+	s.SwappedSecretIds = val
 }
 
 // SetSwappedUseIds sets the value of SwappedUseIds.
@@ -5928,8 +5992,39 @@ func (s *JudgeAnswer) SetStanding(val OptJudgeStanding) {
 	s.Standing = val
 }
 
-func (*JudgeAnswer) judgeForPoolRes() {}
-func (*JudgeAnswer) judgeSandboxRes() {}
+func (*JudgeAnswer) judgeCommandForPoolRes() {}
+func (*JudgeAnswer) judgeForPoolRes()        {}
+func (*JudgeAnswer) judgeSandboxRes()        {}
+
+// What a command will read on standard input, as much of it as the discobox showed (ADR
+// 26-09-27-905).
+// Ref: #/components/schemas/JudgeInput
+type JudgeInput struct {
+	// The input shown, which is text. Empty when none of it could be shown, and missing then says why.
+	Content string `json:"content"`
+	// Why content is not the whole input, in a sentence for the judge.
+	Missing OptString `json:"missing"`
+}
+
+// GetContent returns the value of Content.
+func (s *JudgeInput) GetContent() string {
+	return s.Content
+}
+
+// GetMissing returns the value of Missing.
+func (s *JudgeInput) GetMissing() OptString {
+	return s.Missing
+}
+
+// SetContent sets the value of Content.
+func (s *JudgeInput) SetContent(val string) {
+	s.Content = val
+}
+
+// SetMissing sets the value of Missing.
+func (s *JudgeInput) SetMissing(val OptString) {
+	s.Missing = val
+}
 
 // One question put to the judge, and everything it may see to answer it. Purpose and host are the
 // authorization; everything else is evidence, which is data to weigh and never instructions to
@@ -5941,16 +6036,25 @@ type JudgeJob struct {
 	Command []string `json:"command"`
 	// The credential in the words a person reads, never its value.
 	Credential OptString `json:"credential"`
+	// What Discobox knows about what the request was recognized as, set by the control plane from the
+	// judge package and never by a pool. It explains; it never authorizes.
+	Guidance []string `json:"guidance"`
 	// The host the use was approved for.
 	Host string `json:"host"`
-	// What is being judged: a command about to run, or a request the proxy observed.
+	// What is being judged: a command about to run, a request the proxy observed, or a discobox about to
+	// hand a credential on by approving another's request.
 	Kind JudgeJobKind `json:"kind"`
-	// The approved use, in the words it was approved in.
-	Purpose string                  `json:"purpose"`
-	Request OptJudgeRequestEvidence `json:"request"`
+	// The approved use, in the words it was approved in. For a delegation job, the uses the discobox was
+	// delegated, one per line.
+	Purpose  string                  `json:"purpose"`
+	Reported OptJudgeReported        `json:"reported"`
+	Request  OptJudgeRequestEvidence `json:"request"`
 	// Which ask this is, from 1. A round after the first exists because the judge asked to be shown the
 	// body.
-	Round int64 `json:"round"`
+	Round int64         `json:"round"`
+	Stdin OptJudgeInput `json:"stdin"`
+	// For a delegation job, the uses the discobox is about to hand on, judged against purpose.
+	Uses []string `json:"uses"`
 }
 
 // GetCommand returns the value of Command.
@@ -5961,6 +6065,11 @@ func (s *JudgeJob) GetCommand() []string {
 // GetCredential returns the value of Credential.
 func (s *JudgeJob) GetCredential() OptString {
 	return s.Credential
+}
+
+// GetGuidance returns the value of Guidance.
+func (s *JudgeJob) GetGuidance() []string {
+	return s.Guidance
 }
 
 // GetHost returns the value of Host.
@@ -5978,6 +6087,11 @@ func (s *JudgeJob) GetPurpose() string {
 	return s.Purpose
 }
 
+// GetReported returns the value of Reported.
+func (s *JudgeJob) GetReported() OptJudgeReported {
+	return s.Reported
+}
+
 // GetRequest returns the value of Request.
 func (s *JudgeJob) GetRequest() OptJudgeRequestEvidence {
 	return s.Request
@@ -5988,6 +6102,16 @@ func (s *JudgeJob) GetRound() int64 {
 	return s.Round
 }
 
+// GetStdin returns the value of Stdin.
+func (s *JudgeJob) GetStdin() OptJudgeInput {
+	return s.Stdin
+}
+
+// GetUses returns the value of Uses.
+func (s *JudgeJob) GetUses() []string {
+	return s.Uses
+}
+
 // SetCommand sets the value of Command.
 func (s *JudgeJob) SetCommand(val []string) {
 	s.Command = val
@@ -5996,6 +6120,11 @@ func (s *JudgeJob) SetCommand(val []string) {
 // SetCredential sets the value of Credential.
 func (s *JudgeJob) SetCredential(val OptString) {
 	s.Credential = val
+}
+
+// SetGuidance sets the value of Guidance.
+func (s *JudgeJob) SetGuidance(val []string) {
+	s.Guidance = val
 }
 
 // SetHost sets the value of Host.
@@ -6013,6 +6142,11 @@ func (s *JudgeJob) SetPurpose(val string) {
 	s.Purpose = val
 }
 
+// SetReported sets the value of Reported.
+func (s *JudgeJob) SetReported(val OptJudgeReported) {
+	s.Reported = val
+}
+
 // SetRequest sets the value of Request.
 func (s *JudgeJob) SetRequest(val OptJudgeRequestEvidence) {
 	s.Request = val
@@ -6023,12 +6157,24 @@ func (s *JudgeJob) SetRound(val int64) {
 	s.Round = val
 }
 
-// What is being judged: a command about to run, or a request the proxy observed.
+// SetStdin sets the value of Stdin.
+func (s *JudgeJob) SetStdin(val OptJudgeInput) {
+	s.Stdin = val
+}
+
+// SetUses sets the value of Uses.
+func (s *JudgeJob) SetUses(val []string) {
+	s.Uses = val
+}
+
+// What is being judged: a command about to run, a request the proxy observed, or a discobox about to
+// hand a credential on by approving another's request.
 type JudgeJobKind string
 
 const (
-	JudgeJobKindCommand JudgeJobKind = "command"
-	JudgeJobKindRequest JudgeJobKind = "request"
+	JudgeJobKindCommand    JudgeJobKind = "command"
+	JudgeJobKindRequest    JudgeJobKind = "request"
+	JudgeJobKindDelegation JudgeJobKind = "delegation"
 )
 
 // AllValues returns all JudgeJobKind values.
@@ -6036,6 +6182,7 @@ func (JudgeJobKind) AllValues() []JudgeJobKind {
 	return []JudgeJobKind{
 		JudgeJobKindCommand,
 		JudgeJobKindRequest,
+		JudgeJobKindDelegation,
 	}
 }
 
@@ -6045,6 +6192,8 @@ func (s JudgeJobKind) MarshalText() ([]byte, error) {
 	case JudgeJobKindCommand:
 		return []byte(s), nil
 	case JudgeJobKindRequest:
+		return []byte(s), nil
+	case JudgeJobKindDelegation:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -6060,21 +6209,25 @@ func (s *JudgeJobKind) UnmarshalText(data []byte) error {
 	case JudgeJobKindRequest:
 		*s = JudgeJobKindRequest
 		return nil
+	case JudgeJobKindDelegation:
+		*s = JudgeJobKindDelegation
+		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
 }
 
-// The judge asking to be shown a request's body, in one form, with a budget it may name and Discobox
-// caps.
+// The judge asking to be shown a request's body, with a budget it may name and Discobox caps. It
+// names no form; the body is always shown in one shape (ADR 26-09-26-240).
 // Ref: #/components/schemas/JudgeNeed
 type JudgeNeed struct {
-	Body  JudgeNeedBody `json:"body"`
-	Bytes OptInt64      `json:"bytes"`
+	// Always true in an ask; it is what the ask is for.
+	Body  bool     `json:"body"`
+	Bytes OptInt64 `json:"bytes"`
 }
 
 // GetBody returns the value of Body.
-func (s *JudgeNeed) GetBody() JudgeNeedBody {
+func (s *JudgeNeed) GetBody() bool {
 	return s.Body
 }
 
@@ -6084,7 +6237,7 @@ func (s *JudgeNeed) GetBytes() OptInt64 {
 }
 
 // SetBody sets the value of Body.
-func (s *JudgeNeed) SetBody(val JudgeNeedBody) {
+func (s *JudgeNeed) SetBody(val bool) {
 	s.Body = val
 }
 
@@ -6093,72 +6246,112 @@ func (s *JudgeNeed) SetBytes(val OptInt64) {
 	s.Bytes = val
 }
 
-type JudgeNeedBody string
-
-const (
-	JudgeNeedBodyText JudgeNeedBody = "text"
-	JudgeNeedBodyJSON JudgeNeedBody = "json"
-)
-
-// AllValues returns all JudgeNeedBody values.
-func (JudgeNeedBody) AllValues() []JudgeNeedBody {
-	return []JudgeNeedBody{
-		JudgeNeedBodyText,
-		JudgeNeedBodyJSON,
-	}
+// What trusted code recognized a request, or its body, as, and the version of that code (ADR
+// 26-09-26-240).
+// Ref: #/components/schemas/JudgeRecognition
+type JudgeRecognition struct {
+	Name    string `json:"name"`
+	Version int64  `json:"version"`
 }
 
-// MarshalText implements encoding.TextMarshaler.
-func (s JudgeNeedBody) MarshalText() ([]byte, error) {
-	switch s {
-	case JudgeNeedBodyText:
-		return []byte(s), nil
-	case JudgeNeedBodyJSON:
-		return []byte(s), nil
-	default:
-		return nil, errors.Errorf("invalid value: %q", s)
-	}
+// GetName returns the value of Name.
+func (s *JudgeRecognition) GetName() string {
+	return s.Name
 }
 
-// UnmarshalText implements encoding.TextUnmarshaler.
-func (s *JudgeNeedBody) UnmarshalText(data []byte) error {
-	switch JudgeNeedBody(data) {
-	case JudgeNeedBodyText:
-		*s = JudgeNeedBodyText
-		return nil
-	case JudgeNeedBodyJSON:
-		*s = JudgeNeedBodyJSON
-		return nil
-	default:
-		return errors.Errorf("invalid value: %q", data)
-	}
+// GetVersion returns the value of Version.
+func (s *JudgeRecognition) GetVersion() int64 {
+	return s.Version
 }
 
-// What the judge is told about a request's body. The first ask describes it and does not carry it;
-// the judge asks to be shown it when the operation lives in there.
+// SetName sets the value of Name.
+func (s *JudgeRecognition) SetName(val string) {
+	s.Name = val
+}
+
+// SetVersion sets the value of Version.
+func (s *JudgeRecognition) SetVersion(val int64) {
+	s.Version = val
+}
+
+// What a discobox said about where a command runs (ADR 0090). Every field is its claim, never a fact
+// the trusted side established.
+// Ref: #/components/schemas/JudgeReported
+type JudgeReported struct {
+	// The commit a git ref the command names resolves to.
+	RefCommit OptString `json:"refCommit"`
+	// That commit's subject line, the agent's own words about its work.
+	RefSubject OptString `json:"refSubject"`
+	// The root of the git checkout the command runs in.
+	RepositoryRoot OptString `json:"repositoryRoot"`
+	// The directory the command runs in.
+	WorkingDirectory OptString `json:"workingDirectory"`
+}
+
+// GetRefCommit returns the value of RefCommit.
+func (s *JudgeReported) GetRefCommit() OptString {
+	return s.RefCommit
+}
+
+// GetRefSubject returns the value of RefSubject.
+func (s *JudgeReported) GetRefSubject() OptString {
+	return s.RefSubject
+}
+
+// GetRepositoryRoot returns the value of RepositoryRoot.
+func (s *JudgeReported) GetRepositoryRoot() OptString {
+	return s.RepositoryRoot
+}
+
+// GetWorkingDirectory returns the value of WorkingDirectory.
+func (s *JudgeReported) GetWorkingDirectory() OptString {
+	return s.WorkingDirectory
+}
+
+// SetRefCommit sets the value of RefCommit.
+func (s *JudgeReported) SetRefCommit(val OptString) {
+	s.RefCommit = val
+}
+
+// SetRefSubject sets the value of RefSubject.
+func (s *JudgeReported) SetRefSubject(val OptString) {
+	s.RefSubject = val
+}
+
+// SetRepositoryRoot sets the value of RepositoryRoot.
+func (s *JudgeReported) SetRepositoryRoot(val OptString) {
+	s.RepositoryRoot = val
+}
+
+// SetWorkingDirectory sets the value of WorkingDirectory.
+func (s *JudgeReported) SetWorkingDirectory(val OptString) {
+	s.WorkingDirectory = val
+}
+
+// What the judge is told about a request's body, always in this one shape (ADR 26-09-26-240). The
+// first ask describes it, with what a parser found in it when one recognized it; the judge asks to
+// be shown the content when the operation lives in there.
 // Ref: #/components/schemas/JudgeRequestBody
 type JudgeRequestBody struct {
-	// The body, in form, redacted. Present only once asked for, and only as much of it as the budget
-	// allowed.
+	// The body, redacted and rendered the way its parser renders it. Absent until the judge asks to be
+	// shown the body; then as much of it as the budget allowed, which may be none of it.
 	Content OptString `json:"content"`
-	// How content is written. Empty until the judge has asked to be shown the body.
-	Form OptJudgeRequestBodyForm `json:"form"`
 	// How many bytes the body has, as far as that is known.
 	Length    OptInt64  `json:"length"`
 	MediaType OptString `json:"mediaType"`
+	// What the parser found worth knowing, redacted, from the first ask on.
+	Metadata OptJudgeRequestBodyMetadata `json:"metadata"`
 	// Why content is not the whole body, in a sentence for the judge. An answer to having been asked,
 	// never part of the first description.
 	Missing OptString `json:"missing"`
+	// Why the parser named could not read a body that claims to be what it reads.
+	ParseError OptString           `json:"parseError"`
+	Parser     OptJudgeRecognition `json:"parser"`
 }
 
 // GetContent returns the value of Content.
 func (s *JudgeRequestBody) GetContent() OptString {
 	return s.Content
-}
-
-// GetForm returns the value of Form.
-func (s *JudgeRequestBody) GetForm() OptJudgeRequestBodyForm {
-	return s.Form
 }
 
 // GetLength returns the value of Length.
@@ -6171,19 +6364,29 @@ func (s *JudgeRequestBody) GetMediaType() OptString {
 	return s.MediaType
 }
 
+// GetMetadata returns the value of Metadata.
+func (s *JudgeRequestBody) GetMetadata() OptJudgeRequestBodyMetadata {
+	return s.Metadata
+}
+
 // GetMissing returns the value of Missing.
 func (s *JudgeRequestBody) GetMissing() OptString {
 	return s.Missing
 }
 
+// GetParseError returns the value of ParseError.
+func (s *JudgeRequestBody) GetParseError() OptString {
+	return s.ParseError
+}
+
+// GetParser returns the value of Parser.
+func (s *JudgeRequestBody) GetParser() OptJudgeRecognition {
+	return s.Parser
+}
+
 // SetContent sets the value of Content.
 func (s *JudgeRequestBody) SetContent(val OptString) {
 	s.Content = val
-}
-
-// SetForm sets the value of Form.
-func (s *JudgeRequestBody) SetForm(val OptJudgeRequestBodyForm) {
-	s.Form = val
 }
 
 // SetLength sets the value of Length.
@@ -6196,61 +6399,48 @@ func (s *JudgeRequestBody) SetMediaType(val OptString) {
 	s.MediaType = val
 }
 
+// SetMetadata sets the value of Metadata.
+func (s *JudgeRequestBody) SetMetadata(val OptJudgeRequestBodyMetadata) {
+	s.Metadata = val
+}
+
 // SetMissing sets the value of Missing.
 func (s *JudgeRequestBody) SetMissing(val OptString) {
 	s.Missing = val
 }
 
-// How content is written. Empty until the judge has asked to be shown the body.
-type JudgeRequestBodyForm string
-
-const (
-	JudgeRequestBodyFormText JudgeRequestBodyForm = "text"
-	JudgeRequestBodyFormJSON JudgeRequestBodyForm = "json"
-)
-
-// AllValues returns all JudgeRequestBodyForm values.
-func (JudgeRequestBodyForm) AllValues() []JudgeRequestBodyForm {
-	return []JudgeRequestBodyForm{
-		JudgeRequestBodyFormText,
-		JudgeRequestBodyFormJSON,
-	}
+// SetParseError sets the value of ParseError.
+func (s *JudgeRequestBody) SetParseError(val OptString) {
+	s.ParseError = val
 }
 
-// MarshalText implements encoding.TextMarshaler.
-func (s JudgeRequestBodyForm) MarshalText() ([]byte, error) {
-	switch s {
-	case JudgeRequestBodyFormText:
-		return []byte(s), nil
-	case JudgeRequestBodyFormJSON:
-		return []byte(s), nil
-	default:
-		return nil, errors.Errorf("invalid value: %q", s)
-	}
+// SetParser sets the value of Parser.
+func (s *JudgeRequestBody) SetParser(val OptJudgeRecognition) {
+	s.Parser = val
 }
 
-// UnmarshalText implements encoding.TextUnmarshaler.
-func (s *JudgeRequestBodyForm) UnmarshalText(data []byte) error {
-	switch JudgeRequestBodyForm(data) {
-	case JudgeRequestBodyFormText:
-		*s = JudgeRequestBodyFormText
-		return nil
-	case JudgeRequestBodyFormJSON:
-		*s = JudgeRequestBodyFormJSON
-		return nil
-	default:
-		return errors.Errorf("invalid value: %q", data)
+// What the parser found worth knowing, redacted, from the first ask on.
+type JudgeRequestBodyMetadata map[string]jx.Raw
+
+func (s *JudgeRequestBodyMetadata) init() JudgeRequestBodyMetadata {
+	m := *s
+	if m == nil {
+		m = map[string]jx.Raw{}
+		*s = m
 	}
+	return m
 }
 
 // A request as the proxy saw it, before any credential was substituted into it and with every
 // credential-bearing value redacted.
 // Ref: #/components/schemas/JudgeRequestEvidence
 type JudgeRequestEvidence struct {
-	Body OptJudgeRequestBody `json:"body"`
+	Body     OptJudgeRequestBody `json:"body"`
+	Endpoint OptJudgeRecognition `json:"endpoint"`
 	// The headers worth weighing, redacted.
-	Headers OptJudgeRequestEvidenceHeaders `json:"headers"`
-	Method  string                         `json:"method"`
+	Headers  OptJudgeRequestEvidenceHeaders `json:"headers"`
+	Method   string                         `json:"method"`
+	Protocol OptJudgeRecognition            `json:"protocol"`
 	// The destination authority and port, path, and query.
 	URL string `json:"url"`
 }
@@ -6258,6 +6448,11 @@ type JudgeRequestEvidence struct {
 // GetBody returns the value of Body.
 func (s *JudgeRequestEvidence) GetBody() OptJudgeRequestBody {
 	return s.Body
+}
+
+// GetEndpoint returns the value of Endpoint.
+func (s *JudgeRequestEvidence) GetEndpoint() OptJudgeRecognition {
+	return s.Endpoint
 }
 
 // GetHeaders returns the value of Headers.
@@ -6270,6 +6465,11 @@ func (s *JudgeRequestEvidence) GetMethod() string {
 	return s.Method
 }
 
+// GetProtocol returns the value of Protocol.
+func (s *JudgeRequestEvidence) GetProtocol() OptJudgeRecognition {
+	return s.Protocol
+}
+
 // GetURL returns the value of URL.
 func (s *JudgeRequestEvidence) GetURL() string {
 	return s.URL
@@ -6280,6 +6480,11 @@ func (s *JudgeRequestEvidence) SetBody(val OptJudgeRequestBody) {
 	s.Body = val
 }
 
+// SetEndpoint sets the value of Endpoint.
+func (s *JudgeRequestEvidence) SetEndpoint(val OptJudgeRecognition) {
+	s.Endpoint = val
+}
+
 // SetHeaders sets the value of Headers.
 func (s *JudgeRequestEvidence) SetHeaders(val OptJudgeRequestEvidenceHeaders) {
 	s.Headers = val
@@ -6288,6 +6493,11 @@ func (s *JudgeRequestEvidence) SetHeaders(val OptJudgeRequestEvidenceHeaders) {
 // SetMethod sets the value of Method.
 func (s *JudgeRequestEvidence) SetMethod(val string) {
 	s.Method = val
+}
+
+// SetProtocol sets the value of Protocol.
+func (s *JudgeRequestEvidence) SetProtocol(val OptJudgeRecognition) {
+	s.Protocol = val
 }
 
 // SetURL sets the value of URL.
@@ -6451,8 +6661,9 @@ func (*ListCredentialVerdictsBody) listCredentialVerdictsRes() {}
 type ListCredentialVerdictsKind string
 
 const (
-	ListCredentialVerdictsKindCommand ListCredentialVerdictsKind = "command"
-	ListCredentialVerdictsKindRequest ListCredentialVerdictsKind = "request"
+	ListCredentialVerdictsKindCommand    ListCredentialVerdictsKind = "command"
+	ListCredentialVerdictsKindRequest    ListCredentialVerdictsKind = "request"
+	ListCredentialVerdictsKindDelegation ListCredentialVerdictsKind = "delegation"
 )
 
 // AllValues returns all ListCredentialVerdictsKind values.
@@ -6460,6 +6671,7 @@ func (ListCredentialVerdictsKind) AllValues() []ListCredentialVerdictsKind {
 	return []ListCredentialVerdictsKind{
 		ListCredentialVerdictsKindCommand,
 		ListCredentialVerdictsKindRequest,
+		ListCredentialVerdictsKindDelegation,
 	}
 }
 
@@ -6469,6 +6681,8 @@ func (s ListCredentialVerdictsKind) MarshalText() ([]byte, error) {
 	case ListCredentialVerdictsKindCommand:
 		return []byte(s), nil
 	case ListCredentialVerdictsKindRequest:
+		return []byte(s), nil
+	case ListCredentialVerdictsKindDelegation:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -6483,6 +6697,9 @@ func (s *ListCredentialVerdictsKind) UnmarshalText(data []byte) error {
 		return nil
 	case ListCredentialVerdictsKindRequest:
 		*s = ListCredentialVerdictsKindRequest
+		return nil
+	case ListCredentialVerdictsKindDelegation:
+		*s = ListCredentialVerdictsKindDelegation
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -8051,6 +8268,52 @@ func (o OptCredentialVerdictOrigin) Or(d CredentialVerdictOrigin) CredentialVerd
 	return d
 }
 
+// NewOptCredentialVerdictProbabilities returns new OptCredentialVerdictProbabilities with value set to v.
+func NewOptCredentialVerdictProbabilities(v CredentialVerdictProbabilities) OptCredentialVerdictProbabilities {
+	return OptCredentialVerdictProbabilities{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptCredentialVerdictProbabilities is optional CredentialVerdictProbabilities.
+type OptCredentialVerdictProbabilities struct {
+	Value CredentialVerdictProbabilities
+	Set   bool
+}
+
+// IsSet returns true if OptCredentialVerdictProbabilities was set.
+func (o OptCredentialVerdictProbabilities) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptCredentialVerdictProbabilities) Reset() {
+	var v CredentialVerdictProbabilities
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptCredentialVerdictProbabilities) SetTo(v CredentialVerdictProbabilities) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptCredentialVerdictProbabilities) Get() (v CredentialVerdictProbabilities, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptCredentialVerdictProbabilities) Or(d CredentialVerdictProbabilities) CredentialVerdictProbabilities {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptDateTime returns new OptDateTime with value set to v.
 func NewOptDateTime(v time.Time) OptDateTime {
 	return OptDateTime{
@@ -8787,6 +9050,52 @@ func (o OptIrohListener) Or(d IrohListener) IrohListener {
 	return d
 }
 
+// NewOptJudgeInput returns new OptJudgeInput with value set to v.
+func NewOptJudgeInput(v JudgeInput) OptJudgeInput {
+	return OptJudgeInput{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptJudgeInput is optional JudgeInput.
+type OptJudgeInput struct {
+	Value JudgeInput
+	Set   bool
+}
+
+// IsSet returns true if OptJudgeInput was set.
+func (o OptJudgeInput) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptJudgeInput) Reset() {
+	var v JudgeInput
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptJudgeInput) SetTo(v JudgeInput) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptJudgeInput) Get() (v JudgeInput, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptJudgeInput) Or(d JudgeInput) JudgeInput {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptJudgeNeed returns new OptJudgeNeed with value set to v.
 func NewOptJudgeNeed(v JudgeNeed) OptJudgeNeed {
 	return OptJudgeNeed{
@@ -8827,6 +9136,98 @@ func (o OptJudgeNeed) Get() (v JudgeNeed, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptJudgeNeed) Or(d JudgeNeed) JudgeNeed {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptJudgeRecognition returns new OptJudgeRecognition with value set to v.
+func NewOptJudgeRecognition(v JudgeRecognition) OptJudgeRecognition {
+	return OptJudgeRecognition{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptJudgeRecognition is optional JudgeRecognition.
+type OptJudgeRecognition struct {
+	Value JudgeRecognition
+	Set   bool
+}
+
+// IsSet returns true if OptJudgeRecognition was set.
+func (o OptJudgeRecognition) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptJudgeRecognition) Reset() {
+	var v JudgeRecognition
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptJudgeRecognition) SetTo(v JudgeRecognition) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptJudgeRecognition) Get() (v JudgeRecognition, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptJudgeRecognition) Or(d JudgeRecognition) JudgeRecognition {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptJudgeReported returns new OptJudgeReported with value set to v.
+func NewOptJudgeReported(v JudgeReported) OptJudgeReported {
+	return OptJudgeReported{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptJudgeReported is optional JudgeReported.
+type OptJudgeReported struct {
+	Value JudgeReported
+	Set   bool
+}
+
+// IsSet returns true if OptJudgeReported was set.
+func (o OptJudgeReported) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptJudgeReported) Reset() {
+	var v JudgeReported
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptJudgeReported) SetTo(v JudgeReported) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptJudgeReported) Get() (v JudgeReported, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptJudgeReported) Or(d JudgeReported) JudgeReported {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -8879,38 +9280,38 @@ func (o OptJudgeRequestBody) Or(d JudgeRequestBody) JudgeRequestBody {
 	return d
 }
 
-// NewOptJudgeRequestBodyForm returns new OptJudgeRequestBodyForm with value set to v.
-func NewOptJudgeRequestBodyForm(v JudgeRequestBodyForm) OptJudgeRequestBodyForm {
-	return OptJudgeRequestBodyForm{
+// NewOptJudgeRequestBodyMetadata returns new OptJudgeRequestBodyMetadata with value set to v.
+func NewOptJudgeRequestBodyMetadata(v JudgeRequestBodyMetadata) OptJudgeRequestBodyMetadata {
+	return OptJudgeRequestBodyMetadata{
 		Value: v,
 		Set:   true,
 	}
 }
 
-// OptJudgeRequestBodyForm is optional JudgeRequestBodyForm.
-type OptJudgeRequestBodyForm struct {
-	Value JudgeRequestBodyForm
+// OptJudgeRequestBodyMetadata is optional JudgeRequestBodyMetadata.
+type OptJudgeRequestBodyMetadata struct {
+	Value JudgeRequestBodyMetadata
 	Set   bool
 }
 
-// IsSet returns true if OptJudgeRequestBodyForm was set.
-func (o OptJudgeRequestBodyForm) IsSet() bool { return o.Set }
+// IsSet returns true if OptJudgeRequestBodyMetadata was set.
+func (o OptJudgeRequestBodyMetadata) IsSet() bool { return o.Set }
 
 // Reset unsets value.
-func (o *OptJudgeRequestBodyForm) Reset() {
-	var v JudgeRequestBodyForm
+func (o *OptJudgeRequestBodyMetadata) Reset() {
+	var v JudgeRequestBodyMetadata
 	o.Value = v
 	o.Set = false
 }
 
 // SetTo sets value to v.
-func (o *OptJudgeRequestBodyForm) SetTo(v JudgeRequestBodyForm) {
+func (o *OptJudgeRequestBodyMetadata) SetTo(v JudgeRequestBodyMetadata) {
 	o.Set = true
 	o.Value = v
 }
 
 // Get returns value and boolean that denotes whether value was set.
-func (o OptJudgeRequestBodyForm) Get() (v JudgeRequestBodyForm, ok bool) {
+func (o OptJudgeRequestBodyMetadata) Get() (v JudgeRequestBodyMetadata, ok bool) {
 	if !o.Set {
 		return v, false
 	}
@@ -8918,7 +9319,7 @@ func (o OptJudgeRequestBodyForm) Get() (v JudgeRequestBodyForm, ok bool) {
 }
 
 // Or returns value if set, or given parameter if does not.
-func (o OptJudgeRequestBodyForm) Or(d JudgeRequestBodyForm) JudgeRequestBodyForm {
+func (o OptJudgeRequestBodyMetadata) Or(d JudgeRequestBodyMetadata) JudgeRequestBodyMetadata {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -13728,6 +14129,72 @@ func (s *PoolCPUUsageAdditional) init() PoolCPUUsageAdditional {
 	return m
 }
 
+// One command a pool's discobox is about to run under an approved use, asked about before the pool
+// mints anything for it (ADR 26-09-22-838 §3). A pool does not say what the use authorizes: the
+// control plane reads the sentence, the credential's name and its host from the live grant.
+// Everything here is the discobox's, and evidence.
+// Ref: #/components/schemas/PoolCommandAsk
+type PoolCommandAsk struct {
+	// The argv the discobox is about to run.
+	Command  []string         `json:"command"`
+	Reported OptJudgeReported `json:"reported"`
+	// The discobox about to run it. It must belong to the asking pool.
+	SandboxId string        `json:"sandboxId"`
+	Stdin     OptJudgeInput `json:"stdin"`
+	// The approved use the command would spend the credential under.
+	UseId string `json:"useId"`
+}
+
+// GetCommand returns the value of Command.
+func (s *PoolCommandAsk) GetCommand() []string {
+	return s.Command
+}
+
+// GetReported returns the value of Reported.
+func (s *PoolCommandAsk) GetReported() OptJudgeReported {
+	return s.Reported
+}
+
+// GetSandboxId returns the value of SandboxId.
+func (s *PoolCommandAsk) GetSandboxId() string {
+	return s.SandboxId
+}
+
+// GetStdin returns the value of Stdin.
+func (s *PoolCommandAsk) GetStdin() OptJudgeInput {
+	return s.Stdin
+}
+
+// GetUseId returns the value of UseId.
+func (s *PoolCommandAsk) GetUseId() string {
+	return s.UseId
+}
+
+// SetCommand sets the value of Command.
+func (s *PoolCommandAsk) SetCommand(val []string) {
+	s.Command = val
+}
+
+// SetReported sets the value of Reported.
+func (s *PoolCommandAsk) SetReported(val OptJudgeReported) {
+	s.Reported = val
+}
+
+// SetSandboxId sets the value of SandboxId.
+func (s *PoolCommandAsk) SetSandboxId(val string) {
+	s.SandboxId = val
+}
+
+// SetStdin sets the value of Stdin.
+func (s *PoolCommandAsk) SetStdin(val OptJudgeInput) {
+	s.Stdin = val
+}
+
+// SetUseId sets the value of UseId.
+func (s *PoolCommandAsk) SetUseId(val string) {
+	s.UseId = val
+}
+
 // Requested existence, the same vocabulary every orchestrated resource uses.
 type PoolDesiredState string
 
@@ -13891,6 +14358,37 @@ func (s *PoolHealth) UnmarshalText(data []byte) error {
 		return errors.Errorf("invalid value: %q", data)
 	}
 }
+
+// Ref: #/components/schemas/PoolHeldSandboxesBody
+type PoolHeldSandboxesBody struct {
+	// A URL to the JSON Schema for this object.
+	Schema OptURI `json:"$schema"`
+	// Every sandbox on this pool that still has a row, in any state, including archived, failed, and
+	// mid-delete.
+	SandboxIds []string `json:"sandboxIds"`
+}
+
+// GetSchema returns the value of Schema.
+func (s *PoolHeldSandboxesBody) GetSchema() OptURI {
+	return s.Schema
+}
+
+// GetSandboxIds returns the value of SandboxIds.
+func (s *PoolHeldSandboxesBody) GetSandboxIds() []string {
+	return s.SandboxIds
+}
+
+// SetSchema sets the value of Schema.
+func (s *PoolHeldSandboxesBody) SetSchema(val OptURI) {
+	s.Schema = val
+}
+
+// SetSandboxIds sets the value of SandboxIds.
+func (s *PoolHeldSandboxesBody) SetSandboxIds(val []string) {
+	s.SandboxIds = val
+}
+
+func (*PoolHeldSandboxesBody) listPoolHeldSandboxesRes() {}
 
 // One ask from a pool: which discobox is spending which approved use, and the request its proxy
 // observed. A pool does not say what the use authorizes. The control plane reads the sentence, the
@@ -15572,91 +16070,6 @@ type PurgeSandboxNoContent struct{}
 
 func (*PurgeSandboxNoContent) purgeSandboxRes() {}
 
-// A judge's verdict about one command run under an agent credential use, relayed by the pool agent
-// on behalf of one of its sandboxes. Carried on the same call that takes a value, so a credential
-// cannot be issued without a record of why; sent on its own when the judge refused and no value was
-// ever taken.
-// Ref: #/components/schemas/RecordCredentialVerdictBody
-type RecordCredentialVerdictBody struct {
-	// A URL to the JSON Schema for this object.
-	Schema OptURI `json:"$schema"`
-	// The argv the judge was shown.
-	Command []string `json:"command"`
-	// Sandbox the command ran in.
-	SandboxId string `json:"sandboxId"`
-	// Approved use the command was judged against.
-	UseId   string                 `json:"useId"`
-	Verdict AgentCredentialVerdict `json:"verdict"`
-	// True when the judge refused and this report is the only record of it, because the use call this
-	// would otherwise ride never happened.
-	Volunteered bool `json:"volunteered"`
-}
-
-// GetSchema returns the value of Schema.
-func (s *RecordCredentialVerdictBody) GetSchema() OptURI {
-	return s.Schema
-}
-
-// GetCommand returns the value of Command.
-func (s *RecordCredentialVerdictBody) GetCommand() []string {
-	return s.Command
-}
-
-// GetSandboxId returns the value of SandboxId.
-func (s *RecordCredentialVerdictBody) GetSandboxId() string {
-	return s.SandboxId
-}
-
-// GetUseId returns the value of UseId.
-func (s *RecordCredentialVerdictBody) GetUseId() string {
-	return s.UseId
-}
-
-// GetVerdict returns the value of Verdict.
-func (s *RecordCredentialVerdictBody) GetVerdict() AgentCredentialVerdict {
-	return s.Verdict
-}
-
-// GetVolunteered returns the value of Volunteered.
-func (s *RecordCredentialVerdictBody) GetVolunteered() bool {
-	return s.Volunteered
-}
-
-// SetSchema sets the value of Schema.
-func (s *RecordCredentialVerdictBody) SetSchema(val OptURI) {
-	s.Schema = val
-}
-
-// SetCommand sets the value of Command.
-func (s *RecordCredentialVerdictBody) SetCommand(val []string) {
-	s.Command = val
-}
-
-// SetSandboxId sets the value of SandboxId.
-func (s *RecordCredentialVerdictBody) SetSandboxId(val string) {
-	s.SandboxId = val
-}
-
-// SetUseId sets the value of UseId.
-func (s *RecordCredentialVerdictBody) SetUseId(val string) {
-	s.UseId = val
-}
-
-// SetVerdict sets the value of Verdict.
-func (s *RecordCredentialVerdictBody) SetVerdict(val AgentCredentialVerdict) {
-	s.Verdict = val
-}
-
-// SetVolunteered sets the value of Volunteered.
-func (s *RecordCredentialVerdictBody) SetVolunteered(val bool) {
-	s.Volunteered = val
-}
-
-// RecordCredentialVerdictNoContent is response for RecordCredentialVerdict operation.
-type RecordCredentialVerdictNoContent struct{}
-
-func (*RecordCredentialVerdictNoContent) recordCredentialVerdictRes() {}
-
 // Ref: #/components/schemas/RefreshSecretBody
 type RefreshSecretBody struct {
 	// A URL to the JSON Schema for this object.
@@ -16275,6 +16688,9 @@ type ResolveSandboxSecretResponse struct {
 	Value OptString `json:"value"`
 	// Grant expiry time when approved.
 	ExpiresAt OptDateTime `json:"expiresAt"`
+	// The secret the value is; present only when status is approved. The pool's proxy records it on the
+	// request the value is swapped into (ADR 26-10-01-240).
+	SecretId OptString `json:"secretId"`
 }
 
 // GetSchema returns the value of Schema.
@@ -16297,6 +16713,11 @@ func (s *ResolveSandboxSecretResponse) GetExpiresAt() OptDateTime {
 	return s.ExpiresAt
 }
 
+// GetSecretId returns the value of SecretId.
+func (s *ResolveSandboxSecretResponse) GetSecretId() OptString {
+	return s.SecretId
+}
+
 // SetSchema sets the value of Schema.
 func (s *ResolveSandboxSecretResponse) SetSchema(val OptURI) {
 	s.Schema = val
@@ -16315,6 +16736,11 @@ func (s *ResolveSandboxSecretResponse) SetValue(val OptString) {
 // SetExpiresAt sets the value of ExpiresAt.
 func (s *ResolveSandboxSecretResponse) SetExpiresAt(val OptDateTime) {
 	s.ExpiresAt = val
+}
+
+// SetSecretId sets the value of SecretId.
+func (s *ResolveSandboxSecretResponse) SetSecretId(val OptString) {
+	s.SecretId = val
 }
 
 func (*ResolveSandboxSecretResponse) resolveSandboxSecretRes() {}
@@ -18627,8 +19053,8 @@ type SandboxCredential struct {
 	Format OptString `json:"format"`
 	// Grant authorizing the uses.
 	GrantId string `json:"grantId"`
-	// Host the credential may be sent to.
-	Host string `json:"host"`
+	// Hosts the credential may be sent to; a destination any of them covers (ADR 26-10-02-393).
+	Hosts []string `json:"hosts"`
 	// Credential name.
 	Name string `json:"name"`
 	// Secret backing the credential.
@@ -18660,9 +19086,9 @@ func (s *SandboxCredential) GetGrantId() string {
 	return s.GrantId
 }
 
-// GetHost returns the value of Host.
-func (s *SandboxCredential) GetHost() string {
-	return s.Host
+// GetHosts returns the value of Hosts.
+func (s *SandboxCredential) GetHosts() []string {
+	return s.Hosts
 }
 
 // GetName returns the value of Name.
@@ -18705,9 +19131,9 @@ func (s *SandboxCredential) SetGrantId(val string) {
 	s.GrantId = val
 }
 
-// SetHost sets the value of Host.
-func (s *SandboxCredential) SetHost(val string) {
-	s.Host = val
+// SetHosts sets the value of Hosts.
+func (s *SandboxCredential) SetHosts(val []string) {
+	s.Hosts = val
 }
 
 // SetName sets the value of Name.
@@ -19888,9 +20314,10 @@ type SandboxGrant struct {
 	SecretId OptString `json:"secretId"`
 	// Environment variable the discobox's agent receives the credential in. Required without wellKnownId.
 	EnvVar OptString `json:"envVar"`
-	// Host the credential may be sent to. Defaults to the secret's host, or the well-known credential's;
-	// one is required.
-	Host OptString `json:"host"`
+	// Hosts the credential may be sent to (ADR 26-10-02-393). Left out, the secret's host, or the
+	// well-known credential's first; one is required. Each must sit inside the secret's binding, or the
+	// well-known credential's hosts.
+	Hosts []string `json:"hosts"`
 	// What the credential may be used for. Use IDs are minted here; a supplied one is ignored.
 	Uses []SecretUse `json:"uses"`
 	// How long the grant lives, in seconds. Defaults to the secret's grant limit, and may not exceed it.
@@ -19912,9 +20339,9 @@ func (s *SandboxGrant) GetEnvVar() OptString {
 	return s.EnvVar
 }
 
-// GetHost returns the value of Host.
-func (s *SandboxGrant) GetHost() OptString {
-	return s.Host
+// GetHosts returns the value of Hosts.
+func (s *SandboxGrant) GetHosts() []string {
+	return s.Hosts
 }
 
 // GetUses returns the value of Uses.
@@ -19942,9 +20369,9 @@ func (s *SandboxGrant) SetEnvVar(val OptString) {
 	s.EnvVar = val
 }
 
-// SetHost sets the value of Host.
-func (s *SandboxGrant) SetHost(val OptString) {
-	s.Host = val
+// SetHosts sets the value of Hosts.
+func (s *SandboxGrant) SetHosts(val []string) {
+	s.Hosts = val
 }
 
 // SetUses sets the value of Uses.
@@ -22429,6 +22856,8 @@ type Secret struct {
 	MaxGrantTTLSeconds int64 `json:"maxGrantTTLSeconds"`
 	// Generative format template describing the credential shape; used to mint sentinel placeholders.
 	Format OptString `json:"format"`
+	// Format was set explicitly rather than read from the value.
+	FormatSet OptBool `json:"formatSet"`
 	// Optional host used to match requests (e.g. github.com).
 	Host OptString `json:"host"`
 	// Stable secret ID.
@@ -22480,6 +22909,11 @@ func (s *Secret) GetMaxGrantTTLSeconds() int64 {
 // GetFormat returns the value of Format.
 func (s *Secret) GetFormat() OptString {
 	return s.Format
+}
+
+// GetFormatSet returns the value of FormatSet.
+func (s *Secret) GetFormatSet() OptBool {
+	return s.FormatSet
 }
 
 // GetHost returns the value of Host.
@@ -22567,6 +23001,11 @@ func (s *Secret) SetFormat(val OptString) {
 	s.Format = val
 }
 
+// SetFormatSet sets the value of FormatSet.
+func (s *Secret) SetFormatSet(val OptBool) {
+	s.FormatSet = val
+}
+
 // SetHost sets the value of Host.
 func (s *Secret) SetHost(val OptString) {
 	s.Host = val
@@ -22652,8 +23091,9 @@ type SecretGrant struct {
 	GrantedAt time.Time `json:"grantedAt"`
 	// Principal ID that created the grant.
 	GrantedBy OptString `json:"grantedBy"`
-	// Host the grant is limited to; empty matches any host.
-	Host OptString `json:"host"`
+	// Hosts the grant is limited to; a destination any of them covers. Empty matches any host (ADR
+	// 26-10-02-393).
+	Hosts []string `json:"hosts"`
 	// Stable grant ID.
 	ID string `json:"id"`
 	// Project ID.
@@ -22708,9 +23148,9 @@ func (s *SecretGrant) GetGrantedBy() OptString {
 	return s.GrantedBy
 }
 
-// GetHost returns the value of Host.
-func (s *SecretGrant) GetHost() OptString {
-	return s.Host
+// GetHosts returns the value of Hosts.
+func (s *SecretGrant) GetHosts() []string {
+	return s.Hosts
 }
 
 // GetID returns the value of ID.
@@ -22783,9 +23223,9 @@ func (s *SecretGrant) SetGrantedBy(val OptString) {
 	s.GrantedBy = val
 }
 
-// SetHost sets the value of Host.
-func (s *SecretGrant) SetHost(val OptString) {
-	s.Host = val
+// SetHosts sets the value of Hosts.
+func (s *SecretGrant) SetHosts(val []string) {
+	s.Hosts = val
 }
 
 // SetID sets the value of ID.
@@ -23640,8 +24080,8 @@ type SecretRequest struct {
 	// How long the agent asked the grant to live, in seconds -- the lifetime an approval starts from. At
 	// most thirty days. Absent when it asked for nothing in particular; never forever.
 	GrantTTLSeconds OptInt64 `json:"grantTTLSeconds"`
-	// Host hint provided at request time.
-	Host OptString `json:"host"`
+	// Hosts named at request time (ADR 26-10-02-393).
+	Hosts []string `json:"hosts"`
 	// Stable request ID.
 	ID string `json:"id"`
 	// Why the agent says it needs the credential.
@@ -23705,9 +24145,9 @@ func (s *SecretRequest) GetGrantTTLSeconds() OptInt64 {
 	return s.GrantTTLSeconds
 }
 
-// GetHost returns the value of Host.
-func (s *SecretRequest) GetHost() OptString {
-	return s.Host
+// GetHosts returns the value of Hosts.
+func (s *SecretRequest) GetHosts() []string {
+	return s.Hosts
 }
 
 // GetID returns the value of ID.
@@ -23815,9 +24255,9 @@ func (s *SecretRequest) SetGrantTTLSeconds(val OptInt64) {
 	s.GrantTTLSeconds = val
 }
 
-// SetHost sets the value of Host.
-func (s *SecretRequest) SetHost(val OptString) {
-	s.Host = val
+// SetHosts sets the value of Hosts.
+func (s *SecretRequest) SetHosts(val []string) {
+	s.Hosts = val
 }
 
 // SetID sets the value of ID.
@@ -25103,6 +25543,12 @@ type UpdateSecretBody struct {
 	Schema OptURI `json:"$schema"`
 	// Longest a grant on this secret may live, in seconds; 0 allows grants that never expire.
 	MaxGrantTTLSeconds OptInt64 `json:"maxGrantTTLSeconds"`
+	// Template the sentinels for this secret are minted from: literal text with {charset:length} tokens,
+	// such as sk-ant-oat01-{base64url:95}. Charsets are digits, hex, HEX, lower, upper, alnum, base62,
+	// base32, base64url, and base64. A format set here is kept when the value is replaced; an empty
+	// string clears it and reads the shape from the value again. A running sandbox keeps the sentinel
+	// already in its environment.
+	Format OptString `json:"format"`
 	// Optional host used to match requests (e.g. github.com).
 	Host OptString `json:"host"`
 	// A command a person's client may run to produce a new value, as an argument vector run without a
@@ -25129,6 +25575,11 @@ func (s *UpdateSecretBody) GetSchema() OptURI {
 // GetMaxGrantTTLSeconds returns the value of MaxGrantTTLSeconds.
 func (s *UpdateSecretBody) GetMaxGrantTTLSeconds() OptInt64 {
 	return s.MaxGrantTTLSeconds
+}
+
+// GetFormat returns the value of Format.
+func (s *UpdateSecretBody) GetFormat() OptString {
+	return s.Format
 }
 
 // GetHost returns the value of Host.
@@ -25169,6 +25620,11 @@ func (s *UpdateSecretBody) SetSchema(val OptURI) {
 // SetMaxGrantTTLSeconds sets the value of MaxGrantTTLSeconds.
 func (s *UpdateSecretBody) SetMaxGrantTTLSeconds(val OptInt64) {
 	s.MaxGrantTTLSeconds = val
+}
+
+// SetFormat sets the value of Format.
+func (s *UpdateSecretBody) SetFormat(val OptString) {
+	s.Format = val
 }
 
 // SetHost sets the value of Host.

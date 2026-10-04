@@ -11,8 +11,8 @@ import (
 
 // Service is the server half of the protocol. An implementation owns the four
 // decisions the protocol does not make: whose credentials these are, what Get
-// returns, how a request reaches a human, and what becomes of a verdict (on
-// Get and on ReportDenial).
+// returns, how a request reaches a human, and whether a command is judged
+// before Get answers.
 type Service interface {
 	// List returns the credentials the caller may use and their approved uses.
 	// It never returns values.
@@ -22,11 +22,9 @@ type Service interface {
 	Request(ctx context.Context, body RequestBody) (RequestStatus, error)
 	// RequestStatus reads a request's current status.
 	RequestStatus(ctx context.Context, requestID string) (RequestStatus, error)
-	// Get returns a value for one declared command.
+	// Get returns a value for one declared command, or ErrDenied when the
+	// implementation judged the command and refused it.
 	Get(ctx context.Context, body UseBody) (UseResponse, error)
-	// ReportDenial records a verdict for a command the judge refused, which
-	// never reached Get (ADR 0091 §3).
-	ReportDenial(ctx context.Context, body DenialReport) error
 	// Trusts returns the host trusts the caller holds (ADR 0149).
 	Trusts(ctx context.Context) ([]Trust, error)
 	// RequestTrust records an ask to trust a host and returns immediately:
@@ -66,11 +64,30 @@ func NewHandler(svc Service) http.Handler {
 		writeJSON(w, http.StatusOK, ListResponse{Credentials: credentials})
 	})
 	mux.HandleFunc("POST "+PathRequests, func(w http.ResponseWriter, r *http.Request) {
-		var body RequestBody
+		// host is the field a request once named its destination by. A client
+		// that predates hosts sends it on every ask, empty when it named none,
+		// which is an ask for nothing in particular and is read as one. A host
+		// it did name is refused rather than dropped (ADR 26-10-02-393 §4):
+		// dropped, a free-form ask would name no destination, and an ask by a
+		// well-known ID would widen from the host it named to the ID's whole
+		// site — wider than it meant, and what a person would be shown to
+		// approve. Such a client cannot send hosts, so the refusal says what
+		// it can do: be replaced.
+		var body struct {
+			RequestBody
+			Host *string `json:"host"`
+		}
 		if !decode(w, r, &body) {
 			return
 		}
-		status, err := svc.Request(r.Context(), body)
+		if body.Host != nil && strings.TrimSpace(*body.Host) != "" {
+			writeJSON(w, http.StatusBadRequest, ErrorResponse{
+				Error: `"host" is no longer read; destinations are "hosts", a list. A client that sends "host" predates it: upgrade or recreate this sandbox for one that does`,
+				Code:  CodeInvalid,
+			})
+			return
+		}
+		status, err := svc.Request(r.Context(), body.RequestBody)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -97,17 +114,6 @@ func NewHandler(svc Service) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, out)
-	})
-	mux.HandleFunc("POST "+PathDenials, func(w http.ResponseWriter, r *http.Request) {
-		var body DenialReport
-		if !decode(w, r, &body) {
-			return
-		}
-		if err := svc.ReportDenial(r.Context(), body); err != nil {
-			writeError(w, err)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET "+PathTrusts, func(w http.ResponseWriter, r *http.Request) {
 		trusts, err := svc.Trusts(r.Context())
@@ -149,12 +155,14 @@ func NewHandler(svc Service) http.Handler {
 	return mux
 }
 
-// maxBodyBytes bounds a request body. Every body in this protocol is a handful
-// of short strings, so anything larger is a mistake or an attack.
-const maxBodyBytes = 64 << 10
+// MaxBodyBytes bounds a request body. Every body in this protocol is a
+// handful of short strings and one verdict, whose prompt a caller keeps small
+// enough to fit here even escaped, so anything larger is a mistake or an
+// attack.
+const MaxBodyBytes = 64 << 10
 
 func decode(w http.ResponseWriter, r *http.Request, target any) bool {
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes)).Decode(target); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxBodyBytes)).Decode(target); err != nil {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{
 			Error: fmt.Sprintf("parse request body: %v", err),
 			Code:  CodeInvalid,

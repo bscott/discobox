@@ -309,6 +309,9 @@ func TestImageLaunchesCodexWithSourceScopedMemory(t *testing.T) {
 		// prompt, so the launcher drops it rather than re-sending it.
 		harness.ResumeFlag,
 		"set -- resume --last",
+		// Codex sends a copy to the user's terminal only in an SSH session;
+		// without it every copy lands on the box's own X clipboard.
+		`export SSH_CONNECTION="${SSH_CONNECTION:-`,
 		"/.discobox/data-per-source/primary",
 		"users/$(id -u)",
 		"harnesses/codex/memories",

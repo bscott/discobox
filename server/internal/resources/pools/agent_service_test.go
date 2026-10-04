@@ -622,3 +622,61 @@ func TestReportSandboxAgentStatusRecordsMeta(t *testing.T) {
 		t.Fatalf("recorded %q %v, want nothing once the sandbox reports nothing", description, tags)
 	}
 }
+
+// The held set bounds what a pool agent's volume reaper may collect
+// (ADR 26-10-01-876), so every row on the pool is in it whatever its state: a
+// failed sandbox waiting for its repair and an archived one held by intent both
+// own their trees, and a sandbox on its way out owns its tree until the delete
+// that removes it is confirmed. A sandbox on another pool is not this pool's to
+// hold, and listing it would let a reaper's set grow wider than its tree.
+func TestListPoolHeldSandboxesIsEveryRowOnThePool(t *testing.T) {
+	svc, _ := newAgentServiceTestFixture(t)
+	ctx := auth.WithPrincipal(context.Background(), auth.Principal{
+		Type:   auth.PrincipalTypePool,
+		PoolID: "pool-a",
+	})
+	for _, sb := range []model.Sandbox{
+		{ID: "sandbox-failed", ResourceLifecycle: model.ResourceLifecycle{DesiredState: model.DesiredStatePresent, State: model.SandboxStateFailed}},
+		{ID: "sandbox-archived", ResourceLifecycle: model.ResourceLifecycle{DesiredState: model.DesiredStateArchived, State: model.SandboxStateArchived}},
+		{ID: "sandbox-deleting", ResourceLifecycle: model.ResourceLifecycle{DesiredState: model.DesiredStateDeleted, State: model.SandboxStateFailed}},
+	} {
+		sb.ProjectID, sb.PoolID, sb.CreatedByUserID, sb.Name = "project-1", "pool-a", "user-1", sb.ID
+		if err := svc.store.CreateSandbox(context.Background(), &sb); err != nil {
+			t.Fatalf("create %s: %v", sb.ID, err)
+		}
+	}
+
+	ids, err := svc.ListPoolHeldSandboxes(ctx, "pool-a")
+	if err != nil {
+		t.Fatalf("list held sandboxes: %v", err)
+	}
+	got := map[string]bool{}
+	for _, id := range ids {
+		got[id] = true
+	}
+	want := []string{"sandbox-a", "sandbox-failed", "sandbox-archived", "sandbox-deleting"}
+	if len(ids) != len(want) {
+		t.Fatalf("held = %v, want exactly %v", ids, want)
+	}
+	for _, id := range want {
+		if !got[id] {
+			t.Fatalf("held = %v, missing %s", ids, id)
+		}
+	}
+}
+
+// Only the pool itself may ask: another pool's agent, or a user, is refused.
+func TestListPoolHeldSandboxesRequiresThePoolsOwnPrincipal(t *testing.T) {
+	svc, _ := newAgentServiceTestFixture(t)
+	for _, principal := range []auth.Principal{
+		{Type: auth.PrincipalTypePool, PoolID: "pool-b"},
+		{Type: auth.PrincipalTypeUser, UserID: "user-1"},
+	} {
+		ctx := auth.WithPrincipal(context.Background(), principal)
+		_, err := svc.ListPoolHeldSandboxes(ctx, "pool-a")
+		var statusErr interface{ StatusCode() int }
+		if err == nil || !errors.As(err, &statusErr) || statusErr.StatusCode() != 403 {
+			t.Fatalf("%+v: list held sandboxes = %v, want 403 forbidden", principal, err)
+		}
+	}
+}

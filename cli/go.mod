@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	github.com/coder/websocket v1.8.14
 	github.com/discobox-ai/discobox v0.0.0
-	github.com/discobox-ai/x v0.0.0-20260917050848-32cef8aa6b78
+	github.com/discobox-ai/x v0.0.0-20260928053835-39c36487e906
 	github.com/go-faster/jx v1.2.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
@@ -54,7 +54,7 @@ require (
 require (
 	github.com/atotto/clipboard v0.1.4
 	github.com/charmbracelet/x/exp/ordered v0.1.0 // indirect
-	github.com/charmbracelet/x/vt v0.0.0-20260713092006-0d683c34c74b // indirect
+	github.com/charmbracelet/x/vt v0.0.0-20260713092006-0d683c34c74b
 )
 
 require (
@@ -88,6 +88,8 @@ replace github.com/discobox-ai/discobox => ..
 
 replace github.com/discobox-ai/discobox/termpane => ../termpane
 
-replace github.com/charmbracelet/x/ansi => github.com/discobox-ai/charm-x/ansi v0.11.9-0.20260813023456-57e8cef06953
+replace github.com/charmbracelet/x/ansi => github.com/discobox-ai/charm-x/ansi v0.11.9-0.20260926040046-9d904b1c7255
 
-replace github.com/charmbracelet/x/vt => github.com/discobox-ai/charm-x/vt v0.0.0-20260918234547-859a09c25845
+replace github.com/charmbracelet/x/vt => github.com/discobox-ai/charm-x/vt v0.0.0-20260926040046-9d904b1c7255
+
+replace github.com/charmbracelet/ultraviolet => github.com/discobox-ai/ultraviolet v0.0.0-20260926043624-eff2d8acf8a4

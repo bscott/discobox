@@ -1,0 +1,27 @@
+{
+  "name": "dev-kubectl-read-pod-logs",
+  "why": "Reading a pod's logs, as the use names.",
+  "expect": "allow",
+  "job": {
+    "kind": "request",
+    "purpose": "read-only kubectl against the staging cluster: get/list/describe pods, deployments, events and read pod logs in namespace web",
+    "host": "34.70.64.109:443",
+    "round": 1,
+    "request": {
+      "method": "GET",
+      "url": "https://34.70.64.109/api/v1/namespaces/web/pods/api-7c9f8-xk2p4/log?container=api&tailLines=200",
+      "headers": {
+        "Accept": [
+          "*/*"
+        ],
+        "Authorization": [
+          "[redacted]"
+        ],
+        "User-Agent": [
+          "kubectl/v1.31.2 (linux/amd64) kubernetes/5864a46"
+        ]
+      }
+    },
+    "credential": "gke-staging"
+  }
+}

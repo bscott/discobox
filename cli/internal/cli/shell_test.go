@@ -40,6 +40,37 @@ func TestMatchSandboxArgShortIDResolvesUniqueMatch(t *testing.T) {
 	}
 }
 
+// The hyphenated spelling is the discobox's own hostname, so a full or short
+// ID copied from its shell prompt resolves; a name that begins "sbx-" is still
+// matched as a name first.
+func TestMatchSandboxArgAcceptsTheHostnameSpelling(t *testing.T) {
+	named := testSandboxWithID("sbx_23x11jnw03w11nf2")
+	named.Config.Name = "sbx-h1ssj"
+	sandboxes := []apimodel.Sandbox{testSandboxWithID("sbx_h1ssjzhp60emtc2n"), named}
+	for arg, want := range map[string]string{
+		"sbx-h1ssjzhp60emtc2n": "sbx_h1ssjzhp60emtc2n",
+		"sbx-h1ss":             "sbx_h1ssjzhp60emtc2n",
+		"sbx-h1ssj":            "sbx_23x11jnw03w11nf2",
+		"sbx-0000000000000000": "sbx_0000000000000000",
+	} {
+		id, ok, err := matchSandboxArg(arg, sandboxes, configuredName)
+		if err != nil || !ok || id != want {
+			t.Fatalf("matchSandboxArg(%q): id=%q ok=%v err=%v, want %q", arg, id, ok, err, want)
+		}
+	}
+}
+
+// A discobox on a registered server, or named by a discobox:// address, is
+// found by the hostname spelling of its ID too.
+func TestMatchSandboxIDsAcceptsTheHostnameSpelling(t *testing.T) {
+	ids := []string{"sbx_h1ssjzhp60emtc2n", "sbx_23x11jnw03w11nf2"}
+	for _, value := range []string{"sbx-h1ssjzhp60emtc2n", "sbx-h1ss"} {
+		if got := matchSandboxIDs(value, ids); len(got) != 1 || got[0] != "sbx_h1ssjzhp60emtc2n" {
+			t.Fatalf("matchSandboxIDs(%q) = %v, want [sbx_h1ssjzhp60emtc2n]", value, got)
+		}
+	}
+}
+
 func TestMatchSandboxArgNoMatchTreatedAsCommand(t *testing.T) {
 	sandboxes := []apimodel.Sandbox{testSandboxWithID("sbx_h1ssjzhp60emtc2n")}
 	id, ok, err := matchSandboxArg("ls", sandboxes, configuredName)

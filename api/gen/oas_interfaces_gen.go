@@ -237,6 +237,10 @@ type GetTrustRequestRes interface {
 	getTrustRequestRes()
 }
 
+type JudgeCommandForPoolRes interface {
+	judgeCommandForPoolRes()
+}
+
 type JudgeForPoolRes interface {
 	judgeForPoolRes()
 }
@@ -283,6 +287,10 @@ type ListJobsRes interface {
 
 type ListPeersRes interface {
 	listPeersRes()
+}
+
+type ListPoolHeldSandboxesRes interface {
+	listPoolHeldSandboxesRes()
 }
 
 type ListPoolHostTrustsRes interface {
@@ -387,10 +395,6 @@ type ReconcilePoolRes interface {
 
 type ReconcileSandboxRes interface {
 	reconcileSandboxRes()
-}
-
-type RecordCredentialVerdictRes interface {
-	recordCredentialVerdictRes()
 }
 
 type RefreshHarnessConfigImageRes interface {

@@ -23,7 +23,7 @@ const (
 	Role = "judge"
 	// PromptVersion changes whenever System changes. A stored verdict names
 	// it, so a decision can be read against the words that produced it.
-	PromptVersion = "3"
+	PromptVersion = "8"
 	// Timeout bounds one exchange — every round of it together, not each ask.
 	// A request is being held open while the judge thinks.
 	//
@@ -65,6 +65,20 @@ const (
 	// a body the judge asked for and cannot be shown. Validate is the backstop
 	// either way, since a job is refused whole rather than sent truncated.
 	MaxBodyBytes = 8 << 10
+	// MaxMetadataBytes is the most a parser may say about a body, as JSON.
+	// Metadata is in every ask, the first included, so it is held to a small
+	// fraction of what a body shown on request may be: it is what the
+	// operation is, not what it carries (ADR 26-09-26-240 §3).
+	MaxMetadataBytes = 2 << 10
+	// MaxReportedBytes is the most any one thing a discobox reports about
+	// where a command runs may be. They are a path or a line, and anything
+	// longer is not that. It is agentcreds.MaxReportedBytes, which the
+	// discobox cuts them to, and small for the reason that is: escaped at its
+	// worst beside the largest input shown, a job still fits MaxInput.
+	MaxReportedBytes = 256
+	// MaxFacts is the most the control plane may say about one job. Facts
+	// are short and specific; a long list is a context the judge drowns in.
+	MaxFacts = 8
 )
 
 // The kinds of job. Each is judged against one approved use.
@@ -75,15 +89,12 @@ const (
 	// KindRequest is a request observed by the proxy, judged before the
 	// credentials it carries are resolved.
 	KindRequest = "request"
-)
-
-// How a body is written when the judge is shown one.
-const (
-	// FormText is the body as sent, as text.
-	FormText = "text"
-	// FormJSON is the body parsed and written back as JSON, which is how a
-	// request whose operation lives in a JSON document reads clearly.
-	FormJSON = "json"
+	// KindDelegation is a discobox about to hand a credential on by
+	// approving another discobox's request, judged before the grant is
+	// minted: whether the uses it would hand on fall within the uses it was
+	// delegated (ADR 26-09-30-782 §3). Both are authorization, and there is no
+	// request evidence.
+	KindDelegation = "delegation"
 )
 
 // Job is one question, and everything the judge is allowed to see in order to
@@ -102,12 +113,69 @@ type Job struct {
 	// Round is which ask this is, from 1. A round after the first exists
 	// because the judge asked to be shown the body.
 	Round int `json:"round"`
+	// BodyCanBeShown and AsksLeft say, beside the request, that the judge may
+	// still ask to be shown its body and how many more times it may ask. They
+	// are derived by Prompt, never supplied: a caller's values are replaced.
+	// The rule to ask rather than refuse is in System, but a model deciding
+	// one request follows what the request in front of it says it can do.
+	BodyCanBeShown bool `json:"bodyCanBeShown,omitempty"`
+	AsksLeft       int  `json:"asksLeft,omitempty"`
 	// Command is the argv, for a command job. For a request job it is what
 	// the discobox declared it was running, which is context and not
 	// authority: a declaration cannot override the request observed.
 	Command []string `json:"command,omitempty"`
+	// Stdin is what a command job's command will read on standard input, as
+	// much of it as the discobox showed (ADR 26-09-27-905). For a command
+	// that takes its request there, it is the operation.
+	Stdin *Input `json:"stdin,omitempty"`
+	// Reported is what the discobox said about where a command job's command
+	// runs (ADR 0090). It is the discobox's claim, written on the side being
+	// judged, and never a fact the trusted side established.
+	Reported *Reported `json:"reported,omitempty"`
 	// Request is the request observed by the proxy, for a request job.
 	Request *Request `json:"request,omitempty"`
+	// Uses are the uses a discobox is about to hand on, for a delegation job:
+	// what it would grant, judged against Purpose, which is what it was
+	// delegated.
+	Uses []string `json:"uses,omitempty"`
+	// Guidance is what Discobox knows about what the request was recognized
+	// as (GuidanceFor), set by the trusted side that builds the job and never
+	// by whoever observed the request (ADR 26-09-26-240 §4). It explains; it
+	// never authorizes.
+	Guidance []string `json:"guidance,omitempty"`
+	// Facts are what the control plane knows about the job's targets and the
+	// discobox asking, in its own words: that the discobox a request reads
+	// was created by the one asking, say. Like Guidance they are the trusted
+	// side's, set by what builds the job and never by a pool, and they are
+	// facts rather than authority: a fact explains a target, and never
+	// widens Purpose.
+	Facts []string `json:"facts,omitempty"`
+}
+
+// Input is what a command will read on standard input, as the discobox
+// showed it: text, and a sentence for whatever of it is not shown.
+type Input struct {
+	// Content is the input shown, which is text. It is empty when none of it
+	// could be shown, and Missing then says why.
+	Content string `json:"content"`
+	// Missing says, in a sentence for the judge, why Content is not the whole
+	// input: longer than may be shown, still arriving, not text, or a read
+	// that failed. It is said rather than hidden, as a body's is.
+	Missing string `json:"missing,omitempty"`
+}
+
+// Reported is what a discobox says about where a command runs. Every field is
+// optional, and every one is a claim: the discobox under judgement wrote it.
+type Reported struct {
+	// WorkingDirectory is the directory the command runs in.
+	WorkingDirectory string `json:"workingDirectory,omitempty"`
+	// RepositoryRoot is the root of the git checkout it runs in.
+	RepositoryRoot string `json:"repositoryRoot,omitempty"`
+	// RefCommit and RefSubject are the commit a git ref the command names
+	// resolves to, and that commit's subject line: the agent's own words
+	// about its work, reaching the judge by a second route (ADR 0090 §3).
+	RefCommit  string `json:"refCommit,omitempty"`
+	RefSubject string `json:"refSubject,omitempty"`
 }
 
 // Request is a request as the proxy saw it, before any credential was
@@ -118,70 +186,112 @@ type Request struct {
 	URL string `json:"url"`
 	// Headers are the headers worth weighing, redacted.
 	Headers map[string][]string `json:"headers,omitempty"`
+	// Protocol and Endpoint are what trusted code recognized the request as,
+	// when it recognized it (ADR 26-09-26-240 §1). Each brings its guidance.
+	Protocol *Recognition `json:"protocol,omitempty"`
+	Endpoint *Recognition `json:"endpoint,omitempty"`
 	// Body describes the request's body, and carries it once the judge has
 	// asked for it. A request with no body has none.
 	Body *Body `json:"body,omitempty"`
 }
 
-// Body is what the judge is told about a request's body.
+// Body is what the judge is told about a request's body, in the one shape it
+// is always told it in (ADR 26-09-26-240 §2).
 //
-// The first ask describes it and does not carry it: most requests are decided
-// by what they are and where they go, and a body sent every time is tokens
-// spent answering a question the URL has already settled. The judge asks to be
-// shown it when the operation lives in there (ADR 26-09-22-838 §6).
+// The first ask describes it: its media type and length, and — when a parser
+// recognized it — what that parser found worth knowing, which is small and is
+// what the operation is. The body's own bytes are shown only when the judge
+// asks for them, since most requests are decided by what they are and where
+// they go, and a body sent every time is tokens spent answering a question
+// already settled.
 type Body struct {
 	// MediaType is the content type as declared, if it was.
 	MediaType string `json:"mediaType,omitempty"`
 	// Length is how many bytes the body has, as far as that is known.
 	Length int64 `json:"length"`
-	// Form is how Content is written, and is empty until the judge has asked
-	// to be shown the body.
-	Form string `json:"form,omitempty"`
-	// Content is the body, in Form, redacted. It is present only once asked
-	// for, and only as much of it as the budget allowed.
-	Content string `json:"content,omitempty"`
+	// Parser is what read the body, when something recognized it.
+	Parser *Recognition `json:"parser,omitempty"`
+	// Metadata is what the parser found worth knowing, as a JSON object:
+	// the refs a push changes, the fields a form sends. It is redacted, like
+	// everything else shown, and is present from the first ask.
+	Metadata json.RawMessage `json:"metadata,omitempty"`
+	// ParseError says, in a sentence, why the parser named could not read a
+	// body that claims to be what it reads. A body that is not what it says
+	// is evidence, and is shown as such rather than described as something
+	// weaker (ADR 26-09-26-240 §1).
+	ParseError string `json:"parseError,omitempty"`
+	// Content is the body, redacted and rendered the way its parser renders
+	// it. It is absent until the judge asks to be shown the body, and then
+	// holds as much of it as the budget allowed, which may be none of it.
+	Content *string `json:"content,omitempty"`
 	// Missing says, in a sentence for the judge, why Content is not the whole
 	// body: larger than may be shown, not text, an encoding that could not be
 	// decoded. It is said rather than hidden, so the judge decides knowing
-	// what it is not being shown (ADR 26-09-22-838 §6).
+	// what it is not being shown.
 	//
 	// It is an answer to having been asked, never part of the first
-	// description: with Form set when that form showed some of the body, or
-	// none of it, and with Form empty when nothing could be shown at all.
+	// description: with Content set when some of the body was shown, or none
+	// of it, and with Content absent when nothing could be shown at all.
 	Missing string `json:"missing,omitempty"`
 }
 
-// Supplied reports whether the body has been shown to the judge at all.
-func (b *Body) Supplied() bool { return b != nil && b.Form != "" }
+// Supplied reports whether the judge has been answered about the body's own
+// bytes: shown some or all of them, or told why none can be.
+func (b *Body) Supplied() bool { return b != nil && (b.Content != nil || b.Missing != "") }
 
-// Answers reports whether asking for this again would change nothing, which
-// is a judge that has spent a round and decided nothing.
+// OperationInBody says why a request's operation is in its body, or nothing
+// when it is not known to be (ADR 26-09-26-240 §2). An allow for such a
+// request was about that body, and letting it stand for the route would allow
+// every other body sent there (Job.Admits).
 //
-// Nothing more can be shown when the body could not be shown at all, when the
-// form asked for is the one already shown and all of it arrived, when that
-// form showed none of it, or when what arrived is already everything this ask
-// allows. A larger budget, or the other form, can still show more.
+// It goes by what the request was recognized as, not by what its metadata
+// happened to say: a push is its ref updates whether or not they were read,
+// and an endpoint that reads its body does so for every request to it,
+// including one that happened to send none. An endpoint is taken to read its
+// body unless this package names it as one whose method and path are its
+// whole operation (operationOutsideBody). It is asked of the request an
+// allow is granted on and of every request a standing allow would cover. A
+// parser's generic description of a body — a JSON object's keys — is not
+// the operation, and does not stop a route standing; posting review comments
+// one call at a time is what standing allows are for (ADR 26-09-25-428).
+func (r *Request) OperationInBody() string {
+	switch {
+	case r == nil:
+		return ""
+	case r.Protocol != nil:
+		return "a request in a protocol Discobox recognized carries its operation in its body, and an allow for one does not stand"
+	case r.Endpoint != nil && !operationOutsideBody[r.Endpoint.Name]:
+		return "an endpoint whose operation Discobox reads from its body was allowed for that body, and the allow does not stand"
+	case r.Body != nil && r.Body.ParseError != "":
+		return "a body its parser could not read may be anything, and an allow for it does not stand"
+	default:
+		return ""
+	}
+}
+
+// Answers reports whether asking for the body again would change nothing,
+// which is a judge that has spent a round and decided nothing.
+//
+// Nothing more can be shown when none of it could be shown at all, when all
+// of it arrived, when none of it was shown and none would be again, or when
+// what arrived is already everything this ask allows. A larger budget can
+// still show more.
 func (b *Body) Answers(need Need) bool {
-	if b == nil {
-		return false
-	}
-	if !b.Supplied() {
-		// Described and not shown is the ordinary first ask. Described, with
-		// why it is not shown, is a body nothing can show in any form.
-		return b.Missing != ""
-	}
-	if b.Form != need.Body {
+	if b == nil || !b.Supplied() {
 		return false
 	}
 	switch {
+	case b.Content == nil:
+		// Asked, and nothing could be shown.
+		return true
 	case b.Missing == "":
 		// All of it arrived, whatever budget the ask names.
 		return true
-	case b.Content == "":
-		// This form showed none of it, and would again.
+	case *b.Content == "":
+		// None of it was shown, and none would be.
 		return true
 	default:
-		return len(b.Content) >= need.Budget()
+		return len(*b.Content) >= need.Budget()
 	}
 }
 
@@ -206,12 +316,24 @@ func (j Job) Validate() error {
 		if j.Round != 1 {
 			return errors.New("a command job is asked once: there is nothing further to show")
 		}
+		if j.Stdin != nil && len(j.Stdin.Content) > MaxBodyBytes {
+			return errors.New("the input shown exceeds what a judge may be shown")
+		}
+		if j.Stdin != nil && j.Stdin.Content == "" && strings.TrimSpace(j.Stdin.Missing) == "" {
+			return errors.New("an input with nothing shown says why")
+		}
+		if err := j.Reported.validate(); err != nil {
+			return err
+		}
 	case KindRequest:
 		if j.Request == nil {
 			return errors.New("a request job requires the request observed")
 		}
 		if strings.TrimSpace(j.Request.Method) == "" || strings.TrimSpace(j.Request.URL) == "" {
 			return errors.New("a request job requires the method and destination observed")
+		}
+		if !j.Request.Protocol.valid() || !j.Request.Endpoint.valid() {
+			return errors.New("what a request was recognized as is named, lower case, and versioned")
 		}
 		if err := j.Request.Body.validate(); err != nil {
 			return err
@@ -221,14 +343,40 @@ func (j Job) Validate() error {
 		// to having been asked, and a body described as unshowable before
 		// anyone asked reads as one nothing could ever show — which is how a
 		// large body would be refused on its size rather than read.
-		if j.Round == 1 && (j.Request.Body.Supplied() || j.Request.Body.missing() != "") {
+		if j.Round == 1 && j.Request.Body.Supplied() {
 			return errors.New("the first ask describes the body rather than showing it, or saying what of it cannot be shown")
 		}
-		if j.Round > 1 && !j.Request.Body.Supplied() && j.Request.Body.missing() == "" {
+		if j.Round > 1 && !j.Request.Body.Supplied() {
 			return errors.New("a later round answers what the judge asked to be shown")
+		}
+	case KindDelegation:
+		if j.Request != nil || len(j.Command) > 0 {
+			return errors.New("a delegation job carries neither a command nor a request")
+		}
+		if len(j.Uses) == 0 {
+			return errors.New("a delegation job requires the uses about to be handed on")
+		}
+		for _, use := range j.Uses {
+			if strings.TrimSpace(use) == "" {
+				return errors.New("a use about to be handed on says what it is for")
+			}
+		}
+		if j.Round != 1 {
+			return errors.New("a delegation job is asked once: there is nothing further to show")
 		}
 	default:
 		return fmt.Errorf("unknown judge job kind %q", j.Kind)
+	}
+	if j.Kind != KindCommand && (j.Stdin != nil || j.Reported != nil) {
+		return errors.New("only a command job reads standard input or runs somewhere")
+	}
+	if len(j.Facts) > MaxFacts {
+		return fmt.Errorf("a job carries at most %d facts", MaxFacts)
+	}
+	for _, fact := range j.Facts {
+		if strings.TrimSpace(fact) == "" {
+			return errors.New("a fact says something")
+		}
 	}
 	data, err := json.Marshal(j)
 	if err != nil {
@@ -240,29 +388,54 @@ func (j Job) Validate() error {
 	return nil
 }
 
+func (r *Reported) validate() error {
+	if r == nil {
+		return nil
+	}
+	for _, field := range []string{r.WorkingDirectory, r.RepositoryRoot, r.RefCommit, r.RefSubject} {
+		if len(field) > MaxReportedBytes {
+			return errors.New("what a discobox reports about where a command runs is a path or a line")
+		}
+	}
+	return nil
+}
+
 func (b *Body) validate() error {
 	if b == nil {
 		return nil
 	}
-	switch b.Form {
-	case "", FormText, FormJSON:
-	default:
-		return fmt.Errorf("a body is shown as %s or %s, not %q", FormText, FormJSON, b.Form)
+	if !b.Parser.valid() {
+		return errors.New("a body's parser is named, lower case, and versioned")
 	}
-	if b.Form == "" && b.Content != "" {
-		return errors.New("a body carrying content says which form it is in")
+	if b.Parser == nil && (len(b.Metadata) > 0 || b.ParseError != "") {
+		return errors.New("only a parser says what is in a body")
 	}
-	if len(b.Content) > MaxBodyBytes {
+	if len(b.Metadata) > 0 {
+		if len(b.Metadata) > MaxMetadataBytes {
+			return errors.New("a body's metadata exceeds what a parser may say about it")
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(b.Metadata, &fields); err != nil || fields == nil {
+			return errors.New("a body's metadata is one JSON object")
+		}
+	}
+	if b.Content != nil && len(*b.Content) > MaxBodyBytes {
 		return errors.New("the body shown exceeds what a judge may be shown")
 	}
 	return nil
 }
 
-func (b *Body) missing() string {
-	if b == nil {
-		return ""
+// CanShowBody reports whether asking to be shown this job's body could still
+// show something: a request job, before its last round, with a body there is
+// something of that has not already been shown in full. Prompt says so beside
+// the request; a judge that decides in code rather than in a model asks it
+// directly.
+func (j Job) CanShowBody() bool {
+	if j.Kind != KindRequest || j.Request == nil || j.Round >= MaxRounds {
+		return false
 	}
-	return b.Missing
+	body := j.Request.Body
+	return body != nil && body.Length != 0 && !body.Answers(Need{Body: true, Bytes: MaxBodyBytes})
 }
 
 // Prompt is the job as the judge receives it: JSON, so that the boundary
@@ -271,6 +444,10 @@ func (b *Body) missing() string {
 func Prompt(j Job) (string, error) {
 	if err := j.Validate(); err != nil {
 		return "", err
+	}
+	j.BodyCanBeShown, j.AsksLeft = false, 0
+	if j.CanShowBody() {
+		j.BodyCanBeShown, j.AsksLeft = true, MaxRounds-j.Round
 	}
 	data, err := json.Marshal(j)
 	if err != nil {

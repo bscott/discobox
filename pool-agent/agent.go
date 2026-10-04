@@ -331,6 +331,17 @@ func Serve(ctx context.Context, logger *slog.Logger, bootstrap Bootstrap, regist
 				Progress: []SandboxProgress{progress},
 			})
 		})
+		// The control plane, not this pool, decides which sandboxes exist, so the
+		// tree reaper runs only where it can be asked (ADR 26-10-01-876). An agent
+		// with no channel to it reaps no sandbox tree.
+		go runtime.WatchSandboxVolumes(ctx, logger, func(listCtx context.Context) ([]string, error) {
+			return reporter.ListHeldSandboxes(listCtx, HeldSandboxesRequest{
+				ControlPlaneURL: bootstrap.ControlPlaneURL,
+				ProjectID:       bootstrap.ProjectID,
+				PoolID:          bootstrap.PoolID,
+				PrivateKey:      registration.PrivateKey,
+			})
+		})
 		// reporter's concrete client (HTTPClient in production) also implements
 		// SandboxAgentStatusClient; test doubles that only implement
 		// SandboxStateClient simply skip starting the poller.

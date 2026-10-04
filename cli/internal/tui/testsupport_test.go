@@ -197,6 +197,19 @@ type fakeSource struct {
 	serviceLogs    map[string][]byte
 	serviceLogsErr error
 
+	// audit is what a followed audit timeline delivers: a test sends on it
+	// and FollowAudit hands each update on. auditFollows records which
+	// discoboxes were followed and auditStops how many follows have ended;
+	// auditDetails is what AuditDetail answers, by record ID.
+	audit        chan AuditUpdate
+	auditFollows []string
+	auditStops   int
+	auditDetails map[string]string
+	auditReads   []string
+	// auditBodies are the recordings AuditBody answers, by "ID/part"; a
+	// record has on its card the parts it has here.
+	auditBodies map[string]string
+
 	// forward is what the workspace's port forward reports, and forwardErr
 	// fails opening one. forwards counts the ones opened and closed, so a test
 	// can hold the window to the rule that a workspace releases its ports.
@@ -217,7 +230,11 @@ type fakeSource struct {
 	pushCalls []string
 
 	// Calls, in order.
-	drafts      []string // "folder prompt"
+	drafts []string // "folder prompt"
+	views  []savedView
+	// freshFolder is a folder no window has narrowed yet, which opens on
+	// every server, folder and tag rather than on its own folder.
+	freshFolder bool
 	runs        []RunRequest
 	did         []string     // "verb id"
 	renames     []string     // "id name"
@@ -330,7 +347,17 @@ func testHarnesses() []Harness {
 	}
 }
 
-func (f *fakeSource) Session(context.Context) (Session, error) { return f.session, nil }
+// Session is the fake's session. Unless a test says the folder is a fresh one,
+// it hands back a view saved on the window's own folder: most tests are about
+// one folder's discoboxes, which is what a window left narrowed there opens on.
+func (f *fakeSource) Session(context.Context) (Session, error) {
+	s := f.session
+	if !f.freshFolder && s.View.IsZero() {
+		own := s.folder()
+		s.View = ListView{FolderKey: own.key, FolderLabel: own.label, FolderSource: own.source, FolderLocal: own.local}
+	}
+	return s, nil
+}
 
 func (f *fakeSource) MarkWelcomed(context.Context) error {
 	f.mu.Lock()
@@ -344,6 +371,20 @@ func (f *fakeSource) MarkWelcomed(context.Context) error {
 func (f *fakeSource) SaveDraft(_ context.Context, folder, prompt string) error {
 	f.drafts = append(f.drafts, folder+" "+prompt)
 	return f.draftErr
+}
+
+// savedView is one SaveView call.
+type savedView struct {
+	folder string
+	view   ListView
+}
+
+// SaveView records the filters the window handed the store, in order.
+func (f *fakeSource) SaveView(_ context.Context, folder string, view ListView) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.views = append(f.views, savedView{folder: folder, view: view})
+	return nil
 }
 
 func (f *fakeSource) List(context.Context) (Listing, error) {
@@ -824,6 +865,60 @@ func (f *fakeSource) ServiceLogs(_ context.Context, _, serviceID string) ([]byte
 		return nil, f.serviceLogsErr
 	}
 	return f.serviceLogs[serviceID], nil
+}
+
+func (f *fakeSource) FollowAudit(ctx context.Context, sandboxID string, report func(AuditUpdate)) error {
+	f.mu.Lock()
+	f.auditFollows = append(f.auditFollows, sandboxID)
+	feed := f.audit
+	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		f.auditStops++
+		f.mu.Unlock()
+	}()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case update := <-feed:
+			report(update)
+		}
+	}
+}
+
+func (f *fakeSource) AuditDetail(_ context.Context, _, recordID string) (AuditRecordDetail, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.auditReads = append(f.auditReads, recordID)
+	text, ok := f.auditDetails[recordID]
+	if !ok {
+		return AuditRecordDetail{}, fmt.Errorf("no audit record %s", recordID)
+	}
+	detail := AuditRecordDetail{Text: text}
+	for _, part := range []string{AuditRequestBody, AuditResponseBody, AuditStream} {
+		if _, ok := f.auditBodies[recordID+"/"+part]; ok {
+			detail.Recordings = append(detail.Recordings, part)
+		}
+	}
+	return detail, nil
+}
+
+func (f *fakeSource) AuditBody(_ context.Context, _, recordID, part string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.auditReads = append(f.auditReads, recordID+"/"+part)
+	body, ok := f.auditBodies[recordID+"/"+part]
+	if !ok {
+		return "", fmt.Errorf("no %s recorded for %s", part, recordID)
+	}
+	return body, nil
+}
+
+func (f *fakeSource) auditState() (follows []string, stops int, reads []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.auditFollows...), f.auditStops, append([]string(nil), f.auditReads...)
 }
 
 func (f *fakeSource) DoService(_ context.Context, verb ServiceVerb, sandboxID, serviceID string) error {
@@ -1340,14 +1435,66 @@ func frameText(m *Model) string { return strings.Join(frame(m), "\n") }
 // set to the directory it is running in.
 func showAllFolders(t *testing.T, m *Model) {
 	t.Helper()
-	send(t, m, keyPress("tab"), keyPress("up"), keyPress("left"))
+	send(t, m, keyPress("tab"))
+	filterTo(t, m, allFolders)
 	if m.list.folder.key != "" {
 		t.Fatalf("folder filter is %q, want every folder", m.list.folder.label)
 	}
-	send(t, m, keyPress("down"))
+	if m.focus == focusFilter {
+		send(t, m, keyPress("down"))
+	}
 	if m.focus != focusList {
 		t.Fatalf("focus = %v, want the list", m.focus)
 	}
+}
+
+// filterTo opens the header's filter card and marks the choice reading each
+// label, then applies them, the way a person would: ↑ ↓ to the row, Space to
+// mark it, Enter to show what is marked (the cursor rests on the last mark). A label is matched on the first row
+// reading it, and "Group: label" names the group where two could read alike.
+func filterTo(t *testing.T, m *Model, labels ...string) {
+	t.Helper()
+	m.dialog = m.filterDialog()
+	for _, label := range labels {
+		markFilter(t, m, label)
+	}
+	send(t, m, keyPress("enter"))
+	if m.dialog != nil {
+		t.Fatalf("the filter card is still up after Enter")
+	}
+}
+
+// markFilter moves the open filter card's cursor to the row reading label and
+// marks it with Space.
+func markFilter(t *testing.T, m *Model, label string) {
+	t.Helper()
+	if m.dialog == nil || m.dialog.kind != dlgFilter {
+		t.Fatal("the filter card is not open")
+	}
+	group, want, grouped := strings.Cut(label, ": ")
+	if !grouped {
+		want = label
+	}
+	p := m.dialog.filter
+	at := -1
+	var seen []string
+	for i, row := range p.rows() {
+		seen = append(seen, row.group+": "+row.label)
+		if row.label == want && (!grouped || row.group == group) {
+			at = i
+			break
+		}
+	}
+	if at < 0 {
+		t.Fatalf("the filter card has no %q among %q", label, seen)
+	}
+	for p.cursor < at {
+		send(t, m, keyPress("down"))
+	}
+	for p.cursor > at {
+		send(t, m, keyPress("up"))
+	}
+	send(t, m, keyPress(" "))
 }
 
 func testSandboxes() []Sandbox {

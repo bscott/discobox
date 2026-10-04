@@ -341,6 +341,7 @@ func (s *Service) copySecret(ctx context.Context, sourceProjectID, projectID, so
 		UniqueKey:      uniqueKey,
 		Anonymous:      sourceSecret.Anonymous,
 		Format:         sourceSecret.Format,
+		FormatSet:      sourceSecret.FormatSet,
 		MaxGrantTTL:    sourceSecret.MaxGrantTTL,
 		EncryptedValue: plaintext,
 	}
@@ -374,7 +375,7 @@ func (s *Service) copyGrants(ctx context.Context, sourceConfig *model.HarnessCon
 			SecretID:  secretID,
 			Scope:     model.SecretGrantScopeHarnessConfig,
 			ScopeKey:  config.ID,
-			Host:      grant.Host,
+			Hosts:     grant.Hosts,
 			GrantedBy: grant.GrantedBy,
 			ExpiresAt: grant.ExpiresAt,
 		}); err != nil {

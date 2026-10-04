@@ -274,7 +274,11 @@ pass the pool's start gate first; see [Clearing the Pool's Caches](#clearing-the
 sandbox-directed routes — the HTTP proxy, the sandbox-agent proxy, the Git
 proxy, and the SSH ingress's TCP tunnel route (ADR 0024 §7) — start a stopped
 sandbox before proxying (`server/autostart.go`), and ten concurrent requests
-produce one start. Control operations never auto-start.
+produce one start. Control operations never auto-start. A failed on-demand
+start refuses the routes that reach into the sandbox with its error, so a runtime
+failure such as a missing bind mount is not hidden behind a missing sandbox IP
+address. The Git routes still serve: the pool host answers them from the
+sandbox's files, so the work in a sandbox that cannot start can still be fetched.
 
 Every start — explicit, restart, or auto-start — first writes the pool's current
 idle timeout into the sandbox's `sandbox.json` (`applySandboxIdleTimeout`,
@@ -320,9 +324,11 @@ the strength of the response (ADR 0022 §§3, 5-6).
 - `create` clears the marker, which is the whole of what unarchiving needs here:
   the reuse-the-existing-tree path already restores the sandbox.
 
-The marker is what makes retained data legible as retained. On disk an archived
-sandbox and one whose container was lost out of band are the same shape, and
-only the marker separates "held by intent" from "garbage awaiting the reaper".
+The marker is what makes an archived tree legible as archived here: on disk an
+archived sandbox and one whose container was lost are the same shape, and only
+the archived one refuses an on-demand start. It is not what keeps the tree —
+both are sandboxes the control plane holds, and the volume reaper keeps every
+tree the control plane holds (below).
 
 ### The durable tree travels
 
@@ -377,28 +383,39 @@ The runtime rebuilds any container whose recorded spec fingerprint no longer
 matches the one the control plane sent, which covers image upgrades and every
 other spec change through one comparison (ADR 0017 §5). A container carrying no
 fingerprint label predates that label; it is compared against the pinned image
-digest instead, so a missing label never reads as "converged".
+digest instead, so a missing label never reads as "converged". The old
+container is removed only once the new image is on the host, so a re-pin whose
+image cannot be obtained leaves the sandbox the container it had.
 
 Separately, persisted per-sandbox proxy material supplies a periodic
 level-triggered sweep that reclaims the material of sandboxes that no longer
 have a container here. That is only about reclaiming disk; sandbox loss travels
 on the state channel.
 
-The runtime reaps its own dead sandboxes' persistent volume trees
-(`pools/{pool_id}/sandboxes/{sandbox_id}`) on the same backstop, keeping each for
-a 24h retention window after it is first seen dead (a tombstone starts the
-clock). That window is accident recovery — a container removed out of band or
-lost while the pool was down — and covers only what never runs through
-`delete`. Archived trees are skipped entirely: deliberate retention is a
-control-plane policy with a per-project length the agent does not know, enforced
-by an explicit `delete` when it expires (ADR 0022 §4).
+Sandbox durable trees (`pools/{pool_id}/sandboxes/{sandbox_id}`) are reaped
+against the control plane's answer, never against containers
+(`WatchSandboxVolumes`, ADR 26-10-01-876). The agent is not the authority on
+which sandboxes exist: a missing container is what a failed rebuild, a settled
+failure awaiting repair, and an archive all look like. Every ten minutes it
+lists its trees, then asks the control plane which sandboxes it holds on this
+pool (`GET /api/pools/{pool_id}/sandboxes`) — every row in any state, archived,
+failed and mid-delete included. A tree outside that set gets a
+`.discobox-unheld-at` marker, is reaped once that is 24h old, and has the
+marker cleared if it comes back into the set; a held tree is kept indefinitely.
+No answer reaps nothing, and an agent with no channel to the control plane runs
+no reaper. Deletion does not wait for this: `delete` removes the tree itself and
+confirms (ADR 0022 §3), so the reaper only collects trees with no row at all —
+an import that died before its row was written, a row removed without its
+delete reaching this pool. The 24h window is the margin against a wrong answer,
+and covers an import's tree restored before its row exists (ADR 0123 §3).
 
 All per-sandbox state is project- and pool-scoped by path — sandbox
 volume trees live under `projects/{project_id}/pools/{pool_id}/` and proxy
 material under `proxy/projects/{project_id}/pools/{pool_id}/` — so agents
 sharing a host daemon never reap each other's data. Both trees carry the same
 scoping because a reaper's scan must not be wider than the authority it is
-given (see `pool-sync` below); the shared per-host CA material and client
+given (see `pool-sync` below), and the held set is one pool wide for the same
+reason; the shared per-host CA material and client
 certificates stay outside them, keyed by globally unique sandbox ID.
 
 A standing poller (`startSandboxAgentStatusPoller`, `statuspoll.go`) checks
@@ -743,6 +760,13 @@ flowchart LR
   create either builds volumes (`prepareSandboxVolumes`) or resumes a pushed
   source against an existing container (`materializePushedSources`), and each
   finishes with the source in place.
+- A local source whose client branch tracks a network remote carries that
+  remote's URL (`upstreamUrl`), and `configureUpstreamRemote` adds it as a
+  remote named `upstream` — always that name, because the client's is nearly
+  always `origin`, which here is the client's repository. Only the remote is
+  added: the branch keeps tracking `origin`. Unlike `origin` it is written once,
+  inside `materializeGitSource`: the sandbox depends on nothing it holds, so it
+  belongs to whoever works in the sandbox, and repair leaves it as they left it.
 - Normalize provider-owned source destination defaults before both mounting
   sources and writing the public sandbox manifest so manifest consumers observe
   the paths actually used by the runtime.
@@ -837,7 +861,10 @@ flowchart LR
   It forwards local plaintext proxy traffic to the pool host proxy over mTLS.
 - The proxy unit resolves sentinels through `proxyagent.secretResolver`, which
   calls the control plane with the scoped token the agent process writes to this
-  pool's resolve-context file.
+  pool's resolve-context file. It hands the proxy the secret the answer names
+  with the value, which the proxy records on every request it swaps the value
+  into
+  ([ADR 26-10-01-240](../docs/adr/26-10-01-240-a-swapped-request-records-the-secrets-it-spent.md)).
 - The same resolver reports back what an upstream made of a credential it
   handed over: a `401` the proxy's retry could not save, and the clearance when
   one starts working again
@@ -883,18 +910,51 @@ flowchart LR
   explicit allow allows. This also covers a sandbox's own calls to the discobox
   API, which the gate admits through the same contract — and whose operation is
   usually in the body.
-- **A judge that asks to see the body is shown it** (`judgebody.go`; ADR
-  26-09-22-838 §6). The next round carries it in the form asked for — text as
-  sent, or JSON written back compacted from the token stream so a key said
-  twice is shown twice — cut to the judge's budget, with `Missing` saying what
-  was cut or why nothing could be shown: not text, not JSON, an encoding other
-  than gzip, too large to parse, or not arrived within `bodyArrivalWait`. A
-  judge still asking on round `judge.MaxRounds`, or asking again for what
+- **A request is recognized before it is judged** (`recognize.go`; ADR
+  26-09-26-240 §1): its protocol (`protocols`: a git push) from its method,
+  path and media type, and its endpoint (`endpoints`: GitHub's fork, the
+  discobox API's create through the gate, and the calls `discobox new` makes
+  after it to finish the discobox — the poll, the source push into its
+  origin, and the report that the push is done) from its host, method and
+  path. Both are built-in, ordered registries — a new protocol
+  or API is one entry and its tests — and the names go to the control plane,
+  which adds the guidance the judge package keeps for them; a pool never sends
+  guidance of its own.
+- **A body is always shown in one shape** (`judgebody.go`; ADR 26-09-26-240
+  §2–3). A `bodyParser` is chosen by the protocol, or else by media type
+  (JSON, form, multipart, text), and says what it found in the same terms. The
+  first ask carries the parser's metadata — a push's ref updates, read the way
+  git's `receive-pack` reads them (`gitpush.go`), a JSON object's keys and
+  what its endpoint lifts out of it (`endpoints.go`: where a fork lands; the
+  grants and their count (said when none, so a clipped prompt is not read as
+  hidden grants), assigned secrets, set variable names, prompt start and
+  sources of a discobox create, whose grants sit last behind a prompt of
+  kilobytes), a
+  form's field names, a multipart body's parts —
+  redacted and held to `judge.MaxMetadataBytes`: every string clipped and every
+  list capped first, so a body shaped to be expensive costs a fixed amount,
+  then the longest list cut (`boundMetadata`). A body its parser cannot read —
+  not what it claims, not arrived, an encoding the proxy does not decode — has
+  `ParseError` saying so rather than nothing said. An endpoint names the parser
+  its API reads the body with (a fork's JSON), which outranks the media type
+  the sandbox labeled it. A parser with nothing to
+  say ahead of being asked (text) spares the first ask a read. When the judge
+  asks, the next round shows the body the way its parser renders it — JSON
+  written back compacted from the token stream so a key said twice is shown
+  twice, anything else as sent — cut to the judge's budget, with `Missing`
+  saying what was cut or why nothing could be shown: not text, an encoding
+  other than gzip, too large, or not arrived within `bodyArrivalWait`. A judge
+  still asking on round `judge.MaxRounds`, or asking again for what
   `Body.Answers` says it was already shown, has decided nothing, and that
   refuses. The rounds for one use share one deadline, `judgeHTTPTimeout`, and
   each ask carries what is left of it (`timeoutMillis`), which the control
   plane bounds that ask by — so a slow later round is refused with a sentence,
   not cut off here as a silence.
+- **A refused request is told no in its own protocol when it has a way**
+  (`Verdict.Refuse`; ADR 26-09-26-240 §5). A git push is answered as a git
+  server rejects one — report-status `ng` for every ref, the sentence on the
+  progress band — so `git push` prints the reason where a 403 it prints as
+  `HTTP 403` and nothing else.
 - **What the judge is shown is not what was sent.** Every sentinel is taken out
   through the proxy's own scan (`proxy.RedactSentinels`), so the base64 form
   goes too. Headers are an allowlist: the ones that say what an operation is
@@ -920,7 +980,8 @@ flowchart LR
   contract counts bytes and cannot say "unknown", so a chunked upload is not
   described at all rather than described as empty. Every sentinel is taken out
   of a shown body before it is cut, so no cut can leave part of one behind.
-- **A server that does not judge is not a refusal.** It says so with a problem
+- **A server that does not judge requests is not a refusal.** Request
+  judging is a server's opt-in (`judgeCredentials`). It says so with a problem
   type a program can recognize, and the pool remembers that for a few minutes
   and allows in the meantime, so an opted-out server does not put a
   control-plane call in front of every credential its discoboxes spend. That
@@ -970,20 +1031,32 @@ back at swap time are one act. Splitting them across processes would put a file
 and a race between the moment a sandbox is handed a sentinel and the moment the
 proxy would recognize it.
 
-- `list` and `request` are relayed to the control plane unchanged. `get` records
-  the caller's verdict to the control plane before it mints — a write failure
-  there stops the mint, so a value is never issued with no record of why — and
-  a refusal that never reaches `get` at all is relayed on its own, through the
-  denial-report call ([ADR 0091](../docs/adr/0091-a-credential-is-not-issued-without-a-verdict-on-record.md)).
+- `list` and `request` are relayed to the control plane unchanged. `get` puts
+  the declared command — argv, stdin evidence and what the sandbox reported
+  about where it runs — to the project's judge
+  (`POST /api/pools/{poolId}/judge-commands`,
+  [ADR 26-09-22-838](../docs/adr/26-09-22-838-a-dedicated-pool-harness-judges-commands-and-credential-bearing-requests.md) §3)
+  and mints only on an explicit allow. The control plane records the verdict
+  before it answers, so nothing is minted without one on record
+  ([ADR 0091](../docs/adr/0091-a-credential-is-not-issued-without-a-verdict-on-record.md)).
+  Unlike a request, a command fails closed on every non-answer: a refusal, an
+  unreachable judge, an unreadable answer. The one exception is the server's
+  own judging-disabled problem (`judgeCommands: false`,
+  [ADR 26-10-02-054](../docs/adr/26-10-02-054-commands-are-judged-by-default-and-requests-by-opt-in.md)),
+  which mints with no verdict. A use waits up to `credentialUseTimeout`, the
+  judge's whole deadline plus the calls around it.
 - **Activations** (`activations.go`) are in-memory and pool-local: ephemeral
-  sentinel → `{stable sentinel, useId, host, declared command, expiry}`. They are
+  sentinel → `{stable sentinel, useId, hosts, declared command, expiry}`. They are
   disposable by design — a restart costs a dead sentinel and one fresh `get`,
   which fails closed. `activationTTL` is the *use* clock; the grant's expiry on
   the control plane is the *consent* clock, and a value dies at whichever comes
   first.
 - **The resolver checks activations first.** A sentinel it minted is refused
   unless the activation is live, belongs to the calling sandbox, and the
-  destination matches the host its use was approved for; only then is it
+  destination is covered by one of the hosts its use was approved for
+  ([ADR 26-10-02-393](../docs/adr/26-10-02-393-a-credential-request-and-its-grant-may-name-several-hosts.md)).
+  An activation with no host covers nothing rather than everything; only then
+  is it
   translated to the stable sentinel and resolved normally. The control plane
   never learns ephemeral sentinels exist.
 - **`policyPublisher` owns the proxy's per-client policy**, merging the stable

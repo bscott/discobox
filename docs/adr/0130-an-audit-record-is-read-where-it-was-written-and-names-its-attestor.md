@@ -1,6 +1,7 @@
 # 0130 — An audit record is read where it was written, and names its attestor
 
-- **Status**: Accepted
+- **Status**: Accepted (§3's empty field for an ordinary injected sentinel superseded by
+  [26-10-01-240](26-10-01-240-a-swapped-request-records-the-secrets-it-spent.md))
 - **Date**: 2026-09-16
 - **Relates to**: [ADR 0091](0091-a-credential-is-not-issued-without-a-verdict-on-record.md),
   whose closing paragraph — "nothing in the sandbox is a place to keep a record

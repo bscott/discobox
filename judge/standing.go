@@ -193,7 +193,9 @@ func (r Route) Matches(method, rawURL string) bool {
 
 // Admits reports whether an allow's standing route may stand, which Discobox
 // decides and the judge does not (ADR 26-09-25-428 §2): the job was decided on
-// its first round, before any body was shown; the route names its target in
+// its first round, before the body's content was shown, and on a request whose
+// operation is not in its body (Request.OperationInBody); the route names its
+// target in
 // at least one literal segment, so that no route is every path of one method
 // at the host; it stands for some time; and it covers the very request it was
 // granted on. A route that fails any of these was not derived from the
@@ -204,6 +206,9 @@ func (j Job) Admits(standing Standing) (Route, error) {
 	}
 	if j.Round != 1 || j.Request.Body.Supplied() {
 		return Route{}, errors.New("an allow that needed the body was about that body, and does not stand")
+	}
+	if why := j.Request.OperationInBody(); why != "" {
+		return Route{}, errors.New(why)
 	}
 	if standing.Duration() <= 0 {
 		return Route{}, errors.New("a standing allow stands for some seconds")

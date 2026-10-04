@@ -96,6 +96,9 @@ components:
                     maxLength: 63
                     pattern: ^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$
                     type: string
+                upstreamUrl:
+                    description: URL to configure as the checkout's upstream remote once the source is materialized. The checked-out branch keeps tracking origin.
+                    type: string
                 url:
                     format: uri
                     type: string
@@ -525,6 +528,11 @@ components:
                 status:
                     description: Response status; zero when no response was received
                     type: integer
+                swappedSecretIds:
+                    description: Secrets whose values were swapped into this request, by ID, whatever kind of sentinel stood in for them. It is optional because a pool agent older than ADR 26-10-01-240 does not send it, and absent means no secret was named.
+                    items:
+                        type: string
+                    type: array
                 swappedUseIds:
                     description: Approved credential uses whose sentinels were swapped into this request
                     items:
@@ -679,6 +687,11 @@ components:
                 streamSessionId:
                     description: The upgraded stream's session
                     type: string
+                swappedSecretIds:
+                    description: Secrets whose values were swapped into this request, by ID, whatever kind of sentinel stood in for them. It is optional because a pool agent older than ADR 26-10-01-240 does not send it, and absent means no secret was named.
+                    items:
+                        type: string
+                    type: array
                 swappedUseIds:
                     description: Approved credential uses whose sentinels were swapped into this request
                     items:

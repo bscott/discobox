@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -29,8 +30,6 @@ type fakeService struct {
 	requestIDs   []string
 	trustIDs     []string
 	getErr       error
-	gotDenial    agentcreds.DenialReport
-	denialErr    error
 	// predatesPurpose answers as a service that knows no purposes: it drops
 	// the field and reports none.
 	predatesPurpose bool
@@ -71,11 +70,6 @@ func (f *fakeService) Get(_ context.Context, body agentcreds.UseBody) (agentcred
 		return agentcreds.UseResponse{}, f.getErr
 	}
 	return agentcreds.UseResponse{EnvVar: "GITHUB_TOKEN", Value: "ghp_stand_in"}, nil
-}
-
-func (f *fakeService) ReportDenial(_ context.Context, body agentcreds.DenialReport) error {
-	f.gotDenial = body
-	return f.denialErr
 }
 
 func (f *fakeService) Trusts(context.Context) ([]agentcreds.Trust, error) {
@@ -136,7 +130,7 @@ func TestListJSONCarriesUseIDsForTheNextCall(t *testing.T) {
 	serve(t, &fakeService{credentials: []agentcreds.Credential{{
 		Name:   "github",
 		EnvVar: "GITHUB_TOKEN",
-		Host:   "api.github.com",
+		Hosts:  []string{"api.github.com"},
 		Uses:   []agentcreds.Use{{UseID: "use_7f3c", Description: "Open a PR"}},
 	}}})
 
@@ -163,7 +157,7 @@ func TestRequestJSONPreservesShellHostileText(t *testing.T) {
 	body, err := json.Marshal(requestInput{
 		Name:          "github",
 		EnvVar:        "GITHUB_TOKEN",
-		Host:          "api.github.com",
+		Hosts:         []string{"api.github.com"},
 		Justification: justification,
 		Uses:          []agentcreds.RequestedUse{{Description: "Open a PR against the current repo"}},
 	})
@@ -190,7 +184,7 @@ func TestRequestCarriesTheLifetimeAskedFor(t *testing.T) {
 	svc := &fakeService{}
 	serve(t, svc)
 
-	body := `{"name":"github","envVar":"GITHUB_TOKEN","host":"api.github.com","uses":[{"description":"Open a PR"}],"grantTTLSeconds":14400}`
+	body := `{"name":"github","envVar":"GITHUB_TOKEN","hosts":["api.github.com"],"uses":[{"description":"Open a PR"}],"grantTTLSeconds":14400}`
 	if _, stderr, code := capture(t, body, func() int { return Run([]string{"request", "--json"}) }); code != exitOK {
 		t.Fatalf("exit = %d, want 0: %s", code, stderr)
 	}
@@ -198,7 +192,7 @@ func TestRequestCarriesTheLifetimeAskedFor(t *testing.T) {
 		t.Fatalf("grantTTLSeconds = %d, want the 14400 the JSON asked for", svc.gotRequest.GrantTTLSeconds)
 	}
 
-	flags := []string{"request", "--name", "github", "--env-var", "GITHUB_TOKEN", "--host", "api.github.com", "--use", "Open a PR"}
+	flags := []string{"request", "--name", "github", "--env-var", "GITHUB_TOKEN", "--hosts", "api.github.com", "--use", "Open a PR"}
 	svc.gotRequest = agentcreds.RequestBody{}
 	if _, stderr, code := capture(t, "", func() int { return Run(append(flags, "--grant-ttl", "30m")) }); code != exitOK {
 		t.Fatalf("exit = %d, want 0: %s", code, stderr)
@@ -211,14 +205,14 @@ func TestRequestCarriesTheLifetimeAskedFor(t *testing.T) {
 	if _, _, code := capture(t, "", func() int { return Run(append(flags, "--grant-ttl", "1500ms")) }); code != exitUsage {
 		t.Fatalf("exit = %d, want a usage error for a lifetime in fractions of a second", code)
 	}
-	negative := `{"name":"github","envVar":"GITHUB_TOKEN","host":"api.github.com","uses":[{"description":"Open a PR"}],"grantTTLSeconds":-1}`
+	negative := `{"name":"github","envVar":"GITHUB_TOKEN","hosts":["api.github.com"],"uses":[{"description":"Open a PR"}],"grantTTLSeconds":-1}`
 	if _, _, code := capture(t, negative, func() int { return Run([]string{"request", "--json"}) }); code != exitUsage {
 		t.Fatalf("exit = %d, want a usage error for a negative lifetime", code)
 	}
 	// The ceiling matters more than the floor: an ask nobody bounded is how a
 	// human ends up one keystroke from a credential that outlives the work, and
 	// one big enough to overflow a duration reads as forever.
-	tooLong := fmt.Sprintf(`{"name":"github","envVar":"GITHUB_TOKEN","host":"api.github.com","uses":[{"description":"Open a PR"}],"grantTTLSeconds":%d}`, int64(agentcreds.MaxGrantTTLSeconds)+1)
+	tooLong := fmt.Sprintf(`{"name":"github","envVar":"GITHUB_TOKEN","hosts":["api.github.com"],"uses":[{"description":"Open a PR"}],"grantTTLSeconds":%d}`, int64(agentcreds.MaxGrantTTLSeconds)+1)
 	if _, stderr, code := capture(t, tooLong, func() int { return Run([]string{"request", "--json"}) }); code != exitUsage {
 		t.Fatalf("exit = %d, want a usage error for an ask over the ceiling: %s", code, stderr)
 	}
@@ -358,7 +352,7 @@ func TestRequestNamesAWellKnownCredentialByID(t *testing.T) {
 func TestRequestJSONRejectsUnknownFields(t *testing.T) {
 	serve(t, &fakeService{})
 
-	_, stderr, code := capture(t, `{"name":"github","envVar":"T","host":"h","reason":"oops"}`, func() int {
+	_, stderr, code := capture(t, `{"name":"github","envVar":"T","hosts":["h"],"reason":"oops"}`, func() int {
 		return Run([]string{"request", "--json"})
 	})
 	if code != exitUsage {
@@ -376,15 +370,10 @@ func TestRequestJSONRejectsUnknownFields(t *testing.T) {
 	}
 }
 
-// The judge is not the only thing that can say no: the service still can, at
-// the use call, after a command it approved of. That denial must surface with
-// the same stable code as a refusal the judge made itself.
+// Every refusal at the use call — the judge's, or a use no longer live —
+// surfaces with the same stable code.
 func TestDenialFromTheServiceIsReportedAsAStableCode(t *testing.T) {
-	stubJudge(t, allowScript)
-	serve(t, &fakeService{
-		credentials: judgeCredentials(),
-		getErr:      fmt.Errorf("%w: no live approved use", agentcreds.ErrDenied),
-	})
+	serve(t, &fakeService{getErr: fmt.Errorf("%w: no live approved use", agentcreds.ErrDenied)})
 
 	_, stderr, code := capture(t, "", func() int {
 		return Run([]string{"run", "--use", "use_7f3c", "--json", "--", "sh", "-c", "exit 0"})
@@ -405,11 +394,58 @@ func TestDenialFromTheServiceIsReportedAsAStableCode(t *testing.T) {
 	}
 }
 
+// A command the service refuses never starts, and the agent reads why: the
+// judge's own sentence, with the code it branches on (ADR 26-09-22-838 §3).
+func TestRunNeverStartsACommandTheServiceRefuses(t *testing.T) {
+	serve(t, &fakeService{getErr: fmt.Errorf("%w: deleting the repository is not opening a PR", agentcreds.ErrDenied)})
+	marker := filepath.Join(t.TempDir(), "ran")
+
+	_, stderr, code := capture(t, "", func() int {
+		return Run([]string{"run", "--use", "use_7f3c", "--", "sh", "-c", "touch " + marker})
+	})
+	if code != exitError || !strings.Contains(stderr, "deleting the repository") {
+		t.Fatalf("exit = %d, stderr %q; want 1 and the judge's reason", code, stderr)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a refused command ran")
+	}
+}
+
+// What run sends with the argv is what the judge needs to read it: where it
+// runs, here the working directory.
+func TestRunReportsWhereTheCommandRuns(t *testing.T) {
+	svc := &fakeService{}
+	serve(t, svc)
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if _, _, code := capture(t, "", func() int {
+		return Run([]string{"run", "--use", "use_7f3c", "--", "true"})
+	}); code != exitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	wd, _ := os.Getwd()
+	if svc.gotUse.Reported == nil || svc.gotUse.Reported.WorkingDirectory != wd {
+		t.Fatalf("reported = %#v, want the working directory %q", svc.gotUse.Reported, wd)
+	}
+}
+
+// A use is named, or there is nothing to ask for.
+func TestRunWithoutAUseIsInvalid(t *testing.T) {
+	svc := &fakeService{}
+	serve(t, svc)
+	_, _, code := capture(t, "", func() int {
+		return Run([]string{"run", "--", "true"})
+	})
+	if code != exitError || svc.gotUse.UseID != "" || len(svc.gotUse.Command) != 0 {
+		t.Fatalf("exit = %d, use call %#v; want 1 and no use call", code, svc.gotUse)
+	}
+}
+
 // run's contract: the argv it declares is the argv it executes, and the child's
 // exit status is the wrapper's.
 func TestRunDeclaresTheCommandItExecutesAndPassesTheExitCode(t *testing.T) {
-	stubJudge(t, allowScript)
-	svc := &fakeService{credentials: judgeCredentials()}
+	svc := &fakeService{}
 	serve(t, svc)
 
 	_, _, code := capture(t, "", func() int {
@@ -430,8 +466,7 @@ func TestRunDeclaresTheCommandItExecutesAndPassesTheExitCode(t *testing.T) {
 }
 
 func TestRunInjectsTheValueOnlyIntoTheChild(t *testing.T) {
-	stubJudge(t, allowScript)
-	serve(t, &fakeService{credentials: judgeCredentials()})
+	serve(t, &fakeService{})
 	t.Setenv("GITHUB_TOKEN", "stale-value-that-must-not-win")
 
 	stdout, _, code := capture(t, "", func() int {
@@ -449,8 +484,7 @@ func TestRunInjectsTheValueOnlyIntoTheChild(t *testing.T) {
 }
 
 func TestRunPointsTheDiscoboxCLIAtTheAPIWhenNoServerIsNamed(t *testing.T) {
-	stubJudge(t, allowScript)
-	serve(t, &fakeService{credentials: judgeCredentials()})
+	serve(t, &fakeService{})
 	t.Setenv("DISCOBOX_API_URL", "https://api.discobox.internal")
 	// Unset, as a development shell in a discobox leaves it.
 	t.Setenv("DISCOBOX_SERVER", "")
@@ -473,8 +507,7 @@ func TestRunPointsTheDiscoboxCLIAtTheAPIWhenNoServerIsNamed(t *testing.T) {
 }
 
 func TestRunKeepsANamedServer(t *testing.T) {
-	stubJudge(t, allowScript)
-	serve(t, &fakeService{credentials: judgeCredentials()})
+	serve(t, &fakeService{})
 	t.Setenv("DISCOBOX_API_URL", "https://api.discobox.internal")
 	t.Setenv("DISCOBOX_SERVER", "https://elsewhere.example")
 
@@ -496,7 +529,7 @@ func TestWaitReportsAGrantedRequestWithItsUseIDs(t *testing.T) {
 		Uses:      []agentcreds.Use{{UseID: "use_7f3c", Description: "Open a PR"}},
 	}})
 
-	body := `{"name":"github","envVar":"GITHUB_TOKEN","host":"api.github.com",` +
+	body := `{"name":"github","envVar":"GITHUB_TOKEN","hosts":["api.github.com"],` +
 		`"uses":[{"description":"Open a PR"}],"wait":true,"timeoutSeconds":5}`
 	stdout, stderr, code := capture(t, body, func() int { return Run([]string{"request", "--json"}) })
 	if code != exitOK {
@@ -517,7 +550,7 @@ func TestWaitReportsAGrantedRequestWithItsUseIDs(t *testing.T) {
 func TestWaitOnADeniedRequestExitsNonZero(t *testing.T) {
 	serve(t, &fakeService{status: agentcreds.RequestStatus{RequestID: "sreq_1", Status: agentcreds.StatusDenied}})
 
-	body := `{"name":"github","envVar":"GITHUB_TOKEN","host":"api.github.com",` +
+	body := `{"name":"github","envVar":"GITHUB_TOKEN","hosts":["api.github.com"],` +
 		`"uses":[{"description":"Open a PR"}],"wait":true,"timeoutSeconds":5}`
 	_, _, code := capture(t, body, func() int { return Run([]string{"request", "--json"}) })
 	if code == exitOK {
@@ -533,3 +566,35 @@ func TestUnknownCommandIsAUsageError(t *testing.T) {
 }
 
 var _ = time.Second
+
+// A credential sent to several sites is one request: --hosts takes them
+// comma-separated, repeated, or both, and --json takes them as a list
+// (ADR 26-10-02-393).
+func TestRequestNamesSeveralHosts(t *testing.T) {
+	svc := &fakeService{}
+	serve(t, svc)
+
+	for _, args := range [][]string{
+		{"--hosts", "api.github.com,githubcopilot.com"},
+		{"--hosts", "api.github.com", "--hosts", "githubcopilot.com"},
+		{"--hosts", " api.github.com, ", "--hosts", "githubcopilot.com"},
+	} {
+		svc.gotRequest = agentcreds.RequestBody{}
+		full := append([]string{"request", "com.github.api"}, append(args, "--use", "run copilot")...)
+		if _, stderr, code := capture(t, "", func() int { return Run(full) }); code != exitOK {
+			t.Fatalf("%q: exit = %d, want 0: %s", args, code, stderr)
+		}
+		if got := strings.Join(svc.gotRequest.Hosts, ","); got != "api.github.com,githubcopilot.com" {
+			t.Fatalf("%q: hosts = %q, want both, in order", args, got)
+		}
+	}
+
+	svc.gotRequest = agentcreds.RequestBody{}
+	body := `{"name":"github","envVar":"GH_TOKEN","hosts":["api.github.com","githubcopilot.com"],"uses":[{"description":"run copilot"}]}`
+	if _, stderr, code := capture(t, body, func() int { return Run([]string{"request", "--json"}) }); code != exitOK {
+		t.Fatalf("exit = %d, want 0: %s", code, stderr)
+	}
+	if got := strings.Join(svc.gotRequest.Hosts, ","); got != "api.github.com,githubcopilot.com" {
+		t.Fatalf("hosts = %q, want both as written", got)
+	}
+}

@@ -1,6 +1,8 @@
 package sandboxruntime
 
 import (
+	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -24,97 +26,154 @@ func mkSandboxDir(t *testing.T, root, sandboxID string) string {
 	return dir
 }
 
-func TestReapDeadSandboxVolumesTombstoneLifecycle(t *testing.T) {
+// heldSet answers the reaper as a control plane holding exactly ids would.
+func heldSet(ids ...string) HeldSandboxes {
+	return func(context.Context) ([]string, error) { return ids, nil }
+}
+
+// The incident this reaper was rebuilt for: a sandbox whose rebuild failed has
+// a tree and no container, and as a settled failure it waits for its user's
+// repair however long that takes. The control plane holds it the whole time, so
+// its tree is kept the whole time — no clock is even started.
+func TestReapUnheldSandboxVolumesKeepsAHeldTreeWithNoContainer(t *testing.T) {
 	root := t.TempDir()
-	dead := mkSandboxDir(t, root, "sbx_dead")
+	failed := mkSandboxDir(t, root, "sbx_failed")
+	now := time.Now()
+
+	for _, at := range []time.Time{now, now.Add(48 * time.Hour), now.Add(90 * 24 * time.Hour)} {
+		reapUnheldSandboxVolumes(context.Background(), root, heldSet("sbx_failed"), 24*time.Hour, at, quietLogger())
+	}
+
+	if _, err := os.Stat(filepath.Join(failed, "data")); err != nil {
+		t.Fatalf("a held sandbox's tree was reaped: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(failed, sandboxVolumeUnheldMarker)); !os.IsNotExist(err) {
+		t.Fatalf("a held sandbox's tree was marked unheld")
+	}
+}
+
+func TestReapUnheldSandboxVolumesReapsAfterRetention(t *testing.T) {
+	root := t.TempDir()
+	unheld := mkSandboxDir(t, root, "sbx_unheld")
 	retention := 24 * time.Hour
 	now := time.Now()
 
-	// First pass: no container, no tombstone -> stamp, keep.
-	reapDeadSandboxVolumes(root, map[string]struct{}{}, retention, now, quietLogger())
-	if _, err := os.Stat(dead); err != nil {
-		t.Fatalf("dead dir removed too early: %v", err)
+	// First pass outside the set: the clock starts, nothing is removed.
+	reapUnheldSandboxVolumes(context.Background(), root, heldSet(), retention, now, quietLogger())
+	if _, err := os.Stat(unheld); err != nil {
+		t.Fatalf("unheld tree removed on first sight: %v", err)
 	}
-	if _, ok := readSandboxTombstone(filepath.Join(dead, sandboxVolumeTombstone)); !ok {
-		t.Fatalf("tombstone not written on first pass")
-	}
-
-	// Within retention: still kept.
-	reapDeadSandboxVolumes(root, map[string]struct{}{}, retention, now.Add(retention-time.Minute), quietLogger())
-	if _, err := os.Stat(dead); err != nil {
-		t.Fatalf("dead dir removed within retention: %v", err)
+	if _, ok := readSandboxTombstone(filepath.Join(unheld, sandboxVolumeUnheldMarker)); !ok {
+		t.Fatalf("unheld marker not written on first pass")
 	}
 
-	// Past retention: reaped.
-	reapDeadSandboxVolumes(root, map[string]struct{}{}, retention, now.Add(retention+time.Minute), quietLogger())
-	if _, err := os.Stat(dead); !os.IsNotExist(err) {
-		t.Fatalf("dead dir not reaped past retention: err=%v", err)
+	reapUnheldSandboxVolumes(context.Background(), root, heldSet(), retention, now.Add(retention-time.Minute), quietLogger())
+	if _, err := os.Stat(unheld); err != nil {
+		t.Fatalf("unheld tree removed within retention: %v", err)
+	}
+
+	reapUnheldSandboxVolumes(context.Background(), root, heldSet(), retention, now.Add(retention+time.Minute), quietLogger())
+	if _, err := os.Stat(unheld); !os.IsNotExist(err) {
+		t.Fatalf("unheld tree not reaped past retention: err=%v", err)
 	}
 }
 
-func TestReapDeadSandboxVolumesKeepsLiveAndClearsTombstone(t *testing.T) {
+// No answer is never an empty set. An agent that cannot reach the control plane
+// — or one that has never been told anything — reaps nothing, and starts no
+// clock that a later answer would inherit.
+func TestReapUnheldSandboxVolumesReapsNothingWithoutAnAnswer(t *testing.T) {
 	root := t.TempDir()
-	live := mkSandboxDir(t, root, "sbx_live")
-	// Pre-existing tombstone from a period the container was down.
-	writeSandboxTombstone(filepath.Join(live, sandboxVolumeTombstone), time.Now().Add(-48*time.Hour), quietLogger())
-
-	// The sandbox is live again: even well past retention, it must survive and
-	// its stale tombstone must be cleared.
-	reapDeadSandboxVolumes(root, map[string]struct{}{"sbx_live": {}}, 24*time.Hour, time.Now(), quietLogger())
-
-	if _, err := os.Stat(live); err != nil {
-		t.Fatalf("live sandbox dir was reaped: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(live, sandboxVolumeTombstone)); !os.IsNotExist(err) {
-		t.Fatalf("stale tombstone not cleared for live sandbox")
-	}
-}
-
-// An archived sandbox looks exactly like a dead one to the reaper — a directory
-// with no container — and must survive anyway, indefinitely. Its retention is a
-// control-plane policy the agent does not know, enforced by an explicit purge
-// (ADR 0022 §4). Reaping it here would delete data the user asked to keep, on a
-// schedule nobody chose.
-func TestReapDeadSandboxVolumesSkipsArchived(t *testing.T) {
-	root := t.TempDir()
-	archived := mkSandboxDir(t, root, "sbx_archived")
-	if err := writeSandboxArchiveMarker(archived, time.Now().Add(-90*24*time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-
-	// Far past any retention, and with no live container.
-	reapDeadSandboxVolumes(root, map[string]struct{}{}, 24*time.Hour, time.Now(), quietLogger())
-
-	if _, err := os.Stat(archived); err != nil {
-		t.Fatalf("archived sandbox dir was reaped: %v", err)
-	}
-	// It must not even be tombstoned: a tombstone would start the reaper's clock
-	// and delete the tree 24h after the sandbox is unarchived and next stopped.
-	if _, err := os.Stat(filepath.Join(archived, sandboxVolumeTombstone)); !os.IsNotExist(err) {
-		t.Fatalf("archived sandbox was tombstoned")
-	}
-}
-
-// Clearing the marker is the whole of what unarchive does on disk, so once it
-// is gone the tree must be ordinary again — including being reapable if its
-// container never comes back.
-func TestReapDeadSandboxVolumesReapsAfterUnarchive(t *testing.T) {
-	root := t.TempDir()
-	dir := mkSandboxDir(t, root, "sbx_unarchived")
-	if err := writeSandboxArchiveMarker(dir, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if err := clearSandboxArchiveMarker(dir); err != nil {
-		t.Fatal(err)
-	}
-
-	retention := 24 * time.Hour
+	dir := mkSandboxDir(t, root, "sbx_unknown")
+	noAnswer := func(context.Context) ([]string, error) { return nil, errors.New("control plane unreachable") }
 	now := time.Now()
-	reapDeadSandboxVolumes(root, map[string]struct{}{}, retention, now, quietLogger())
-	reapDeadSandboxVolumes(root, map[string]struct{}{}, retention, now.Add(retention+time.Minute), quietLogger())
 
-	if _, err := os.Stat(dir); !os.IsNotExist(err) {
-		t.Fatalf("unarchived dead dir not reaped: err=%v", err)
+	for _, at := range []time.Time{now, now.Add(48 * time.Hour), now.Add(90 * 24 * time.Hour)} {
+		reapUnheldSandboxVolumes(context.Background(), root, noAnswer, 24*time.Hour, at, quietLogger())
+	}
+
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("a tree was reaped with no answer from the control plane: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, sandboxVolumeUnheldMarker)); !os.IsNotExist(err) {
+		t.Fatalf("a tree was marked unheld with no answer from the control plane")
+	}
+}
+
+// A sandbox back in the set — an import whose row has now been written, an
+// answer that was wrong — has its clock cleared, so a later absence starts a
+// full window rather than inheriting the old one.
+func TestReapUnheldSandboxVolumesClearsTheClockWhenHeldAgain(t *testing.T) {
+	root := t.TempDir()
+	dir := mkSandboxDir(t, root, "sbx_back")
+	writeSandboxTombstone(filepath.Join(dir, sandboxVolumeUnheldMarker), time.Now().Add(-48*time.Hour), quietLogger())
+
+	reapUnheldSandboxVolumes(context.Background(), root, heldSet("sbx_back"), 24*time.Hour, time.Now(), quietLogger())
+
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("a held tree with a stale clock was reaped: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, sandboxVolumeUnheldMarker)); !os.IsNotExist(err) {
+		t.Fatalf("a held tree kept its unheld marker")
+	}
+}
+
+// A tombstone written when the reaper judged trees by their containers counted
+// container absence, which says nothing about whether the sandbox is held. It
+// is removed and never read, so an unheld tree carrying one still gets its full
+// window from the first time it is seen outside the set.
+func TestReapUnheldSandboxVolumesIgnoresTheContainerAbsenceTombstone(t *testing.T) {
+	root := t.TempDir()
+	dir := mkSandboxDir(t, root, "sbx_legacy")
+	writeSandboxTombstone(filepath.Join(dir, legacySandboxVolumeTombstone), time.Now().Add(-48*time.Hour), quietLogger())
+
+	reapUnheldSandboxVolumes(context.Background(), root, heldSet(), 24*time.Hour, time.Now(), quietLogger())
+
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("a tree was reaped on a container-absence clock: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, legacySandboxVolumeTombstone)); !os.IsNotExist(err) {
+		t.Fatalf("the container-absence tombstone was not removed")
+	}
+}
+
+// The trees are listed before the control plane is asked, so a tree that
+// appears while the answer is in flight — a create whose row the answer may
+// predate — is not judged by that answer at all.
+func TestReapUnheldSandboxVolumesJudgesOnlyTreesListedBeforeTheAnswer(t *testing.T) {
+	root := t.TempDir()
+	mkSandboxDir(t, root, "sbx_held")
+	var late string
+	held := func(context.Context) ([]string, error) {
+		late = mkSandboxDir(t, root, "sbx_late")
+		return []string{"sbx_held"}, nil
+	}
+
+	reapUnheldSandboxVolumes(context.Background(), root, held, 24*time.Hour, time.Now(), quietLogger())
+
+	if _, err := os.Stat(filepath.Join(late, sandboxVolumeUnheldMarker)); !os.IsNotExist(err) {
+		t.Fatalf("a tree created after the trees were listed was judged by the answer")
+	}
+}
+
+// The reaper only ever scans the root it is given (this pool's own sandboxes
+// dir), against this pool's own held set, so a sibling pool's tree is
+// untouched.
+func TestReapUnheldSandboxVolumesIsScopedToItsRoot(t *testing.T) {
+	base := t.TempDir()
+	poolA := filepath.Join(base, "pools", "pool_a", "sandboxes")
+	poolB := filepath.Join(base, "pools", "pool_b", "sandboxes")
+	unheldA := mkSandboxDir(t, poolA, "sbx_a")
+	treeB := mkSandboxDir(t, poolB, "sbx_b")
+
+	now := time.Now()
+	reapUnheldSandboxVolumes(context.Background(), poolA, heldSet(), time.Hour, now, quietLogger())
+	reapUnheldSandboxVolumes(context.Background(), poolA, heldSet(), time.Hour, now.Add(48*time.Hour), quietLogger())
+
+	if _, err := os.Stat(unheldA); !os.IsNotExist(err) {
+		t.Fatalf("pool A did not reap its own unheld tree: err=%v", err)
+	}
+	if _, err := os.Stat(treeB); err != nil {
+		t.Fatalf("pool A reaped pool B's tree: %v", err)
 	}
 }
 
@@ -216,28 +275,6 @@ func TestReapUnknownPoolsLeavesAnotherProjectsLivePoolAlone(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(liveDataB, "sbx_live")); err != nil {
 		t.Fatalf("another project's live sandbox data was reaped: %v", err)
-	}
-}
-
-// The reaper only ever scans the root it is given (this pool's own
-// sandboxes dir), so a sibling pool's tree is untouched.
-func TestReapDeadSandboxVolumesIsScopedToItsRoot(t *testing.T) {
-	base := t.TempDir()
-	poolA := filepath.Join(base, "pools", "pool_a", "sandboxes")
-	poolB := filepath.Join(base, "pools", "pool_b", "sandboxes")
-	deadA := mkSandboxDir(t, poolA, "sbx_a")
-	liveB := mkSandboxDir(t, poolB, "sbx_b")
-
-	// Pool A reaps its own dead sandbox (empty live set), well past retention.
-	past := time.Now().Add(48 * time.Hour)
-	reapDeadSandboxVolumes(poolA, map[string]struct{}{}, time.Hour, time.Now(), quietLogger())
-	reapDeadSandboxVolumes(poolA, map[string]struct{}{}, time.Hour, past, quietLogger())
-
-	if _, err := os.Stat(deadA); !os.IsNotExist(err) {
-		t.Fatalf("pool A did not reap its own dead sandbox: err=%v", err)
-	}
-	if _, err := os.Stat(liveB); err != nil {
-		t.Fatalf("pool A reaped pool B's sandbox: %v", err)
 	}
 }
 

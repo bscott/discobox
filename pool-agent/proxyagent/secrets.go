@@ -172,6 +172,10 @@ type resolveResponseBody struct {
 	Status    string     `json:"status"`
 	Value     string     `json:"value"`
 	ExpiresAt *time.Time `json:"expiresAt"`
+	// SecretID is the secret the value is, which the proxy records on every
+	// request it swaps the value into (ADR 26-10-01-240). Empty from a control
+	// plane that predates it.
+	SecretID string `json:"secretId"`
 }
 
 // rejectionRequestBody reports what an upstream made of a credential this pool
@@ -250,7 +254,7 @@ func (r *secretResolver) Resolve(ctx context.Context, req proxy.SecretResolveReq
 	if out.Status != "approved" || out.Value == "" {
 		return proxy.SecretResolveResult{}, proxy.ErrSecretResolveDenied
 	}
-	result := proxy.SecretResolveResult{Value: out.Value, UseID: useID}
+	result := proxy.SecretResolveResult{Value: out.Value, UseID: useID, SecretID: out.SecretID}
 	if out.ExpiresAt != nil {
 		result.ExpiresAt = *out.ExpiresAt
 	}
@@ -353,6 +357,38 @@ func (r *secretResolver) mintedActivation(sentinel string) (activation, bool) {
 // way that check now runs second rather than alone, because resolution happens
 // only for a request this allowed.
 func (r *secretResolver) Authorize(ctx context.Context, req proxy.SecretAuthorizeRequest) (proxy.SecretVerdict, error) {
+	verdict, err := r.authorize(ctx, req)
+	if !verdict.Allow {
+		verdict.Refuse = refusalFor(req)
+	}
+	return verdict, err
+}
+
+// refusalFor is how a refused request's own protocol says no, when it has a
+// way its client shows (ADR 26-09-26-240 §5), or nil for the proxy's plain
+// refusal. It reads the body only if the refusal is written.
+func refusalFor(req proxy.SecretAuthorizeRequest) func(context.Context, string) (proxy.SecretRefusal, bool) {
+	recognized := recognize(req)
+	if recognized.protocol == nil || recognized.protocol.refuse == nil || req.Body == nil {
+		return nil
+	}
+	return func(ctx context.Context, said string) (proxy.SecretRefusal, bool) {
+		wait, cancel := context.WithTimeout(ctx, bodyArrivalWait)
+		defer cancel()
+		raw, complete, err := req.Body.Capture(wait)
+		if err != nil {
+			return proxy.SecretRefusal{}, false
+		}
+		decoded, whole, missing := decodeBody(raw, complete, req.Header.Get("Content-Encoding"))
+		if missing != "" {
+			return proxy.SecretRefusal{}, false
+		}
+		return recognized.protocol.refuse(decoded, whole, said)
+	}
+}
+
+// authorize is Authorize's verdict, before how a refusal is said.
+func (r *secretResolver) authorize(ctx context.Context, req proxy.SecretAuthorizeRequest) (proxy.SecretVerdict, error) {
 	uses := r.uses(req)
 	if len(uses) == 0 {
 		// Nothing here is being spent under an approved use, so there is no
@@ -385,7 +421,7 @@ func (r *secretResolver) Authorize(ctx context.Context, req proxy.SecretAuthoriz
 func (r *secretResolver) judgeUse(ctx context.Context, req proxy.SecretAuthorizeRequest, uses []string, useID string) (proxy.SecretVerdict, bool, error) {
 	exchange, cancel := context.WithTimeout(ctx, judgeHTTPTimeout)
 	defer cancel()
-	evidence := evidenceOf(req)
+	evidence := evidenceOf(exchange, req)
 	for round := 1; ; round++ {
 		deadline, _ := exchange.Deadline()
 		answer, err := r.judge.ask(exchange, judgeAsk{
@@ -510,7 +546,7 @@ func (r *secretResolver) uses(req proxy.SecretAuthorizeRequest) []string {
 }
 
 // activation returns the live activation for a resolve request, if the sentinel
-// is one this process minted and the destination matches the host the use was
+// is one this process minted and the destination matches a host the use was
 // approved for.
 //
 // The host check is repeated here rather than left to the control plane's grant
@@ -530,8 +566,10 @@ func (r *secretResolver) activation(req proxy.SecretResolveRequest) (activation,
 	}
 	// The same reading the control plane uses: a use approved for github.com
 	// covers api.github.com, and one approved for api.github.com covers
-	// nothing above it.
-	if !hostscope.Covers(record.Host, req.Host) {
+	// nothing above it. An activation with no host covers nothing: the
+	// control plane mints no hostless use, so one is a server's omission, and
+	// the wildcard is never what it meant.
+	if len(record.Hosts) == 0 || !hostscope.CoversAny(record.Hosts, req.Host) {
 		return activation{}, false
 	}
 	return record, true

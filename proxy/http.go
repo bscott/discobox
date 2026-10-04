@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -81,6 +82,11 @@ type requestMeta struct {
 	// backdate it onto the 401's row, which is written after the retry is
 	// chosen.
 	swappedUseIDs []string
+	// swappedSecretIDs names the secrets this request carried, for every kind
+	// of sentinel (ADR 26-10-01-240). Like swappedUseIDs, the unauthorized
+	// retry does not add to it: it re-swaps the same sentinels, which stand for
+	// the same secrets.
+	swappedSecretIDs []string
 	// swappedSentinels is which sentinels this request carried, kept beside the
 	// header names they were found in because a rejection has to name the
 	// credential and a header name cannot (ADR 0132 §1).
@@ -131,6 +137,56 @@ type upgradedResponseStream struct {
 	finalizeOnce sync.Once
 	c2sBytes     atomic.Int64
 	s2cBytes     atomic.Int64
+}
+
+// connectTunnel is the CONNECT a MITM'd request arrived through. goproxy
+// hands the CONNECT's UserData to the context of every request read from the
+// tunnel, which is how the request handler knows the tunnel's authority.
+type connectTunnel struct {
+	authority string
+}
+
+// misdirected reports whether req names a host other than the tunnel's. The
+// tunnel's authority is where the request goes; policy — the filter, header
+// rules, and the secret swap — judges the Host header. A request whose Host
+// names another host would have a credential bound to that host sent to the
+// tunnel's.
+func (t *connectTunnel) misdirected(req *http.Request) bool {
+	want := authorityHostname(t.authority)
+	return authorityHostname(req.Host) != want || authorityHostname(req.URL.Host) != want
+}
+
+// upgrade sends a plaintext request for port 443 inside a tunnel upstream
+// over TLS. Zig's HTTP client (ziglang/zig#19878) opens a CONNECT to :443
+// through an https_proxy and then speaks plaintext HTTP inside it; the origin
+// would otherwise receive plain HTTP on its TLS port. It reports whether it
+// did. A request's URL port is where it goes; one that names none — an
+// absolute-form URL, an h2c :authority — goes to the tunnel's. One that
+// names another port stays plaintext.
+func (t *connectTunnel) upgrade(req *http.Request) bool {
+	if req.URL.Scheme != "http" {
+		return false
+	}
+	port := req.URL.Port()
+	if port == "" {
+		_, port, _ = net.SplitHostPort(t.authority)
+	}
+	if port != "443" {
+		return false
+	}
+	req.URL.Scheme = "https"
+	return true
+}
+
+// authorityHostname is the host of a host[:port] authority, compared the way
+// policy compares it: case-insensitive, without a trailing dot, and an IPv6
+// literal without its brackets whether or not a port follows.
+func authorityHostname(authority string) string {
+	host, _, err := net.SplitHostPort(authority)
+	if err != nil {
+		host = strings.Trim(authority, "[]")
+	}
+	return strings.TrimSuffix(strings.ToLower(host), ".")
 }
 
 type requestBodyStream struct {
@@ -214,6 +270,9 @@ func (h *httpProxy) setupHandlers() {
 		}
 		client := h.clientIdentity(req)
 		flt, _ := h.policy()
+		if proxyCtx != nil {
+			proxyCtx.UserData = &connectTunnel{authority: host}
+		}
 		// The gate host is intercepted whatever the allowlist says: it never
 		// reaches the internet, and what may reach it is the gate's to decide.
 		if h.secretSwapper().IsGate(host) {
@@ -250,10 +309,47 @@ func (h *httpProxy) setupHandlers() {
 		)
 		*req = *req.WithContext(traceCtx)
 		meta := &requestMeta{ctx: traceCtx, span: span, start: time.Now(), client: client}
+		tunnel, _ := ctx.UserData.(*connectTunnel)
 		ctx.UserData = meta
 		// Every request leaves through roundTrip, which picks the transport a
 		// pin calls for and answers a refused upstream certificate itself.
 		ctx.RoundTripper = goproxy.RoundTripperFunc(h.roundTrip)
+
+		if tunnel != nil {
+			// A request with no Host (HTTP/1.0) is for the tunnel's host; say
+			// so, or policy would judge it by an empty name.
+			if req.Host == "" {
+				req.Host = tunnel.authority
+			}
+			if tunnel.upgrade(req) {
+				span.SetAttributes(
+					attribute.Bool("proxy.http.tunnel_upgraded", true),
+					attribute.String("user_agent.original", req.UserAgent()),
+					attribute.String("url.full", requestURL(req)),
+				)
+			}
+			if tunnel.misdirected(req) {
+				meta.answered = true
+				span.SetAttributes(attribute.Bool("proxy.blocked", true), attribute.Int("http.response.status_code", http.StatusMisdirectedRequest))
+				h.audit.RecordHTTP(audit.HTTPEvent{
+					Context:        traceCtx,
+					Time:           time.Now().UTC(),
+					ClientID:       client.ID,
+					ClientSubject:  client.Subject,
+					ClientSerial:   client.Serial,
+					Method:         req.Method,
+					URL:            requestURL(req),
+					Host:           req.Host,
+					Status:         http.StatusMisdirectedRequest,
+					Blocked:        true,
+					BlockedReason:  "host is not the tunnel's",
+					RequestHeaders: req.Header,
+				})
+				span.End()
+				return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusMisdirectedRequest,
+					fmt.Sprintf("misdirected: this tunnel is to %s; its requests must name that host\n", tunnel.authority))
+			}
+		}
 
 		if swapper := h.secretSwapper(); swapper.IsGate(req.Host) {
 			return req, h.serveGate(req, meta, client, swapper)
@@ -490,6 +586,7 @@ func (h *httpProxy) auditEvent(req *http.Request, resp *http.Response, meta *req
 		AppliedPattern:       meta.appliedPattern,
 		AppliedHeaders:       meta.appliedHeaders,
 		SwappedUseIDs:        meta.swappedUseIDs,
+		SwappedSecretIDs:     meta.swappedSecretIDs,
 		RedactRequestHeaders: meta.redactRequestHeaders(),
 		RequestHeaders:       req.Header,
 		ResponseHeaders:      headers,
@@ -540,6 +637,7 @@ func (h *httpProxy) swapSecrets(req *http.Request, meta *requestMeta, client cli
 	}
 	meta.swappedHeaders = result.Headers
 	meta.swappedUseIDs = result.UseIDs
+	meta.swappedSecretIDs = result.SecretIDs
 	meta.swappedSentinels = result.Sentinels
 	// A query swap rewrote the URL, so the retry path — which rebuilds a
 	// request from the pre-swap headers — cannot reproduce this request.
@@ -648,16 +746,25 @@ func (h *httpProxy) authorizeSwap(req *http.Request, meta *requestMeta, client c
 		// the wrong one: this request was refused for where it is going.
 		reason = "not an approved use of this host"
 	}
+	said := "blocked by proxy: " + reason
+	answer := secrets.Refusal{Status: http.StatusForbidden, ContentType: goproxy.ContentTypeText, Body: []byte(said)}
+	if verdict.Refuse != nil && !verdict.Allow {
+		// The request's own protocol has a way to say no that its client
+		// shows, where a 403's body it would not (ADR 26-09-26-240 §5).
+		if own, ok := verdict.Refuse(meta.ctx, said); ok {
+			answer = own
+		}
+	}
 	meta.answered = true
-	meta.span.SetAttributes(attribute.Bool("proxy.blocked", true), attribute.Int("http.response.status_code", http.StatusForbidden))
+	meta.span.SetAttributes(attribute.Bool("proxy.blocked", true), attribute.Int("http.response.status_code", answer.Status))
 	h.recordRefusal(req, meta, client, refusalRecord{
 		url:    preURL,
 		header: preSwapHeader,
 		reason: reason,
 		useIDs: verdict.UseIDs,
-		status: http.StatusForbidden,
+		status: answer.Status,
 	})
-	return goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "blocked by proxy: "+reason)
+	return goproxy.NewResponse(req, answer.ContentType, answer.Status, string(answer.Body))
 }
 
 // refusalReason is what a refused request is answered with, whichever way the
@@ -1086,6 +1193,7 @@ func (s *upgradedResponseStream) auditEvent(duration time.Duration) audit.HTTPEv
 		AppliedPattern:       s.meta.appliedPattern,
 		AppliedHeaders:       s.meta.appliedHeaders,
 		SwappedUseIDs:        s.meta.swappedUseIDs,
+		SwappedSecretIDs:     s.meta.swappedSecretIDs,
 		RedactRequestHeaders: s.meta.redactRequestHeaders(),
 		RequestHeaders:       s.req.Header,
 		ResponseHeaders:      s.headers,
@@ -1186,6 +1294,7 @@ func (s *responseStream) finish(aborted bool, readErr error) {
 			AppliedPattern:       s.meta.appliedPattern,
 			AppliedHeaders:       s.meta.appliedHeaders,
 			SwappedUseIDs:        s.meta.swappedUseIDs,
+			SwappedSecretIDs:     s.meta.swappedSecretIDs,
 			RedactRequestHeaders: s.meta.redactRequestHeaders(),
 			RequestHeaders:       s.req.Header,
 			ResponseHeaders:      s.headers,

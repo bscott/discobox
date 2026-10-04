@@ -34,12 +34,12 @@ func runList(ctx context.Context, args []string) int {
 	out.emit(agentcreds.ListResponse{Credentials: credentials}, func(w io.Writer) {
 		if len(credentials) == 0 {
 			fmt.Fprintln(w, "No credentials are granted to this sandbox.")
-			fmt.Fprintf(w, "Ask for one with: %s request --name NAME --env-var VAR --host HOST --use \"what for\"\n", Name)
+			fmt.Fprintf(w, "Ask for one with: %s request --name NAME --env-var VAR --hosts HOST[,HOST...] --use \"what for\"\n", Name)
 			fmt.Fprintf(w, "or, for a well-known credential: %s request ID --use \"what for\"\n", Name)
 			return
 		}
 		for _, credential := range credentials {
-			fmt.Fprintf(w, "%s (%s → %s)\n", credential.Name, credential.EnvVar, credential.Host)
+			fmt.Fprintf(w, "%s (%s → %s)\n", credential.Name, credential.EnvVar, strings.Join(credential.Hosts, ", "))
 			for _, use := range credential.Uses {
 				expiry := ""
 				if use.ExpiresAt != nil {
@@ -66,7 +66,7 @@ type requestInput struct {
 	ID              string                    `json:"id,omitempty"`
 	Name            string                    `json:"name"`
 	EnvVar          string                    `json:"envVar"`
-	Host            string                    `json:"host"`
+	Hosts           []string                  `json:"hosts,omitempty"`
 	Justification   string                    `json:"justification,omitempty"`
 	Uses            []agentcreds.RequestedUse `json:"uses"`
 	GrantTTLSeconds int64                     `json:"grantTTLSeconds,omitempty"`
@@ -79,6 +79,7 @@ func runRequest(ctx context.Context, args []string) int {
 	var (
 		input      requestInput
 		uses       stringList
+		hosts      hostList
 		structured bool
 		timeout    time.Duration
 		grantTTL   time.Duration
@@ -96,7 +97,7 @@ func runRequest(ctx context.Context, args []string) int {
 	flags.BoolVar(&structured, "json", false, "read the request as JSON on stdin and emit JSON")
 	flags.StringVar(&input.Name, "name", "", "credential name (e.g. github)")
 	flags.StringVar(&input.EnvVar, "env-var", "", "environment variable to deliver it in")
-	flags.StringVar(&input.Host, "host", "", "destination host it will be sent to")
+	flags.Var(&hosts, "hosts", "destination hosts it will be sent to, comma-separated or repeated")
 	flags.StringVar(&input.Justification, "why", "", "why you need it")
 	flags.Var(&uses, "use", "what you intend to use it for (repeatable)")
 	flags.DurationVar(&grantTTL, "grant-ttl", 0, "how long you ask to keep it (e.g. 30m, 4h); the approver may choose otherwise")
@@ -139,6 +140,7 @@ func runRequest(ctx context.Context, args []string) int {
 		for _, use := range uses {
 			input.Uses = append(input.Uses, agentcreds.RequestedUse{Description: use})
 		}
+		input.Hosts = hosts
 		// Refused here rather than rounded: a lifetime truncated to zero
 		// seconds would go out as no ask at all.
 		if grantTTL < 0 || grantTTL%time.Second != 0 {
@@ -166,7 +168,7 @@ func runRequest(ctx context.Context, args []string) int {
 		ID:              input.ID,
 		Name:            input.Name,
 		EnvVar:          input.EnvVar,
-		Host:            input.Host,
+		Hosts:           input.Hosts,
 		Justification:   input.Justification,
 		Uses:            input.Uses,
 		GrantTTLSeconds: input.GrantTTLSeconds,
@@ -256,27 +258,23 @@ func runWrapped(ctx context.Context, args []string) int {
 	if len(command) == 0 {
 		return usageError(out, "no command given; use `%s run --use USE_ID -- COMMAND ...`", Name)
 	}
-	client := newClient()
-	credential, use, err := approvedUse(ctx, client, useID)
-	if err != nil {
-		return out.report(err)
+	useID = strings.TrimSpace(useID)
+	if useID == "" {
+		return out.report(fmt.Errorf("%w: --use is required", agentcreds.ErrInvalid))
 	}
-	// Judged before the value is taken (ADR 0079 §1), so a refusal mints no
-	// ephemeral sentinel and leaves no activation behind for a command that
-	// never ran.
-	verdict, judgeErr := judgeCommand(ctx, credential, use, command)
-	if judgeErr != nil {
-		// A denial never reaches Get, and so would leave no record on trusted
-		// ground at all if this stopped here. Reporting it is best-effort — its
-		// own failure changes nothing about what run reports for the refusal
-		// that prompted it — and only attempted when a judge was actually asked;
-		// a zero Verdict means judgeCommand never got that far.
-		if verdict.Role != "" {
-			_ = client.ReportDenial(ctx, agentcreds.DenialReport{UseID: useID, Command: command, Verdict: verdict})
-		}
-		return out.report(judgeErr)
-	}
-	result, err := client.Get(ctx, agentcreds.UseBody{UseID: useID, Command: command, Verdict: verdict})
+	// What the command will read on stdin is read first, bounded, because for
+	// a command that takes its request there it is what the command does
+	// (ADR 26-09-27-905); where it runs is looked up beside it (ADR 0090).
+	// Both go with the argv to the service, which judges them on trusted
+	// ground before it hands out anything (ADR 26-09-22-838 §3): a refusal
+	// mints nothing and the command never starts.
+	stdin := readStdin(ctx, os.Stdin)
+	result, err := newClient().Get(ctx, agentcreds.UseBody{
+		UseID:    useID,
+		Command:  command,
+		Stdin:    stdin.evidence(),
+		Reported: gatherFacts(ctx, command),
+	})
 	if err != nil {
 		return out.report(err)
 	}
@@ -284,10 +282,27 @@ func runWrapped(ctx context.Context, args []string) int {
 	//nolint:gosec // Running the caller's own command is this subcommand's entire purpose.
 	child := exec.CommandContext(ctx, command[0], command[1:]...)
 	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
+	var pipe *os.File
+	if stdin != nil {
+		// Exactly what was sent: the bytes read for the judge, then the rest.
+		if pipe, err = stdin.Pipe(); err != nil {
+			return out.report(err)
+		}
+		child.Stdin = pipe
+	}
 	// The value replaces any same-named variable already in the environment
 	// rather than joining it, so a stale export cannot shadow the fresh value.
 	child.Env = append(withoutEnv(childEnviron(), result.EnvVar), result.EnvVar+"="+result.Value)
-	if err := child.Run(); err != nil {
+	err = child.Start()
+	if pipe != nil {
+		// The child holds its own copy now. Closing ours leaves it the only
+		// reader, so the feed stops at its first write after the child exits.
+		_ = pipe.Close()
+	}
+	if err == nil {
+		err = child.Wait()
+	}
+	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			// The child's status is the wrapper's status, as with env(1): the
@@ -297,31 +312,6 @@ func runWrapped(ctx context.Context, args []string) int {
 		return out.report(err)
 	}
 	return exitOK
-}
-
-// approvedUse finds the credential and the approved use behind a use ID, which
-// is what the judge compares the command against.
-//
-// A use the service does not list cannot be judged — there is no approved
-// sentence to hold the command up to — so it is refused here rather than
-// carried to the use call, which would only deny it one hop later.
-func approvedUse(ctx context.Context, client *agentcreds.Client, useID string) (agentcreds.Credential, agentcreds.Use, error) {
-	useID = strings.TrimSpace(useID)
-	if useID == "" {
-		return agentcreds.Credential{}, agentcreds.Use{}, fmt.Errorf("%w: --use is required", agentcreds.ErrInvalid)
-	}
-	credentials, err := client.List(ctx)
-	if err != nil {
-		return agentcreds.Credential{}, agentcreds.Use{}, err
-	}
-	for _, credential := range credentials {
-		for _, use := range credential.Uses {
-			if use.UseID == useID {
-				return credential, use, nil
-			}
-		}
-	}
-	return agentcreds.Credential{}, agentcreds.Use{}, fmt.Errorf("%w: no live approved use %s", agentcreds.ErrDenied, useID)
 }
 
 // Where the discobox CLI finds its server, and the address the pool gives a
@@ -362,6 +352,21 @@ func withoutEnv(environ []string, name string) []string {
 // stringList collects a repeatable flag, which is how multiple uses are
 // declared without a JSON body.
 type stringList []string
+
+// hostList is --hosts: comma-separated, repeatable, or both, with empties
+// dropped, so --hosts a,b and --hosts a --hosts b ask for the same thing.
+type hostList []string
+
+func (h *hostList) String() string { return strings.Join(*h, ",") }
+
+func (h *hostList) Set(value string) error {
+	for _, host := range strings.Split(value, ",") {
+		if host = strings.TrimSpace(host); host != "" {
+			*h = append(*h, host)
+		}
+	}
+	return nil
+}
 
 func (s *stringList) String() string { return strings.Join(*s, ", ") }
 

@@ -1,0 +1,27 @@
+{
+  "name": "dev-git-push-refs-advertisement",
+  "why": "The ref advertisement git reads before every push.",
+  "expect": "allow",
+  "job": {
+    "kind": "request",
+    "purpose": "git push origin fix-43 to github.com/acme/web: push my branch fix-43",
+    "host": "github.com",
+    "round": 1,
+    "request": {
+      "method": "GET",
+      "url": "https://github.com/acme/web.git/info/refs?service=git-receive-pack",
+      "headers": {
+        "Accept": [
+          "*/*"
+        ],
+        "Authorization": [
+          "[redacted]"
+        ],
+        "User-Agent": [
+          "git/2.47.1"
+        ]
+      }
+    },
+    "credential": "github"
+  }
+}

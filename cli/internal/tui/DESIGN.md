@@ -36,6 +36,7 @@ flowchart LR
     WS -->|leader g| Cred
     L -->|y| Overlay["overlay pane → DataSource.Open"]
     WS -->|leader o| T["tools picker → Tools / NewTool / EndExec / RunHostTool / Addresses"]
+    WS -->|leader A| Aud["audit screen → FollowAudit / AuditDetail"]
     A -->|d s| AVerb["DataSource.DoHarness"]
     A -->|v| ACard["config card → HarnessSecrets"]
     A -->|e| ACfg["configuration overlay pane → OpenHarnessConfigure"]
@@ -163,6 +164,16 @@ card, this is refused on the form rather than sent: `replacing an oauth
 credential means its access token too`. The renewal fields are prefilled from
 the stored credential, because those *are* readable, so rotating tokens does not
 mean retyping the endpoint.
+
+**The sentinel format is the card's last row** (`formFormat`), under its own
+heading, because it is an override almost nobody makes: the shape is read from
+the value, and the row sits off the path a person tabs down to store a
+credential. Only a *chosen* format opens filled in; one read from the value is
+the row's placeholder, so saving an untouched card sends no format and cannot
+turn a derived shape into a choice nobody made. Emptying a chosen one clears it.
+A template is parsed on the card with the server's parser (`secretformat`), so a
+mistyped one is refused with the card still up. Reading the credential says the
+format and whether it was set or read.
 
 **One form, one call** (`DataSource.UpdateSecret`, `SecretUpdate`). The host,
 the limit, the name and the value are one endpoint, and a card whose rows were
@@ -326,7 +337,10 @@ Everything else follows the request on the server, which is what keeps this and
 including one bound to another host: greying those out left the one secret that
 plainly answers the request unpickable, so the binding is asked about on the
 way through instead (`confirmGrantHost`), in the words the server would refuse
-it with.
+it with. A request may name several hosts (ADR 26-10-02-393): the card shows
+them all, a binding must cover every one, and a credential typed in on the spot
+is bound to the site they share — or to nothing, when they share none
+(`CredentialRequest.binding`).
 
 **How long is a required second step** (`askLifetime`). Choosing a secret opens
 a card of its own — 1 hour, 1 day, 1 week, 1 month, forever, and `custom…` for a
@@ -335,17 +349,18 @@ typed one — with the cursor on the lifetime the agent asked for
 on **1 hour**, so Enter is the default answer. An ask that is not a preset is
 added in its place among them (`lifetimeChoices`) and marked as the agent's. It
 is a step rather than a field on the request card because it is the half of an
-approval nobody thinks to look for: leaving it out of the call asks the server
-for the credential's own ceiling — a ceiling most credentials do not have — so
-a window that did not ask would hand out permanent credentials without ever
-saying the word. A card that has to be answered is one that gets read.
+approval nobody thinks to look for: a window that did not ask would hand out
+whatever the server defaults to without anyone having read it. A card that has
+to be answered is one that gets read.
 `Approval.TTLSeconds` is always sent, zero included, and zero means forever
 rather than "whatever the secret allows". The hour is
-`lifetime.Default`, and `discobox secret request approve` sends the same
-lifetime — the agent's ask, else the hour — when `--grant-ttl` is left out, so
-approving a request mints the same grant from either side. An agent cannot ask
+`agentcreds.DefaultGrantTTL`, and the server grants the same lifetime — the
+agent's ask, else the hour, within the secret's limit — to an approval that
+names none, which is what `discobox secret request approve` sends when
+`--grant-ttl` is left out, so approving a request mints the same grant from
+either side. An agent cannot ask
 for forever, nor for longer than thirty days (`agentcreds.MaxGrantTTLSeconds`,
-enforced at the ask and again in `lifetime.FromRequest`), so the default is
+enforced at the ask and again in `agentcreds.AskedGrantTTL`), so the default is
 never a grant that does not lapse. An ask that is not a whole positive number of
 seconds is no row at all (`lifetimeChoices`) and the step opens on the hour:
 a row's identity is its second count, and one that shared forever's count would
@@ -361,9 +376,10 @@ never has to hold a token that was already typed.
 credential with nothing behind it — the discobox API, `ai.discobox.sandbox` —
 has no secret to choose and no value to type, so its card offers Approve and
 Deny alone, then the lifetime, and the approval names no secret. It says what
-approving gives the discobox — the power to give any project secret onward and
-answer any request — because the ordinary card describes one credential, and
-this is every one of them.
+approving gives the discobox — the power to create discoboxes and hand them
+credentials, on a create or by answering their requests, but only within what
+it is separately delegated — because the ordinary card describes one
+credential, and this is every one it is delegated.
 
 **A new credential is named only when it has to be** (`startNewCredential`,
 `askStoredAs`). It is stored as what the agent asked for, and the project's
@@ -563,6 +579,50 @@ modules is a string that drifts.
 The link is drawn only when the forward has bound it, the same rule
 `portEntry` follows: an offer to open something unreachable is worse than no
 offer.
+
+## The audit screen
+
+`leader A` in the workspace draws one discobox's audit trails over it as a
+single followed timeline — what `discobox admin audit list --follow` prints —
+and Enter opens a record on the scrolling card, as `audit get` prints it. It is
+drawn in the box a tool window would have and takes the keys and the mouse
+(`onScreen` is empty under it); the panes keep running, unresized.
+
+- **One reader.** `FollowAudit` and `AuditDetail` are the commands' own code
+  (`auditTimelineTrails`, `readAudit`, `writeAuditRecord`), not a second
+  implementation: the screen cannot show a different timeline than the
+  command prints.
+- **Oldest at the top, cursor on the newest.** Moving off the newest stops
+  following, so an arriving record never moves the row being read; moving back
+  onto it, or End, follows again.
+- **Nothing is dropped.** Unlike narration, the feed blocks rather than drops:
+  the follower's position is already past a record it has handed over.
+  Closing the screen cancels the follow, which releases a blocked send. The
+  screen holds the newest `auditHistory` records.
+- **Runs fold.** Consecutive records with one `Group` — the CLI gives an http
+  exchange its method, status and origin — are one row with a count; Enter or
+  → opens it, ← folds it. Only consecutive ones: folding across a record from
+  another trail would reorder what happened. Rows are rebuilt as records
+  arrive and the cursor is found again by its record's ID, so a run growing
+  under it never moves it.
+- **Bodies are one key from the record.** An http record's card offers the
+  recordings the pool kept (`AuditRecordDetail.Recordings`) on `b`, `r` and
+  `s` — the card's own `offers` — and a body opens on a card whose `back` is
+  the record, so every way of closing it returns there. `AuditBody` is the
+  `audit http --body` read, escaped, JSON laid out, cut at 1 MiB with the
+  command for the rest.
+- **`/` filters, fzf-style.** Each word must appear in order, not
+  together; every word must match; smart case (`fuzzy.go`, fzf's first
+  algorithm, so the lit window is the tight one). Matched against what a row
+  says, or its ID on its own — never a line with the ID appended, since every
+  http ID starts "http" and a term would borrow its letters. Results stay in
+  timeline order rather than ranked: in an audit trail the order is the
+  information. Runs fold over what the filter lets through, arrivals are
+  filtered as they come, and Esc clears the filter before it closes anything.
+- **Silence is explained.** Every poll reports the trails it could not reach,
+  drawn at the foot of the box, so a stopped discobox's in-box trails read as
+  missing rather than quiet.
+
 ## Pushing, without being asked
 
 The other direction from apply, and deliberately not shaped like it. While a
@@ -662,34 +722,52 @@ an answer about the project that nobody has. Once one has, it stays put whether
 or not the next refresh is late — the one screen a new user reads must not blink
 at them every time a poll runs long.
 
-**The header can narrow the list to one server** (`server.go`,
-`sandboxList.server`). It is the folder filter's twin, drawn in front of it —
-left and right change it, Enter or a click opens the dropdown — and it is there
-only when `Session.Servers` has more than one. It is the top rung of the focus
-ladder, above the folder, so Down from it steps back to the folder (see "Focus
-is a ladder" below). It opens on `all servers`, which leads the choices and is
-the listing §4 describes; the servers follow it, the primary first.
-
-**The header can narrow the list to one tag** (`tags.go`, `sandboxList.tag`),
-drawn after the folder once any discobox inside the server and folder filters
-carries one ([ADR 0136](../../../docs/adr/0136-a-sandboxs-meta-lives-in-the-sandbox-and-the-server-caches-it.md)):
-`all tags`, then each tag as the rows spell it (`#wip`, `#ticket=ENG-12`). A
-chosen tag stays among the choices after its last box drops it, like the folder
-the header is on, so the control never vanishes from under what it is showing.
-It narrows the list only; unlike the other two it says nothing about where a
-create goes.
+**The header's filter is one control** (`filter.go`). The list can be
+narrowed to one server (`server.go`, `sandboxList.server`), one folder
+(`folder.go`) and any number of tags (`tags.go`, `sandboxList.tags`), and the header
+carries all three as one line naming only what is narrowed — `server beta ·
+~/src/foo @ main · #wip #ticket=ENG-12 ▾`, or `all discoboxes ▾` — since what is left open the
+list's own sections already name. Enter or a click opens one card
+(`filterPicker`, `dlgFilter`) with a group per filter: the servers when
+`Session.Servers` has more than one (`all servers` first, the primary next),
+the folders, and the tags once any discobox inside the other two carries one
+([ADR 0136](../../../docs/adr/0136-a-sandboxs-meta-lives-in-the-sandbox-and-the-server-caches-it.md)),
+as the rows spell them (`#wip`, `#ticket=ENG-12`). Space or a click marks a
+choice in its group; Enter marks the row under the cursor too and applies every
+mark at once (`applyFilter`). The tags are the one group that takes several
+marks, drawn as boxes (`□ ■`) rather than dots: Space or a click turns a tag on
+and off (`filterPicker.toggle`), `all tags` clears them, and a discobox is
+listed when it carries every tag marked — `discobox list --tag` repeated. A
+discobox holds one value per key, so marking `#ticket=ENG-13` lets go of
+`#ticket=ENG-12` rather than narrowing to what nothing carries. Enter
+only ever turns its row on (`filterPicker.pick`), so the key that applies the
+card never drops the tag under the cursor. So ↓ Enter changes one filter, as any other list
+in the window takes its highlighted row, narrowing two is one trip rather than
+one dropdown each, and nothing the card shows moves the list under it until
+Enter. Esc applies nothing. Over the harnesses and secrets screens the primary
+is drawn marked under `all servers` (`filterPicker.shows`) without being
+written into the card's list, and a marked row marks nothing again, so an
+untouched Enter there moves nothing behind the screen. The card is drawn in a
+window over its rows that keeps the cursor on screen (`filterPicker.offset`):
+every server, folder and tag at once is taller than a short terminal. A
+chosen folder or tag stays among the choices after its last box leaves it, so
+the choice never vanishes from under what the list is showing. The tags narrow
+the list only; unlike the other two they say nothing about where a create goes.
 
 **The filters are one filter.** `sandboxList.inView` is the server, the
-folder and the tag together, and everything that counts discoboxes counts through it — the
+folder and the tags together, and everything that counts discoboxes counts through it — the
 rows, the archived offer — so a filter added to one count cannot be forgotten
-in another. The dropdowns count the same way from the other side: the folder
-dropdown offers the folders on the server the header names and counts on it,
-and the server dropdown counts in the folder the header names, because the
-filter a choice leaves in place is part of what the choice will list.
+in another. The card counts the same way: it holds a copy of the list carrying
+the marks so far, and each choice's count is what the list would show with
+that choice marked beside the others. The folders offered are the ones on the
+server marked and the tags the ones inside both, re-read as marks change,
+because the filter a choice leaves in place is part of what the choice will
+list.
 
 **The server on screen is the server the prompt creates on.** The header filter
 and the run options' Server row are one control in both directions, the way the
-folder and the Source row are: `selectServer` → `optionSet.setServer`, and
+folder and the Source row are: `applyFilter` (and `cycleServer` on the
+harnesses and secrets screens) → `optionSet.setServer`, and
 `Model.followServer` back the other way when the row is cycled in the panel. So
 narrowing the list to a machine is also the way to send the next prompt there.
 `all servers` is no answer to which server, so a create from there goes to the
@@ -698,9 +776,9 @@ primary — `--server` unset, as §5 has it.
 **The harnesses and secrets screens are the header's server's**
 ([ADR 0131](../../../docs/adr/0131-the-launcher-answers-every-servers-credential-requests-and-names-the-server-its-config-screens-edit.md) §2,
 `Model.configServer`): the server the filter names, or the primary under `all
-servers`. The filter stays drawn over them and names it, offering the servers
-but not `all servers`, which nothing can be added to; ←→ on either screen
-moves it. It is the same control, so a server chosen there is the list's
+servers`. The filter stays drawn over them as `server <name>`, and its card
+there offers the servers alone, without `all servers`, which nothing can be
+added to; ←→ on either screen moves it (`cycleServer`). It is the same control, so a server chosen there is the list's
 after Esc, and opening one from `all servers` and leaving leaves it there.
 Since the configured server is always where the next create goes, one list of
 harnesses serves the screen, the run options and the questions a run asks
@@ -717,12 +795,18 @@ discoboxes (`sandboxList.onPrimary`) — unnamed above a list narrowed to anothe
 server, it reads as that server's capacity, which is the number checked before
 creating there.
 
-**The list is one section per server** while it is showing every one of them
-(`sandboxList.grouped`, from `Session.Servers`, the primary first; filtered to
-one server there is nothing to tell apart and the header has said the name).
-Rows are ordered by section and newest-first within one, and each section is introduced
-by the band the list's own title is drawn as (`renderTitle`, in the dim of the
-two): `server <name>` with that section's count, or `not answering` for a
+**The list is sectioned by every filter the header leaves open**
+(`sandboxList.grouped`, `sectionKey`): by server while it shows every server
+and there is more than one (`byServer`, from `Session.Servers`, the primary
+first), and by folder on `all folders` (`byFolder`, in the card's order,
+the window's own first), since the rows carry no folder column. On both, a
+section is a folder and a server at once; a filter narrowed to one value drops
+out of the sections, because the header has said the name, so one server and
+one folder is no sections at all. Rows are ordered by section — folders leading,
+each one's servers under it — and newest-first within one, and each section is
+introduced by the band the list's own title is drawn as (`renderTitle`, in the
+dim of the two): `server <name>`, the folder's label, or `<folder> on <server>`,
+with that section's count; or `server <name>` and `not answering` for a
 server that did not answer, whose section has no rows under it — rows that are
 missing say why rather than vanishing. A band rather than a line of text
 because a bare name above a list of discoboxes is one more name among them,
@@ -1705,7 +1789,7 @@ the last selection, which is what the middle button pastes everywhere else
 (`Model.primaryText` — X11's primary, not the clipboard).
 
 Every screen the window draws marks its own controls: the rows of all four
-lists (`markList`), the folder and server filters, the workspace header's git summary
+lists (`markList`), the header's filter, the workspace header's git summary
 (which opens discobox-review) and its links (the desktop and the forwarded web
 ports), the composer and the strip under it, the
 title band's two offers, a menu's rows and a card's, the run options and the
@@ -1991,6 +2075,27 @@ one thing the renderer cannot redraw its way out of.
 Pool preload is reported through the sandbox launch's normal busy status. The
 console has no independent prepull subscription or reserved setup row.
 
+**The header's filters are kept per folder** (`view.go`,
+[ADR 26-09-30-188](../../../docs/adr/26-09-30-188-the-consoles-filters-open-on-everything-and-are-kept-per-directory.md)). A window opens on
+`Session.View`: the server, folder and tags the last window in the session's
+directory was left on, or — in a directory never narrowed — every server, every
+folder and every tag, the zero `ListView`, narrowed by what the command line
+named (`Session.ServerChosen`, `SourceChosen`): `--server` opens on the primary
+it made, and `-C` on the window's own folder — already the absolute project
+root, so `-C ../foo` is `/home/…/foo`. That narrowing is taken as what the store
+has, so it is saved only once the filters move off it, and a saved view
+outranks it: the flags choose the default and nothing else. They are written through
+`DataSource.SaveView` exactly when a draft is, on the listing's tick when they
+have moved and from `closeWindow` on the way out, and never by a one-shot
+window, whose header nobody chose. The folder is carried whole (key, label,
+source) because the window opens on it before any listing has landed to name
+it; a saved server no longer registered opens as every server. A view saved
+when the filter held one tag (`tag` in the state file) opens on that tag and is
+rewritten as `tags` the next time it moves. On `all
+folders` a create still asks where to cut from (`askWhereToCutFrom`), so the
+first prompt in a fresh directory asks, and answering narrows the folder —
+which is then what that directory opens on.
+
 **An unsent prompt outlives the window** (`draft.go`). What is in the composer
 is written through `DataSource.SaveDraft`, keyed by the session's directory, and
 `Session.Draft` is what the next window in that folder opens holding. Closing a
@@ -2214,9 +2319,10 @@ which folder's sandboxes are listed (`folder.go`). A folder is an origin key
 a machine, and where the discoboxes in it had their source from — a directory or
 a repository URL. It is matched by the key the server stored on each row
 (`Sandbox.OriginKey`) and named by that source, so a URL is a folder the way a
-directory is. The header opens on the window's own folder (`Session.OriginKey`,
-what `discobox ls` lists here), with every folder something is filed in one
-press away, plus `allFolders`. A folder of this machine's also holds its
+directory is. The header opens on the folder the directory's saved view names,
+or on `allFolders` (see "The header's filters are kept per folder"); the window's
+own folder (`Session.OriginKey`, what `discobox ls` lists here) leads the
+filter card's folders, with every folder something is filed in beside it. A folder of this machine's also holds its
 discoboxes with no source, which are filed under the machine alone
 (`Session.HostKey`) — `ls` sends both keys the same way — so that key is never
 offered as a folder of its own. The choices come from the listing itself, so the
@@ -2232,7 +2338,7 @@ nothing else on the row to tell them apart. So the row carries
 `OriginHostID`/`OriginHost` and the window carries `Session.HostID`, and a row
 whose origin host is not this one is qualified `from wilma (host_zzzz45)` in dim
 text after the name. Another machine's folder carries the same qualifier in the
-dropdown, since it would otherwise read exactly like this machine's.
+filter's card, since it would otherwise read exactly like this machine's.
 
 It is a qualifier on the name rather than a column of its own: what it answers
 is "why is this here", which is a question about the name it sits beside, and
@@ -2270,10 +2376,10 @@ reading.
 
 **The Source row is a selector, and it moves the header back** (`options.go`).
 It offers what the project has actually been cut from — `sandboxList.sources()`,
-off the same listing the folder dropdown is built from — plus `no source`, and
-takes the same two affordances the header does: left and right cycle in place,
-Enter opens the whole list, whose last row is the one entry that is not a source
-but the input field for a path, URL or `DIR@REF` the listing has never seen.
+off the same listing the filter's folders are built from — plus `no source`.
+Left and right cycle in place and Enter opens the whole list, whose last row is
+the one entry that is not a source but the input field for a path, URL or
+`DIR@REF` the listing has never seen.
 
 Sources and folders are not the same list. A folder is where a discobox is
 *filed* — a machine and a source — so one source cut on two machines is two
@@ -2388,24 +2494,18 @@ the thing the question exists to avoid. Both are `includeDirtyDialog`: the
 excluding answer leads and Esc means no, since the discobox is created either
 way.
 
-**Focus is a ladder, and its ends stop.** Prompt, discoboxes, folder filter,
-server filter, bottom to top, and the arrows climb it one rung at a time: Up off
-the top of the list reaches the folder, Up again the server; Down steps back
-the same way, and past the last row returns to the prompt. The tag filter is
-not a rung: it is beside the folder, not above it, so Tab reaches it and Up
-from it climbs to the server as Up from the folder does. The server rung is
-there only when there is more than one server, and without it the folder is the
-top. Neither end wraps — Down at the prompt stays in the prompt and Up at the
-top stays there, because a key that jumped from one end to the other would be
-moving the opposite way to the one it names. The server is above the folder
-although it is drawn to the left of it: it is the wider scope, and the one you
-change least.
+**Focus is a ladder, and its ends stop.** Prompt, discoboxes, filter, bottom
+to top, and the arrows climb it one rung at a time: Up off the top of the list
+reaches the filter; Down steps back the same way, and past the last row
+returns to the prompt. Neither end wraps — Down at the prompt stays in the
+prompt and Up at the filter stays there, because a key that jumped from one
+end to the other would be moving the opposite way to the one it names.
 
 Tab is the one key that does go round, in the order Up climbs: prompt →
-discoboxes → folder → tags (when shown) → server → prompt. Esc is the short way straight out to the
-prompt from any stop. With an empty list, leaving the prompt lands on the folder
-filter instead — that is exactly when it is the control you want, and refusing
-to move would leave no way to reach it. Down from there passes straight through
+discoboxes → filter → prompt. Esc is the short way straight out to the prompt
+from any stop. With an empty list, leaving the prompt lands on the filter
+instead — that is exactly when it is the control you want, and refusing to
+move would leave no way to reach it. Down from there passes straight through
 the empty list to the prompt: there is nothing to move through, and the empty
 list's own line says to type a prompt.
 
@@ -2420,9 +2520,6 @@ Where the cursor lands entering the list is `listLanding`, and only decides the
 *first* time (`sandboxList.visited`): Up is a direction, so it lands on the row
 nearest the prompt — the last; Tab lands at the top. After that every key returns the cursor to the sandbox it was left on, because leaving
 the list to type something and coming back is not the same as arriving at it.
-The one exception is the first time focus leaves the prompt in a session
-(`Model.leftPrompt`): the window opens there, and that first Up is reading the
-list rather than stepping into the row above, so it lands at the top.
 `resetCursor` clears `visited` when the folder, server, or tag changes: a
 different set of sandboxes is a list nobody has chosen a row in.
 
@@ -2502,9 +2599,10 @@ the newest one where the busy line goes.
 | --- | --- |
 | `data.go` | `Sandbox`, `Session`, `Harness`, `RunRequest`, `Verb`, `Interaction`, `DataSource` |
 | `harnesses.go` | the harnesses screen: the list, its actions, the config card, `F3` |
-| `folder.go` | the header's folder filter: the choices, the dropdown, and applying one |
-| `server.go` | the header's server filter: the choices, the dropdown, and the create that follows it |
-| `tags.go` | the header's tag filter: the choices, shown once anything is tagged, the dropdown, and applying one |
+| `filter.go` | the header's filter: the line naming what is narrowed, the card that marks a server, folder and tags, and applying them together |
+| `folder.go` | a folder: the origin key it files under, and what it holds |
+| `server.go` | the server the list shows and a create goes to, and the config screens' ←→ over it |
+| `tags.go` | the tags the list can be narrowed to, and how one reads |
 | `shimmer.go` | the opening glint over "discobox" in the placeholder |
 | `model.go` | the window: update, actions, run, layout, view, help |
 | `list.go` | the sandbox pane: filters, selection, visual range, row rendering |
@@ -2526,6 +2624,8 @@ the newest one where the busy line goes.
 | `workspace.go` | the workspace screen: open, poll/reconcile, tabs, detach, the port forward |
 | `services.go` | the discobox's declared services: the menu behind the leader, and the three verbs |
 | `tools.go` | the tools: the catalog, the picker, the tool window and its `[-]`/`[x]` |
+| `audit.go` | the audit screen: the followed timeline over the workspace, its search, and a record's card |
+| `fuzzy.go` | the fzf-style matcher the audit search filters and lights with |
 | `narration.go` | what a slow operation is doing, on the busy line |
 | `tui.go` | `Run`: the program the CLI starts against a `DataSource` |
 | `secrets.go` | the secrets screen (`F4`): the secrets table, a secret's card and grants, the secret and grant forms |

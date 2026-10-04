@@ -54,6 +54,10 @@ func NewSecretRequestBody(body io.ReadCloser) *SecretRequestBody {
 // SecretVerdict is a SecretResolver's answer to a SecretAuthorizeRequest.
 type SecretVerdict = secrets.Verdict
 
+// SecretRefusal is a refused request's answer in its own protocol, which a
+// SecretVerdict may supply.
+type SecretRefusal = secrets.Refusal
+
 // SecretReportRequest tells a SecretResolver what an upstream made of a value
 // it resolved: the sentinel, the destination, and the verdict. It never carries
 // the credential (ADR 0132 §1).

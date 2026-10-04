@@ -11,6 +11,7 @@ import (
 
 	"github.com/discobox-ai/discobox/pool-agent/poolauth"
 	"github.com/discobox-ai/discobox/server/internal/database"
+	"github.com/discobox-ai/discobox/server/internal/resources/judges"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -104,7 +105,7 @@ func TestJudgeRouteRefusesAnAskThatIsNotOne(t *testing.T) {
 func newJudgingTestApp(ctx context.Context, t *testing.T, db *database.DB) *chi.Mux {
 	t.Helper()
 	opts := DefaultAppOptions()
-	opts.JudgeCredentials = true
+	opts.Judging = judges.Judging{Commands: true, Requests: true}
 	router, _, _, stop, err := NewApp(ctx, db.Write, db.Read, opts)
 	if err != nil {
 		t.Fatalf("new app: %v", err)
@@ -149,4 +150,46 @@ func TestJudgeRouteSaysWhenItDoesNotJudgeInAWayAProgramReads(t *testing.T) {
 	if problem["type"] != "urn:discobox:problem:judging-disabled" {
 		t.Fatalf("type = %v, want the kind a pool recognizes; body = %s", problem["type"], resp.Body.String())
 	}
+}
+
+// The command route is a pool route like the request one: a real pool's
+// assertion reaches the handler (server/internal/auth/REVIEW.md), and a server
+// that does not judge commands answers in the way the pool mints by
+// (ADR 26-10-02-054 §3).
+func TestJudgeCommandsRouteIsAPoolRoute(t *testing.T) {
+	skipWithoutDocker(t)
+	ctx := context.Background()
+	body := `{"sandboxId":"sb_1","useId":"use_abc","command":["gh","pr","create"],"stdin":{"content":"x"}}`
+	ask := func(t *testing.T, router http.Handler, token string) *httptest.ResponseRecorder {
+		t.Helper()
+		resp := httptest.NewRecorder()
+		req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/pools/"+routeTestPoolID+"/judge-commands", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		router.ServeHTTP(resp, req)
+		return resp
+	}
+
+	t.Run("a server that does not judge commands", func(t *testing.T) {
+		db := newAppTestDB(ctx, t)
+		router := newTestApp(ctx, t, db)
+		projectID, privateKey := seedCredentialRoutePool(ctx, t, db.Write, router)
+		resp := ask(t, router, signPoolAssertion(t, projectID, routeTestPoolID, privateKey, poolauth.ScopeCredentialBroker))
+		var problem map[string]any
+		_ = json.Unmarshal(resp.Body.Bytes(), &problem)
+		if resp.Code != http.StatusServiceUnavailable || problem["type"] != "urn:discobox:problem:judging-disabled" {
+			t.Fatalf("status = %d, body = %s; want the judging-disabled problem", resp.Code, resp.Body.String())
+		}
+	})
+	t.Run("a server that judges commands", func(t *testing.T) {
+		db := newAppTestDB(ctx, t)
+		router := newJudgingTestApp(ctx, t, db)
+		projectID, privateKey := seedCredentialRoutePool(ctx, t, db.Write, router)
+		resp := ask(t, router, signPoolAssertion(t, projectID, routeTestPoolID, privateKey, poolauth.ScopeCredentialBroker))
+		// The project has no judge, so it is refused — by the judge's
+		// service, not by authentication.
+		if resp.Code == http.StatusUnauthorized || resp.Code == http.StatusForbidden || !strings.Contains(resp.Body.String(), "judge") {
+			t.Fatalf("status = %d, body = %s; want the pool through to the judge service", resp.Code, resp.Body.String())
+		}
+	})
 }

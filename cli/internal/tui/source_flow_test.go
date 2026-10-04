@@ -7,8 +7,7 @@ import (
 )
 
 // Ctrl-O opens the options, the Source row cycles in place, and Enter opens
-// the whole list — the same two affordances the header's folder filter has,
-// because they are the same control.
+// the whole list.
 func TestTheSourceRowCyclesAndOpensItsList(t *testing.T) {
 	t.Parallel()
 	m := newTestModel(t, newFakeSource(testSandboxes()...))
@@ -102,7 +101,7 @@ func TestTheHeaderStillMovesTheSource(t *testing.T) {
 	m := newTestModel(t, newFakeSource(testSandboxes()...))
 
 	m.opts.chooseSource("https://github.com/acme/foo")
-	send(t, m, keyPress("tab"), keyPress("up"), keyPress("right"))
+	filterTo(t, m, "/src/obot")
 	if m.list.folder.key != testKey("/src/obot") {
 		t.Fatalf("folder = %q, want the header to have moved", m.list.folder.label)
 	}

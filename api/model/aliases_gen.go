@@ -5,7 +5,6 @@ package model
 
 import apigen "github.com/discobox-ai/discobox/api/gen"
 
-type AgentCredentialVerdict = apigen.AgentCredentialVerdict
 type AppliedSourceCommit = apigen.AppliedSourceCommit
 type ApprovalRequest = apigen.ApprovalRequest
 type ApproveSecretRequestBody = apigen.ApproveSecretRequestBody
@@ -52,8 +51,11 @@ type HostTrustRequest = apigen.HostTrustRequest
 type IrohListener = apigen.IrohListener
 type Job = apigen.Job
 type JudgeAnswer = apigen.JudgeAnswer
+type JudgeInput = apigen.JudgeInput
 type JudgeJob = apigen.JudgeJob
 type JudgeNeed = apigen.JudgeNeed
+type JudgeRecognition = apigen.JudgeRecognition
+type JudgeReported = apigen.JudgeReported
 type JudgeRequestBody = apigen.JudgeRequestBody
 type JudgeRequestEvidence = apigen.JudgeRequestEvidence
 type JudgeStanding = apigen.JudgeStanding
@@ -86,7 +88,9 @@ type Origin = apigen.Origin
 type Peer = apigen.Peer
 type Pool = apigen.Pool
 type PoolCPUUsage = apigen.PoolCPUUsage
+type PoolCommandAsk = apigen.PoolCommandAsk
 type PoolFilesystemUsage = apigen.PoolFilesystemUsage
+type PoolHeldSandboxesBody = apigen.PoolHeldSandboxesBody
 type PoolJudgeAsk = apigen.PoolJudgeAsk
 type PoolMemoryUsage = apigen.PoolMemoryUsage
 type PoolProvisionPhase = apigen.PoolProvisionPhase
@@ -104,7 +108,6 @@ type Project = apigen.Project
 type ProjectMember = apigen.ProjectMember
 type ProviderConfigField = apigen.ProviderConfigField
 type ProviderStatus = apigen.ProviderStatus
-type RecordCredentialVerdictBody = apigen.RecordCredentialVerdictBody
 type RefreshSecretBody = apigen.RefreshSecretBody
 type RegisterPoolBody = apigen.RegisterPoolBody
 type RegisterPoolResponseBody = apigen.RegisterPoolResponseBody

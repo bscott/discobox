@@ -25,8 +25,10 @@ The repo is always `discobox-ai/discobox`; pass `--repo discobox-ai/discobox`
 to every `gh` call. Outside a discobox, with `gh` logged in and a GitHub
 remote, run the commands below directly and skip this section.
 
-Inside a discobox there is no GitHub remote and no `gh` login: every GitHub
-call goes through `discobox-access`. `triage-issue` asks for these uses up
+Inside a discobox there is no `gh` login, and `origin` is the sandbox's own
+mirror. An `upstream` remote, when there is one, is whatever the host's branch
+tracks — possibly a mirror — so do not push to it by name: every GitHub call
+goes through `discobox-access`, with the URL spelled out. `triage-issue` asks for these uses up
 front; check `discobox-access list` and request only what is missing, in one
 request:
 

@@ -12,8 +12,9 @@ import (
 	"github.com/discobox-ai/discobox/server/internal/store"
 )
 
-// roleStore holds the discoboxes the source delivery routes are checked
-// against: one the lead created, and one a person did.
+// roleStore holds the discoboxes the owned routes are checked against — one
+// the lead created, and one a person did — and secret requests filed by them
+// and by no discobox at all.
 func roleStore(t *testing.T) *store.Store {
 	t.Helper()
 	ctx := context.Background()
@@ -43,6 +44,22 @@ func roleStore(t *testing.T) *store.Store {
 		sandbox.ProjectID, sandbox.PoolID, sandbox.CreatedByUserID = "proj-1", "pool-1", "user-1"
 		if err := st.CreateSandbox(ctx, sandbox); err != nil {
 			t.Fatalf("create sandbox %s: %v", sandbox.ID, err)
+		}
+	}
+	// A request from each: the lead's worker, a person's discobox, a discobox
+	// that is gone, and none at all — a person's own ask.
+	for _, req := range []*model.SecretRequest{
+		{ID: "sreq-worker", SandboxID: "sbx-worker"},
+		{ID: "sreq-persons", SandboxID: "sbx-persons"},
+		{ID: "sreq-gone", SandboxID: "sbx-gone"},
+		{ID: "sreq-person", RequestedBy: "user-1"},
+	} {
+		req.ProjectID, req.Type, req.Status = "proj-1", "token", model.SecretRequestStatusPending
+		if req.RequestedBy == "" {
+			req.RequestedBy = "agent:" + req.SandboxID
+		}
+		if err := st.CreateSecretRequest(ctx, req); err != nil {
+			t.Fatalf("create secret request %s: %v", req.ID, err)
 		}
 	}
 	return st
@@ -84,5 +101,155 @@ func TestSandboxRoleDeliversSourceOnlyToWhatItCreated(t *testing.T) {
 				t.Fatalf("status = %d (%v), want %d", got, err, tc.want)
 			}
 		})
+	}
+}
+
+// A discobox reads and types into the terminals only of discoboxes it created,
+// one call at a time; attaching and starting or ending an exec stay out (ADR
+// 26-10-01-397).
+func TestSandboxRoleDrivesOnlyItsOwnDiscoboxesTerminals(t *testing.T) {
+	authorizer := SandboxRoleAuthorizer{Store: roleStore(t)}
+	lead := Principal{Type: PrincipalTypeSandbox, SandboxID: "sbx-lead", ProjectID: "proj-1", UserID: "user-1"}
+	for _, tc := range []struct {
+		name, method, path string
+		want               int
+	}{
+		{"list its worker's terminals", http.MethodGet, "/projects/default/sandboxes/sbx-worker/execs", http.StatusOK},
+		{"read its worker's screen", http.MethodGet, "/api/projects/default/sandboxes/sbx-worker/execs/primary/screen", http.StatusOK},
+		{"wait on its worker's terminal", http.MethodPost, "/projects/proj-1/sandboxes/sbx-worker/execs/primary/wait", http.StatusOK},
+		{"type into its worker's terminal", http.MethodPost, "/projects/default/sandboxes/sbx-worker/execs/exec-1/input", http.StatusOK},
+		{"read a person's discobox's screen", http.MethodGet, "/projects/default/sandboxes/sbx-persons/execs/primary/screen", http.StatusForbidden},
+		{"type into a person's discobox", http.MethodPost, "/projects/default/sandboxes/sbx-persons/execs/primary/input", http.StatusForbidden},
+		{"list a person's discobox's terminals", http.MethodGet, "/projects/default/sandboxes/sbx-persons/execs", http.StatusForbidden},
+		{"read nothing's screen", http.MethodGet, "/projects/default/sandboxes/sbx-none/execs/primary/screen", http.StatusNotFound},
+		{"attach to its worker", http.MethodGet, "/projects/default/sandboxes/sbx-worker/execs/primary/attach", http.StatusForbidden},
+		{"start an exec in its worker", http.MethodPost, "/projects/default/sandboxes/sbx-worker/execs", http.StatusForbidden},
+		{"end its worker's exec", http.MethodDelete, "/projects/default/sandboxes/sbx-worker/execs/exec-1", http.StatusForbidden},
+		{"read its worker's logs", http.MethodGet, "/projects/default/sandboxes/sbx-worker/execs/exec-1/logs", http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequestWithContext(WithPrincipal(context.Background(), lead), tc.method, tc.path, nil)
+			ok, err := authorizer.Authorize(r)
+			got := http.StatusOK
+			if err != nil {
+				var status interface{ StatusCode() int }
+				if !errors.As(err, &status) {
+					t.Fatalf("error %v carries no status", err)
+				}
+				got = status.StatusCode()
+			} else if !ok {
+				t.Fatal("the role stepped aside for a sandbox's call; it must answer every one")
+			}
+			if got != tc.want {
+				t.Fatalf("status = %d (%v), want %d", got, err, tc.want)
+			}
+		})
+	}
+}
+
+// A discobox starts, stops, and restarts only discoboxes it created — not a
+// person's, and not itself; archiving, purging, repairing, and upgrading stay
+// out (ADR 26-10-02-478).
+func TestSandboxRolePowersOnlyWhatItCreated(t *testing.T) {
+	authorizer := SandboxRoleAuthorizer{Store: roleStore(t)}
+	lead := Principal{Type: PrincipalTypeSandbox, SandboxID: "sbx-lead", ProjectID: "proj-1", UserID: "user-1"}
+	worker := Principal{Type: PrincipalTypeSandbox, SandboxID: "sbx-worker", ProjectID: "proj-1", UserID: "user-1"}
+	for _, tc := range []struct {
+		name         string
+		caller       Principal
+		method, path string
+		want         int
+	}{
+		{"start its worker", lead, http.MethodPost, "/projects/default/sandboxes/sbx-worker/start", http.StatusOK},
+		{"stop its worker", lead, http.MethodPost, "/api/projects/default/sandboxes/sbx-worker/stop", http.StatusOK},
+		{"restart its worker", lead, http.MethodPost, "/projects/proj-1/sandboxes/sbx-worker/restart", http.StatusOK},
+		{"start a person's discobox", lead, http.MethodPost, "/projects/default/sandboxes/sbx-persons/start", http.StatusForbidden},
+		{"stop a person's discobox", lead, http.MethodPost, "/projects/default/sandboxes/sbx-persons/stop", http.StatusForbidden},
+		{"restart a person's discobox", lead, http.MethodPost, "/projects/default/sandboxes/sbx-persons/restart", http.StatusForbidden},
+		{"stop itself", worker, http.MethodPost, "/projects/default/sandboxes/sbx-worker/stop", http.StatusForbidden},
+		{"start nothing", lead, http.MethodPost, "/projects/default/sandboxes/sbx-none/start", http.StatusNotFound},
+		{"start its worker in another project", lead, http.MethodPost, "/projects/proj-2/sandboxes/sbx-worker/start", http.StatusForbidden},
+		{"archive its worker", lead, http.MethodDelete, "/projects/default/sandboxes/sbx-worker", http.StatusForbidden},
+		{"purge its worker", lead, http.MethodPost, "/projects/default/sandboxes/sbx-worker/purge", http.StatusForbidden},
+		{"repair its worker", lead, http.MethodPost, "/projects/default/sandboxes/sbx-worker/repair", http.StatusForbidden},
+		{"upgrade its worker", lead, http.MethodPost, "/projects/default/sandboxes/sbx-worker/upgrade", http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequestWithContext(WithPrincipal(context.Background(), tc.caller), tc.method, tc.path, nil)
+			ok, err := authorizer.Authorize(r)
+			got := http.StatusOK
+			if err != nil {
+				var status interface{ StatusCode() int }
+				if !errors.As(err, &status) {
+					t.Fatalf("error %v carries no status", err)
+				}
+				got = status.StatusCode()
+			} else if !ok {
+				t.Fatal("the role stepped aside for a sandbox's call; it must answer every one")
+			}
+			if got != tc.want {
+				t.Fatalf("status = %d (%v), want %d", got, err, tc.want)
+			}
+		})
+	}
+}
+
+// A discobox reads and answers only the requests of discoboxes it created
+// (ADR 26-09-30-782 §2). A request from a discobox a person made, from one that
+// is gone, or from no discobox at all is a person's to answer.
+func TestSandboxRoleAnswersOnlyItsOwnDiscoboxesRequests(t *testing.T) {
+	authorizer := SandboxRoleAuthorizer{Store: roleStore(t)}
+	lead := Principal{Type: PrincipalTypeSandbox, SandboxID: "sbx-lead", ProjectID: "proj-1", UserID: "user-1"}
+	for _, tc := range []struct {
+		name, method, path string
+		want               int
+	}{
+		{"read its worker's request", http.MethodGet, "/projects/default/secret-requests/sreq-worker", http.StatusOK},
+		{"approve its worker's request", http.MethodPost, "/projects/default/secret-requests/sreq-worker/approve", http.StatusOK},
+		{"deny its worker's request", http.MethodPost, "/projects/proj-1/secret-requests/sreq-worker/deny", http.StatusOK},
+		{"list requests", http.MethodGet, "/projects/default/secret-requests", http.StatusOK},
+		{"read a person's discobox's request", http.MethodGet, "/projects/default/secret-requests/sreq-persons", http.StatusForbidden},
+		{"approve a person's discobox's request", http.MethodPost, "/projects/default/secret-requests/sreq-persons/approve", http.StatusForbidden},
+		{"approve a gone discobox's request", http.MethodPost, "/projects/default/secret-requests/sreq-gone/approve", http.StatusForbidden},
+		{"approve a person's own request", http.MethodPost, "/projects/default/secret-requests/sreq-person/approve", http.StatusForbidden},
+		{"approve nothing", http.MethodPost, "/projects/default/secret-requests/sreq-none/approve", http.StatusNotFound},
+		// The listing is filtered to what it was delegated where it is served
+		// (ADR 26-09-30-782 §3); the route itself is open to it.
+		{"list secrets", http.MethodGet, "/projects/default/secrets", http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequestWithContext(WithPrincipal(context.Background(), lead), tc.method, tc.path, nil)
+			ok, err := authorizer.Authorize(r)
+			got := http.StatusOK
+			if err != nil {
+				var status interface{ StatusCode() int }
+				if !errors.As(err, &status) {
+					t.Fatalf("error %v carries no status", err)
+				}
+				got = status.StatusCode()
+			} else if !ok {
+				t.Fatal("the role stepped aside for a sandbox's call; it must answer every one")
+			}
+			if got != tc.want {
+				t.Fatalf("status = %d (%v), want %d", got, err, tc.want)
+			}
+		})
+	}
+}
+
+// The listing a discobox reads is filtered to the requests it owns, since the
+// route that serves it cannot filter what it answers with.
+func TestADiscoboxListsOnlyTheRequestsItOwns(t *testing.T) {
+	st := roleStore(t)
+	owned, err := st.ListSecretRequests(context.Background(), "proj-1", "", store.OwnedBy("sbx-lead"))
+	if err != nil {
+		t.Fatalf("list owned: %v", err)
+	}
+	if len(owned) != 1 || owned[0].ID != "sreq-worker" {
+		t.Fatalf("owned = %+v, want only its worker's request", owned)
+	}
+	all, err := st.ListSecretRequests(context.Background(), "proj-1", "")
+	if err != nil || len(all) != 4 {
+		t.Fatalf("all = %d requests, %v; want every one for a person", len(all), err)
 	}
 }

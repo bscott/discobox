@@ -11,7 +11,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/discobox-ai/discobox/auditid"
-	"github.com/spf13/cobra"
 
 	apiclientgen "github.com/discobox-ai/discobox/api/gen"
 	apimodel "github.com/discobox-ai/discobox/api/model"
@@ -29,10 +28,12 @@ const (
 // body, framed chunks for an upgraded stream.
 const httpAuditFormatHeader = "X-Discobox-Audit-Format"
 
-// writeHTTPAuditArtifact prints one recording from the pool trail. It is read
-// from a hand-wired route rather than the generated client, because a body is
-// an unbounded stream the generated client would buffer.
-func (a *App) writeHTTPAuditArtifact(cmd *cobra.Command, projectID, poolID, sandboxID string, id auditid.ExchangeID, part string) error {
+// writeHTTPAuditArtifact writes one recording from the pool trail to out,
+// escaped for a terminal when safe, and tells errOut how it was spooled when
+// that is not as raw bytes. It is read from a hand-wired route rather than the
+// generated client, because a body is an unbounded stream the generated client
+// would buffer.
+func (a *App) writeHTTPAuditArtifact(ctx context.Context, out, errOut io.Writer, safe bool, projectID, poolID, sandboxID string, id auditid.ExchangeID, part string) error {
 	artifact := map[string]string{
 		httpAuditPartResponse: "response-body",
 		httpAuditPartRequest:  "request-body",
@@ -54,7 +55,7 @@ func (a *App) writeHTTPAuditArtifact(cmd *cobra.Command, projectID, poolID, sand
 	if sandboxID != "" {
 		u.RawQuery = url.Values{"sandboxId": []string{sandboxID}}.Encode()
 	}
-	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return err
 	}
@@ -71,10 +72,9 @@ func (a *App) writeHTTPAuditArtifact(cmd *cobra.Command, projectID, poolID, sand
 		return fmt.Errorf("read recorded %s: %s", part, resp.Status)
 	}
 	if format := resp.Header.Get(httpAuditFormatHeader); format != "" && format != "raw" {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "recorded as %s\n", terminalSafe(format))
+		_, _ = fmt.Fprintf(errOut, "recorded as %s\n", terminalSafe(format))
 	}
-	out := cmd.OutOrStdout()
-	if isTerminalStream(out) {
+	if safe {
 		// What a service answered a discobox is display data like everything
 		// else it recorded (ADR 0130 §6), and a body is the likeliest place
 		// for bytes a terminal would act on.

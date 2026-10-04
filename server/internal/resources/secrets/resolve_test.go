@@ -169,6 +169,10 @@ func TestResolveSandboxSecretHarnessConfigGrantReturnsValue(t *testing.T) {
 	if res.Status != model.SecretRequestStatusApproved || res.Value == nil || res.Value.Token != "real-token" {
 		t.Fatalf("resolution = %#v, want approved real-token", res)
 	}
+	// The pool's proxy records which secret a request spent (ADR 26-10-01-240).
+	if res.SecretID != sec.ID {
+		t.Fatalf("resolution names secret %q, want %q", res.SecretID, sec.ID)
+	}
 }
 
 func TestResolveSandboxSecretPendingWithoutGrant(t *testing.T) {

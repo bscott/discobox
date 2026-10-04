@@ -18,8 +18,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/discobox-ai/discobox/agentcreds"
 )
 
 // The units a grant is granted in. A month is thirty days: calendar months run
@@ -31,18 +29,6 @@ const (
 	// Forever is the lifetime nothing takes away.
 	Forever = time.Duration(0)
 )
-
-// Default is what a grant lives for when nobody has said anything else: the
-// approver did not, and the agent asked for nothing in particular. It is what
-// the window's step opens on and what `discobox secret request approve` sends
-// without --grant-ttl for such a request, so the two mint the same grant. When
-// the agent did name a lifetime (FromRequest), that is what both start from
-// instead, and this is only the fallback.
-//
-// An hour: the shortest answer still long enough to finish the task the
-// credential was asked for, and the one that costs nothing to be wrong about —
-// a grant that outlives its task is a credential nobody remembers handing out.
-const Default = time.Hour
 
 // Presets are the answers people actually give, in the order they are offered.
 // Forever is last because it is the only one that never comes back to be asked
@@ -141,25 +127,6 @@ func scale(n int64, unit time.Duration) (time.Duration, bool) {
 // one: the answer to "3 days" being refused is the spelling that works.
 func invalid(text string) error {
 	return fmt.Errorf("%q is not a lifetime: try 1h, 90m, 3d, 2w, 1mo, or forever", strings.TrimSpace(text))
-}
-
-// FromRequest is a lifetime an agent asked for, as the wire carries it, turned
-// into one the window and the flags can use. Zero is "asked for nothing in
-// particular", which is what an ask outside what an agent may ask for
-// (agentcreds.MaxGrantTTLSeconds) also becomes.
-//
-// Out of range is treated as no ask rather than clamped into one. The number
-// arrives from inside a sandbox, and the value of an ask is that a person is
-// shown what the agent said it needed; a number nobody could have meant is not
-// that, and quietly rewriting it to thirty days would put words in the agent's
-// mouth. The range check is also what keeps the multiplication below from
-// overflowing, which would land a huge ask back near zero — indistinguishable
-// from forever once the window rounds it to whole seconds.
-func FromRequest(seconds int64) time.Duration {
-	if seconds <= 0 || seconds > agentcreds.MaxGrantTTLSeconds {
-		return 0
-	}
-	return time.Duration(seconds) * time.Second
 }
 
 // Seconds is the lifetime as the API takes it. It takes a preset or what Parse

@@ -298,9 +298,9 @@ func TestASourcelessFolderElsewhereCutsFromTheWindowsOwn(t *testing.T) {
 	m := newTestModel(t, newFakeSource(append(testSandboxes(), far)...))
 
 	chosen := false
-	for _, f := range m.folderChoices() {
+	for _, f := range m.list.folders() {
 		if f.key == farHostKey {
-			m.selectFolder(f)
+			m.applyFilter(m.list.server, f, m.list.tags)
 			chosen = true
 		}
 	}

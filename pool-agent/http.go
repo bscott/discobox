@@ -21,6 +21,7 @@ const (
 	defaultSandboxAgentStatusTokensPath = "/api/pools/{poolId}/sandbox-agent-status-tokens" //nolint:gosec // Route path, not a credential value.
 	defaultSandboxAgentStatusPath       = "/api/pools/{poolId}/sandbox-agent-status"
 	defaultPoolResourcesPath            = "/api/pools/{poolId}/resources"
+	defaultHeldSandboxesPath            = "/api/pools/{poolId}/sandboxes"
 )
 
 // HTTPClient registers pools through the control plane HTTP API.
@@ -33,6 +34,7 @@ type HTTPClient struct {
 	sandboxAgentStatusTokensPath string
 	sandboxAgentStatusPath       string
 	poolResourcesPath            string
+	heldSandboxesPath            string
 }
 
 type HTTPClientOption func(*HTTPClient)
@@ -50,6 +52,7 @@ func NewHTTPClient(baseURL string, opts ...HTTPClientOption) *HTTPClient {
 		sandboxAgentStatusTokensPath: defaultSandboxAgentStatusTokensPath,
 		sandboxAgentStatusPath:       defaultSandboxAgentStatusPath,
 		poolResourcesPath:            defaultPoolResourcesPath,
+		heldSandboxesPath:            defaultHeldSandboxesPath,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -329,6 +332,53 @@ func (c *HTTPClient) ReportPoolResources(ctx context.Context, req PoolResourceRe
 		return fmt.Errorf("report pool resources failed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 	return nil
+}
+
+// ListHeldSandboxes reads every sandbox the control plane holds on this pool.
+// A body without the set is an error, never an empty set: the volume reaper
+// collects whatever is outside it.
+func (c *HTTPClient) ListHeldSandboxes(ctx context.Context, req HeldSandboxesRequest) ([]string, error) {
+	baseURL := strings.TrimRight(firstNonEmpty(req.ControlPlaneURL, c.baseURL), "/")
+	if baseURL == "" {
+		return nil, fmt.Errorf("control plane URL is required")
+	}
+	poolID := strings.TrimSpace(req.PoolID)
+	if poolID == "" {
+		return nil, fmt.Errorf("pool ID is required")
+	}
+	projectID := strings.TrimSpace(req.ProjectID)
+	if projectID == "" {
+		return nil, fmt.Errorf("project ID is required")
+	}
+	token, err := poolauth.CreateToken(req.PrivateKey, poolauth.Claims{ProjectID: projectID, PoolID: poolID})
+	if err != nil {
+		return nil, fmt.Errorf("create pool assertion: %w", err)
+	}
+	path := strings.ReplaceAll(c.heldSandboxesPath, "{poolId}", url.PathEscape(poolID))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("list held sandboxes failed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	var out struct {
+		SandboxIDs *[]string `json:"sandboxIds"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	if out.SandboxIDs == nil {
+		return nil, fmt.Errorf("list held sandboxes: the response carries no sandboxIds")
+	}
+	return *out.SandboxIDs, nil
 }
 
 func firstNonEmpty(values ...string) string {

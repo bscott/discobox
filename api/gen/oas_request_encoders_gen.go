@@ -272,6 +272,20 @@ func encodeCreateSecretRequestRequest(
 	return nil
 }
 
+func encodeJudgeCommandForPoolRequest(
+	req *PoolCommandAsk,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeJudgeForPoolRequest(
 	req *PoolJudgeAsk,
 	r *http.Request,
@@ -302,20 +316,6 @@ func encodeJudgeSandboxRequest(
 
 func encodeMintSandboxAgentStatusTokensRequest(
 	req *MintSandboxAgentStatusTokensBody,
-	r *http.Request,
-) error {
-	const contentType = "application/json"
-	e := new(jx.Encoder)
-	{
-		req.Encode(e)
-	}
-	encoded := e.Bytes()
-	ht.SetBody(r, bytes.NewReader(encoded), contentType)
-	return nil
-}
-
-func encodeRecordCredentialVerdictRequest(
-	req *RecordCredentialVerdictBody,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"

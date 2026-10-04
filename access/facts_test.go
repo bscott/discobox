@@ -53,14 +53,14 @@ func TestGatherFactsFindsTheRepoRootAndAResolvedRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rev-parse --show-toplevel: %v", err)
 	}
-	if f.repoRoot != strings.TrimSpace(string(root)) {
-		t.Fatalf("repoRoot = %q, want %q", f.repoRoot, strings.TrimSpace(string(root)))
+	if f.RepositoryRoot != strings.TrimSpace(string(root)) {
+		t.Fatalf("RepositoryRoot = %q, want %q", f.RepositoryRoot, strings.TrimSpace(string(root)))
 	}
-	if f.refSHA != sha {
-		t.Fatalf("refSHA = %q, want the resolved commit %q", f.refSHA, sha)
+	if f.RefCommit != sha {
+		t.Fatalf("RefCommit = %q, want the resolved commit %q", f.RefCommit, sha)
 	}
-	if f.refSubject != "the commit this test is about" {
-		t.Fatalf("refSubject = %q, want the commit's own subject", f.refSubject)
+	if f.RefSubject != "the commit this test is about" {
+		t.Fatalf("RefSubject = %q, want the commit's own subject", f.RefSubject)
 	}
 }
 
@@ -84,10 +84,10 @@ func TestGatherFactsSkipsNonGitCommands(t *testing.T) {
 	sha := initRepo(t, "not what this test is asking about")
 
 	f := gatherFacts(context.Background(), []string{"gh", "pr", "create", sha})
-	if f.refSHA != "" || f.refSubject != "" {
+	if f.RefCommit != "" || f.RefSubject != "" {
 		t.Fatalf("facts = %+v, want no ref fact for a non-git command", f)
 	}
-	if f.repoRoot == "" {
+	if f.RepositoryRoot == "" {
 		t.Fatal("repoRoot is empty, want it to still be resolved: the repo location is not about the command")
 	}
 }

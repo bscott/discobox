@@ -185,8 +185,8 @@ func TestAuditCredsPromptKeepsItsLines(t *testing.T) {
 const requestVerdicts = `{"credentialVerdicts":[{
 	"id":"cvd_2","projectId":"project-1","kind":"request","origin":"judge","sandboxId":"sbx_a","useId":"use_1",
 	"allow":false,"volunteered":false,"createdAt":"2026-09-02T10:00:01Z",
-	"request":{"method":"PATCH","url":"https://api.github.com/repos/org/repo","body":{"mediaType":"application/json","length":42}},
-	"round":1,"need":{"body":"json","bytes":512},"reason":"the change is in the body",
+	"request":{"method":"PATCH","url":"https://api.github.com/repos/org/repo","body":{"mediaType":"application/json","length":42,"parser":{"name":"json","version":1},"metadata":{"keys":["title"]}}},
+	"round":1,"need":{"body":true,"bytes":512},"reason":"the change is in the body",
 	"role":"judge","prompt":"{\"kind\":\"request\"}","promptVersion":"2","latencyMs":1500,
 	"judgeSandboxId":"sbx_judge","harnessConfigId":"hc_1","image":"harness:1","imageDigest":"sha256:one"
 },{
@@ -236,14 +236,42 @@ func TestAuditCredsPromptShowsWhichJudgeAnswered(t *testing.T) {
 	for _, want := range []string{
 		"cvd_2  ask  judge",
 		"request:  PATCH https://api.github.com/repos/org/repo",
-		"body:     application/json, 42 bytes",
-		"asked:    the body as json, up to 512 bytes",
+		"body:     application/json, 42 bytes, read as json v1",
+		`metadata: {"keys":["title"]}`,
+		"asked:    the body, up to 512 bytes",
 		"judge:    sbx_judge",
 		"harness:  hc_1",
 		"image:    harness:1@sha256:one",
 		"version:  2",
 		"rtt:      1.5s",
 		"rtt:      812ms",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// A verdict from a server that judges with Jev names the model and what it
+// said, rather than a judge discobox (ADR 26-10-01-324 §6).
+func TestAuditCredsPromptShowsJevsVerdict(t *testing.T) {
+	const jevVerdicts = `{"credentialVerdicts":[{
+	"id":"cvd_1","projectId":"project-1","kind":"request","origin":"judge","sandboxId":"sbx_a","useId":"use_1",
+	"allow":false,"volunteered":false,"createdAt":"2026-10-01T10:00:00Z",
+	"request":{"method":"DELETE","url":"https://api.github.com/repos/org/repo"},
+	"round":1,"reason":"Refused: Jev did not judge this request part of the approved purpose (0.04).","prompt":"{}",
+	"promptVersion":"jev-2","latencyMs":120,"model":"jev-1.13.0",
+	"probabilities":{"within":0.04,"claims_approval":0.1}
+}]}`
+	_, out, err := runAuditCreds(t, jevVerdicts, "--prompt")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	for _, want := range []string{
+		"judge:    jev-1.13.0",
+		"said:     claims_approval 0.10, within 0.04",
+		"version:  jev-2",
+		"rtt:      120ms",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output lacks %q:\n%s", want, out)
@@ -551,5 +579,83 @@ func TestHarnessHookRecordEscapesThePrompt(t *testing.T) {
 	got := harnessHookRecord("sbx_1")(hook).summary
 	if strings.ContainsAny(got, "\x1b\r\n\u202e") || !strings.Contains(got, "prompt: clear") || !strings.Contains(got, "next") {
 		t.Fatalf("summary = %q, want the prompt on one line with its controls escaped", got)
+	}
+}
+
+// The timeline folds a run of exchanges by what they have in common — method,
+// status, and where they went — never by path, which is what tells one call
+// of a run from the next.
+func TestHTTPAuditRecordsGroupByMethodStatusAndOrigin(t *testing.T) {
+	t.Parallel()
+	group := func(method string, status int, blocked bool, rawURL, host string) auditRecord {
+		return httpAuditRecord(apimodel.HTTPAuditExchange{Method: method, Status: status, Blocked: blocked, URL: rawURL, Host: host})
+	}
+	a := group("GET", 200, false, "https://api.github.com/user", "api.github.com")
+	b := group("GET", 200, false, "https://api.github.com/repos/x/y?page=2", "api.github.com")
+	if a.group != b.group || a.group != "GET 200 https://api.github.com" {
+		t.Fatalf("groups %q and %q, want both GET 200 https://api.github.com", a.group, b.group)
+	}
+	if a.groupSummary != "GET 200 https://api.github.com/..." {
+		t.Fatalf("group summary = %q", a.groupSummary)
+	}
+	for _, other := range []auditRecord{
+		group("POST", 200, false, "https://api.github.com/user", "api.github.com"),
+		group("GET", 404, false, "https://api.github.com/user", "api.github.com"),
+		group("GET", 0, true, "https://api.github.com/user", "api.github.com"),
+		group("GET", 200, false, "http://api.github.com/user", "api.github.com"),
+	} {
+		if other.group == a.group {
+			t.Fatalf("%q should not fold with %q", other.group, a.group)
+		}
+	}
+	if connect := group("CONNECT", 200, false, "registry.npmjs.org:443", "registry.npmjs.org:443"); connect.group != "CONNECT 200 registry.npmjs.org:443" {
+		t.Fatalf("a CONNECT is named by its host, got %q", connect.group)
+	}
+}
+
+// The timeline line names the secrets a request carried — an ordinary
+// sentinel's too, which has no use (ADR 26-10-01-240) — and the http table
+// gives them a column beside the uses.
+func TestHTTPAuditNamesTheSecretsSpent(t *testing.T) {
+	t.Parallel()
+	exchange := apimodel.HTTPAuditExchange{Method: "POST", Status: 200, URL: "https://api.anthropic.com/v1/messages", SwappedSecretIds: []string{"sec_key"}}
+	if summary := httpAuditRecord(exchange).summary; !strings.Contains(summary, "secrets=sec_key") || strings.Contains(summary, "uses=") {
+		t.Fatalf("summary = %q, want the secret and no use", summary)
+	}
+	table := httpAuditTable(false)
+	names := table.names()
+	row := table.row(exchange)
+	for i, name := range names {
+		if name == "SECRETS" {
+			if row[i] != "sec_key" {
+				t.Fatalf("SECRETS = %q, want sec_key", row[i])
+			}
+			return
+		}
+	}
+	t.Fatalf("columns %v, want SECRETS", names)
+}
+
+// A delegation verdict is the project's judge's, and what it judged is the
+// delegation grant a discobox handed a credential on under — not a command,
+// and not a request (ADR 26-09-30-782 §3).
+func TestADelegationVerdictSaysWhatItWasJudgedUnder(t *testing.T) {
+	v := apimodel.CredentialVerdict{
+		ID: "verdict-1", SandboxId: "sbx-lead",
+		Kind:    apiclientgen.NewOptCredentialVerdictKind(apiclientgen.CredentialVerdictKindDelegation),
+		GrantId: apiclientgen.NewOptString("grant-delegated"),
+	}
+	if got := verdictRecorded(v); got != "judge" {
+		t.Fatalf("recorded = %q, want judge", got)
+	}
+	if got := verdictJudged(v); got != "handed on under grant-delegated" {
+		t.Fatalf("judged = %q, want the delegation grant", got)
+	}
+	var out strings.Builder
+	if err := writeCredentialVerdictBlocks(&out, []apimodel.CredentialVerdict{v}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "command:") {
+		t.Fatalf("block = %q, want no command line on a delegation verdict", out.String())
 	}
 }

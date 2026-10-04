@@ -63,6 +63,9 @@ precedence:
    `github.com/discobox-ai/x/id`'s prefix-match rules, the same ones the CLI
    uses for short-ID arguments.
 
+Either form may spell the sandbox ID with a hyphen (`sbx-…`, the discobox's
+hostname); `id.Canonical` reads it back as `sbx_…` before matching.
+
 Ambiguous or zero matches in either form is a hard resolution failure that
 never distinguishes "no such sandbox" from "no such project" on the wire —
 an unauthenticated connection attempt must not learn what exists.
@@ -181,10 +184,11 @@ router as the API.
 There is no TCP listener (ADR 0057): a port to configure, publish, and
 firewall would buy nothing the route does not already provide. SSH is
 reachable wherever the API is, which is the property every client needs:
-`discobox tools ssh` splices a loopback port onto this route, and a persisted
-`ssh_config` reaches it through a `ProxyCommand` that runs `discobox admin
-ssh-proxy` — which is how every tool built on the `ssh` binary rather than on
-our client gets in: VS Code Remote-SSH, `scp`, `git`. See `cli/DESIGN.md`.
+every client reaches it through a `ProxyCommand` that runs `discobox admin
+ssh-proxy` — written into a persisted `ssh_config`, or passed on the command
+line by `discobox tools ssh` and `discobox cp` — which is how every tool built
+on the `ssh` binary rather than on our client gets in: VS Code Remote-SSH,
+`scp`, `git`. See `cli/DESIGN.md`.
 
 The route is exempt from HTTP auth (`auth.IsPublicPath`): SSH authenticates by
 public key inside its own protocol, before any channel exists, and an HTTP

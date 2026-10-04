@@ -3,6 +3,7 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"github.com/discobox-ai/discobox/hostscope"
 	"github.com/discobox-ai/discobox/server/internal/model"
 	"github.com/discobox-ai/x/gormdb"
 )
@@ -95,6 +97,9 @@ func (db *DB) Migrate(ctx context.Context) error {
 	if err := normalizeSecretHosts(write); err != nil {
 		return err
 	}
+	if err := moveSecretHostsToLists(write); err != nil {
+		return err
+	}
 	if err := liftConfiguredSecretGrantLimits(write); err != nil {
 		return err
 	}
@@ -132,6 +137,9 @@ func (db *DB) Migrate(ctx context.Context) error {
 		return err
 	}
 	if err := backfillSecretValueUpdatedAt(write); err != nil {
+		return err
+	}
+	if err := migrateCredentialVerdictNeeds(write); err != nil {
 		return err
 	}
 	return rekeySandboxOrigins(write)
@@ -208,6 +216,28 @@ func normalizeCredentialVerdictTimes(db *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+// migrateCredentialVerdictNeeds rewrites the ask a request verdict recorded
+// in the form it now takes (ADR 26-09-26-240 §2). A judge used to ask for a
+// body "as text" or "as JSON", and a verdict stored that ask as
+// {"body":"text"} or {"body":"json"}; it now asks for the body, as
+// {"body":true}, and a stored string would not read as one — failing not the
+// row but every listing it is in. What the old ask said beyond wanting the
+// body was which form, and the body is no longer shown in forms, so nothing
+// the row meant is lost.
+//
+// The column holds JSON as encoding/json writes it, with no spaces, so the
+// rewrite is a string replacement both SQLite and Postgres run the same way.
+// The rows are chosen by what they still say, so after the first run this
+// matches nothing.
+func migrateCredentialVerdictNeeds(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&model.CredentialVerdict{}) {
+		return nil
+	}
+	return db.Exec(`UPDATE credential_verdicts
+		SET need = REPLACE(REPLACE(need, '"body":"text"', '"body":true'), '"body":"json"', '"body":true')
+		WHERE need LIKE '%"body":"text"%' OR need LIKE '%"body":"json"%'`).Error
 }
 
 // prepareSandboxStateSplit makes the sandboxes table safe for AutoMigrate to
@@ -422,25 +452,64 @@ func migrateSecretTypes(db *gorm.DB) error {
 }
 
 // normalizeSecretHosts lowercases the destination hosts already stored on
-// secrets, requests, and grants.
+// secrets.
 //
-// Grant matching itself normalizes both sides (hostscope.Covers, in Go), but
-// stored hosts are still compared as written elsewhere: an open request is
-// found again by SQL equality on its host (FindPendingSecretRequest,
-// FindPendingAgentCredentialRequest), and the host is part of the secret
-// uniqueness index. A row written with any other casing therefore misses those
-// lookups and escapes that index. New writes are normalized by the secrets
-// service; this repairs the rows written before it was.
+// Matching itself normalizes both sides (hostscope.Covers, in Go), but the
+// host is part of the secret uniqueness index, so a row written with any
+// other casing escapes that index. New writes are normalized by the secrets
+// service; this repairs the rows written before it was. Requests' and grants'
+// hosts are normalized as they move into their lists (moveSecretHostsToLists).
 //
 // It is a permanent, idempotent step rather than a one-shot: the WHERE clause
 // matches nothing once the data is clean, and it costs one indexless scan of
-// three small tables at startup.
+// a small table at startup.
 func normalizeSecretHosts(db *gorm.DB) error {
-	for _, table := range []string{"secrets", "secret_requests", "secret_grants"} {
-		if !db.Migrator().HasTable(table) {
+	if !db.Migrator().HasTable("secrets") {
+		return nil
+	}
+	return db.Exec("UPDATE secrets SET host = lower(host) WHERE host <> lower(host)").Error
+}
+
+// moveSecretHostsToLists moves the one host a secret request or grant carried
+// into the list of hosts that replaced it (ADR 26-10-02-393 §6), then drops
+// the retired column.
+//
+// A row with a host gets that host, normalized, as its only one; a row without
+// one — a wildcard grant, a request that named none — keeps an empty list,
+// which means the same. Only a row whose list is still unset is written, so a
+// step interrupted before the drop and run again changes nothing it already
+// moved, and once the column is gone the step does nothing at all.
+func moveSecretHostsToLists(db *gorm.DB) error {
+	for _, retired := range []struct {
+		model any
+		table string
+	}{
+		{&model.SecretRequest{}, "secret_requests"},
+		{&model.SecretGrant{}, "secret_grants"},
+	} {
+		migrator := db.Migrator()
+		if !migrator.HasTable(retired.table) || !migrator.HasColumn(retired.model, "host") {
 			continue
 		}
-		if err := db.Exec("UPDATE " + table + " SET host = lower(host) WHERE host <> lower(host)").Error; err != nil {
+		var rows []struct {
+			ID   string
+			Host string
+		}
+		if err := db.Table(retired.table).Select("id", "host").
+			Where("host <> '' AND (hosts IS NULL OR hosts = '' OR hosts = 'null')").
+			Scan(&rows).Error; err != nil {
+			return err
+		}
+		for _, row := range rows {
+			hosts, err := json.Marshal(hostscope.List(row.Host))
+			if err != nil {
+				return err
+			}
+			if err := db.Table(retired.table).Where("id = ?", row.ID).Update("hosts", string(hosts)).Error; err != nil {
+				return err
+			}
+		}
+		if err := dropRetiredColumn(db, retired.model, retired.table, "host"); err != nil {
 			return err
 		}
 	}

@@ -296,22 +296,28 @@ type HTTPAuditArtifact struct {
 // HTTPAuditExchange is one HTTP exchange a pool proxy audited. Headers and
 // bodies stay on the pool.
 type HTTPAuditExchange struct {
-	ID               auditid.ExchangeID `json:"id"`
-	CreatedAt        time.Time          `json:"createdAt"`
-	SandboxID        string             `json:"sandboxId"`
-	Method           string             `json:"method"`
-	URL              string             `json:"url"`
-	Host             string             `json:"host"`
-	Status           int                `json:"status"`
-	DurationMillis   int64              `json:"durationMillis"`
-	Blocked          bool               `json:"blocked"`
-	BlockedReason    string             `json:"blockedReason,omitempty"`
-	CacheHit         bool               `json:"cacheHit"`
-	SwappedUseIDs    []string           `json:"swappedUseIds"`
-	RequestBodyBytes int64              `json:"requestBodyBytes"`
-	ResponseBytes    int64              `json:"responseBytes"`
-	Upgrade          bool               `json:"upgrade"`
-	UpgradeType      string             `json:"upgradeType,omitempty"`
+	ID             auditid.ExchangeID `json:"id"`
+	CreatedAt      time.Time          `json:"createdAt"`
+	SandboxID      string             `json:"sandboxId"`
+	Method         string             `json:"method"`
+	URL            string             `json:"url"`
+	Host           string             `json:"host"`
+	Status         int                `json:"status"`
+	DurationMillis int64              `json:"durationMillis"`
+	Blocked        bool               `json:"blocked"`
+	BlockedReason  string             `json:"blockedReason,omitempty"`
+	CacheHit       bool               `json:"cacheHit"`
+	SwappedUseIDs  []string           `json:"swappedUseIds"`
+	// SwappedSecretIDs are the secrets whose values were swapped into the
+	// request, by ID, for every kind of sentinel (ADR 26-10-01-240). Empty from
+	// a pool agent that predates it. Omitted when empty: the API field is
+	// optional, where an empty list and an absent one say the same, and a nil
+	// slice must not reach the API's decoder as null.
+	SwappedSecretIDs []string `json:"swappedSecretIds,omitempty"`
+	RequestBodyBytes int64    `json:"requestBodyBytes"`
+	ResponseBytes    int64    `json:"responseBytes"`
+	Upgrade          bool     `json:"upgrade"`
+	UpgradeType      string   `json:"upgradeType,omitempty"`
 }
 
 // HTTPAuditExchangeDetail is one audited exchange in full: every field the

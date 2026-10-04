@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -110,7 +111,7 @@ func newJudgeTest(t *testing.T) (*Service, *store.Store, *fakeSandboxes) {
 	sandboxes := &fakeSandboxes{store: appStore}
 	// Enabled: every test below is about what a server that judges does. The
 	// server that has not opted in is its own test.
-	return New(appStore, sandboxes, nil, true), appStore, sandboxes
+	return New(appStore, sandboxes, nil, Judging{Commands: true, Requests: true}, nil, false), appStore, sandboxes
 }
 
 // harness records a configured harness and makes it the project's default.
@@ -562,6 +563,10 @@ func (a approvedUses) ApprovedUse(context.Context, string, string, string, strin
 	return a.use, nil
 }
 
+func (a approvedUses) ApprovedCredentialUse(ctx context.Context, poolID, sandboxID, useID string) (services.ApprovedUse, error) {
+	return a.ApprovedUse(ctx, poolID, sandboxID, useID, "")
+}
+
 // requestAsk is a pool asking about an ordinary observed request.
 func requestAsk() services.JudgeAsk {
 	return services.JudgeAsk{
@@ -576,7 +581,7 @@ func requestAsk() services.JudgeAsk {
 func TestAServerThatDoesNotJudgeMakesNoJudge(t *testing.T) {
 	ctx := context.Background()
 	service, appStore, sandboxes := newJudgeTest(t)
-	service.enabled = false
+	service.judging = Judging{}
 	defaultHarness(t, appStore, "codex", "sha256:one")
 
 	if _, err := service.Reconcile(ctx, "project-1"); err != nil {
@@ -609,7 +614,7 @@ func TestTurningJudgingOffTakesTheJudgeAway(t *testing.T) {
 	}
 	judge := sandboxes.created[0].ID
 
-	service.enabled = false
+	service.judging = Judging{}
 	if _, err := service.Reconcile(ctx, "project-1"); err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
@@ -631,7 +636,7 @@ func TestTurningJudgingOffTakesTheJudgeAway(t *testing.T) {
 func TestAServerThatDoesNotJudgeRefusesToBeAsked(t *testing.T) {
 	ctx := context.Background()
 	service, appStore, _ := newJudgeTest(t)
-	service.enabled = false
+	service.judging = Judging{}
 	defaultHarness(t, appStore, "codex", "sha256:one")
 
 	_, err := service.Judge(ctx, "pool-1", requestAsk())
@@ -732,6 +737,50 @@ func TestTheQuestionIsReadFromTheGrantAndNotFromTheAsk(t *testing.T) {
 	}
 }
 
+// What a pool recognized a request as brings the judge Discobox's guidance
+// about it, which the control plane adds from its own words, and the parser's
+// metadata reaches the judge as the pool read it (ADR 26-09-26-240 §4).
+func TestARecognizedRequestIsJudgedWithItsGuidance(t *testing.T) {
+	ctx := context.Background()
+	service, appStore, sandboxes := newJudgeTest(t)
+	defaultHarness(t, appStore, "codex", "sha256:one")
+	if _, err := service.Reconcile(ctx, "project-1"); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	ready(t, appStore, sandboxes.created[0])
+	fake := newAnsweringJudge(t, sandboxapi.JudgeAnswer{Allow: sandboxapi.NewOptBool(true), Reason: "a new branch"})
+	service.SetLeases(fake)
+	service.SetUses(approvedUses{use: services.ApprovedUse{Purpose: "push the branch topic to org/repo", Host: "github.com"}})
+
+	ask := requestAsk()
+	ask.Request.URL = "https://github.com/org/repo.git/git-receive-pack"
+	ask.Request.Protocol = &judge.Recognition{Name: judge.ProtocolGitReceivePack, Version: 1}
+	ask.Request.Body = &judge.Body{
+		MediaType: "application/x-git-receive-pack-request", Length: 300,
+		Parser:   &judge.Recognition{Name: judge.ParserGitReceivePack, Version: 1},
+		Metadata: json.RawMessage(`{"commands":[{"new":"eff2d8a00000","op":"create","ref":"refs/heads/topic"}]}`),
+	}
+	if _, err := service.Judge(ctx, "pool-1", ask); err != nil {
+		t.Fatalf("Judge() error = %v", err)
+	}
+	jobs := fake.asked()
+	if len(jobs) != 1 {
+		t.Fatalf("the judge was asked %d times, want once", len(jobs))
+	}
+	if want := judge.GuidanceFor(ask.Request); len(want) == 0 || fmt.Sprint(jobs[0].Guidance) != fmt.Sprint(want) {
+		t.Fatalf("guidance = %q, want git's, from the judge package", jobs[0].Guidance)
+	}
+	request, _ := jobs[0].Request.Get()
+	body, _ := request.Body.Get()
+	protocol, _ := request.Protocol.Get()
+	parser, _ := body.Parser.Get()
+	metadata, _ := body.Metadata.Get()
+	if protocol.Name != judge.ProtocolGitReceivePack || parser.Name != judge.ParserGitReceivePack ||
+		string(metadata["commands"]) != `[{"new":"eff2d8a00000","op":"create","ref":"refs/heads/topic"}]` || body.Content.IsSet() {
+		t.Fatalf("request = %+v, want what the pool recognized and read, and no content", request)
+	}
+}
+
 // A grant revoked while the judge was thinking is a request that is not
 // allowed, whatever the judge said. The verdict was about a use that no longer
 // exists (ADR 26-09-22-838 §4).
@@ -769,6 +818,10 @@ func TestAUseRevokedWhileTheJudgeThoughtIsNotAllowed(t *testing.T) {
 // revokedAfterFirst answers once and is gone by the time it is asked again.
 type revokedAfterFirst struct{ asked int }
 
+func (r *revokedAfterFirst) ApprovedCredentialUse(ctx context.Context, poolID, sandboxID, useID string) (services.ApprovedUse, error) {
+	return r.ApprovedUse(ctx, poolID, sandboxID, useID, "")
+}
+
 func (r *revokedAfterFirst) ApprovedUse(context.Context, string, string, string, string) (services.ApprovedUse, error) {
 	r.asked++
 	if r.asked > 1 {
@@ -803,7 +856,8 @@ func TestAFirstAskCarryingTheBodyIsRefused(t *testing.T) {
 	service.SetUses(approvedUses{})
 
 	ask := requestAsk()
-	ask.Request.Body = &judge.Body{MediaType: "application/json", Length: 2, Form: judge.FormJSON, Content: "{}"}
+	content := "{}"
+	ask.Request.Body = &judge.Body{MediaType: "application/json", Length: 2, Content: &content}
 	_, err := service.Judge(ctx, "pool-1", ask)
 	if err == nil {
 		t.Fatal("a first ask carrying the body was judged")
@@ -827,9 +881,9 @@ func TestEveryAnswerIsRecordedBeforeItGoesBack(t *testing.T) {
 		{"allow", sandboxapi.JudgeAnswer{Allow: sandboxapi.NewOptBool(true), Reason: "that is the approved use"}, true, nil},
 		{"deny", sandboxapi.JudgeAnswer{Allow: sandboxapi.NewOptBool(false), Reason: "deleting a repository is not opening a pull request"}, false, nil},
 		{"need", sandboxapi.JudgeAnswer{
-			Need:   sandboxapi.NewOptJudgeNeed(sandboxapi.JudgeNeed{Body: sandboxapi.JudgeNeedBodyJSON}),
+			Need:   sandboxapi.NewOptJudgeNeed(sandboxapi.JudgeNeed{Body: true}),
 			Reason: "the operation is in the body",
-		}, false, &judge.Need{Body: judge.FormJSON}},
+		}, false, &judge.Need{Body: true}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1079,6 +1133,39 @@ func TestAnAllowLetStandAnswersWhatItsRouteCovers(t *testing.T) {
 	}
 }
 
+// A route matches a method and a path and says nothing about a body, so a
+// standing allow never answers a request whose operation is in its body. A
+// fetch let stand on a route wide enough to match the push beside it does
+// not answer the push: nothing would have read which refs it changes
+// (ADR 26-09-26-240 §2).
+func TestAStandingAllowNeverAnswersARequestWhoseOperationIsInItsBody(t *testing.T) {
+	ctx := context.Background()
+	service, _, fake := standingJudge(t, standingAnswer("POST /org/repo.git/{service}", 600))
+	fetch := services.JudgeAsk{SandboxID: "sandbox-1", UseID: "use_abc", Round: 1,
+		Request: &judge.Request{Method: http.MethodPost, URL: "https://api.github.com/org/repo.git/git-upload-pack"}}
+	if answer, err := service.Judge(ctx, "pool-1", fetch); err != nil || !answer.Allow {
+		t.Fatalf("Judge(fetch) = %+v, %v, want the judge's allow", answer, err)
+	}
+	for _, ask := range []services.JudgeAsk{
+		{SandboxID: "sandbox-1", UseID: "use_abc", Round: 1, Request: &judge.Request{
+			Method: http.MethodPost, URL: "https://api.github.com/org/repo.git/git-receive-pack",
+			Protocol: &judge.Recognition{Name: judge.ProtocolGitReceivePack, Version: 1},
+		}},
+		{SandboxID: "sandbox-1", UseID: "use_abc", Round: 1, Request: &judge.Request{
+			Method: http.MethodPost, URL: "https://api.github.com/org/repo.git/forks",
+			Endpoint: &judge.Recognition{Name: judge.EndpointGitHubFork, Version: 1},
+		}},
+	} {
+		asked := len(fake.asked())
+		if _, err := service.Judge(ctx, "pool-1", ask); err != nil {
+			t.Fatalf("Judge(%s) error = %v", ask.Request.URL, err)
+		}
+		if len(fake.asked()) != asked+1 {
+			t.Fatalf("%s was answered by the fetch's standing allow, want the judge asked", ask.Request.URL)
+		}
+	}
+}
+
 // A standing route that does not cover the request it was granted on was not
 // derived from it: the allow stays and the route does not stand.
 func TestAStandingRouteThatMissesItsOwnRequestDoesNotStand(t *testing.T) {
@@ -1165,4 +1252,68 @@ func TestAStandingAllowEndsWithItsTimeItsUseOrItsSentence(t *testing.T) {
 			t.Fatalf("the judge was asked %d times, want a use approving something else asked about", n)
 		}
 	})
+}
+
+// A delegation is the server's own question: the judge is put a delegation job
+// — what the discobox was delegated as the purpose, the uses it would hand on
+// beside it, asked once — and the answer is recorded as a delegation verdict
+// against the delegation grant, before it goes back (ADR 26-09-30-782 §3).
+func TestADelegationIsJudgedAndRecordedAgainstItsGrant(t *testing.T) {
+	ctx := context.Background()
+	service, appStore, sandboxes := newJudgeTest(t)
+	defaultHarness(t, appStore, "codex", "sha256:one")
+	if _, err := service.Reconcile(ctx, "project-1"); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	judgeSandbox := sandboxes.created[0]
+	ready(t, appStore, judgeSandbox)
+	fake := newAnsweringJudge(t, sandboxapi.JudgeAnswer{Allow: sandboxapi.NewOptBool(false), Reason: "pushing is not reading issues"})
+	service.SetLeases(fake)
+
+	answer, err := service.JudgeDelegation(ctx, "project-1", services.DelegationAsk{
+		ApproverID: "sbx-lead", RequestID: "sreq-worker", DelegationGrantID: "grant-delegated",
+		Delegated:  []string{"read issues in org/repo", "read pull requests in org/repo"},
+		Uses:       []string{"push the branch fix-43 to org/repo"},
+		Credential: "github", Hosts: []string{"api.github.com"},
+	})
+	if err != nil {
+		t.Fatalf("JudgeDelegation() error = %v", err)
+	}
+	if answer.Allow {
+		t.Fatalf("answer = %+v, want the judge's refusal", answer)
+	}
+	jobs := fake.asked()
+	if len(jobs) != 1 {
+		t.Fatalf("the judge was asked %d times, want once", len(jobs))
+	}
+	job := jobs[0]
+	if string(job.Kind) != judge.KindDelegation || job.Purpose != "read issues in org/repo\nread pull requests in org/repo" ||
+		len(job.Uses) != 1 || job.Uses[0] != "push the branch fix-43 to org/repo" || job.Host != "api.github.com" || job.Round != 1 {
+		t.Fatalf("job = %+v, want a delegation job: the delegated uses as the purpose, the handed-on uses beside them", job)
+	}
+	verdicts, err := appStore.ListCredentialVerdicts(ctx, "project-1", store.CredentialVerdictFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(verdicts) != 1 {
+		t.Fatalf("verdicts = %d, want the one delegation verdict", len(verdicts))
+	}
+	row := verdicts[0]
+	if row.Kind != model.CredentialVerdictKindDelegation || row.GrantID != "grant-delegated" || row.SandboxID != "sbx-lead" ||
+		row.SecretRequestID != "sreq-worker" ||
+		row.Allow || row.Reason != "pushing is not reading issues" || row.JudgeSandboxID != judgeSandbox.ID || row.Prompt == "" {
+		t.Fatalf("verdict = %+v, want a delegation verdict against the delegation grant", row)
+	}
+}
+
+// A server that does not judge cannot say a delegation is within, so it does
+// not answer one: the approval it was asked for refuses.
+func TestAServerThatDoesNotJudgeRefusesADelegation(t *testing.T) {
+	service, _, _ := newJudgeTest(t)
+	service.judging = Judging{}
+	if _, err := service.JudgeDelegation(context.Background(), "project-1", services.DelegationAsk{
+		Delegated: []string{"read issues"}, Uses: []string{"read issue 43"}, Hosts: []string{"api.github.com"},
+	}); err == nil {
+		t.Fatal("a server that does not judge answered a delegation")
+	}
 }

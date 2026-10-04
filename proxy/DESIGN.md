@@ -38,6 +38,16 @@ SOCKS5, an ASCII capital letter as HTTP, and anything else (SOCKS4 included) is
 closed. Every allowed `CONNECT` is MITM'd with a per-host certificate from the
 MITM CA; there is no passthrough tunnel.
 
+A request read from a tunnel is for the `CONNECT` authority, while policy —
+the filter, header rules, and the secret swap — judges its `Host`. So a
+tunneled request whose `Host` or absolute URL names any other host is answered
+`421` and audited as blocked, never sent: otherwise a credential bound to one
+host could be sent to another. A tunnel whose client skips TLS is served in
+plaintext; if the tunnel is to port 443, its requests still go upstream over
+TLS (span attribute `proxy.http.tunnel_upgraded`). Zig's HTTP client
+(ziglang/zig#19878) needs this: it sends plaintext HTTP inside an HTTPS
+`CONNECT`. A tunnel to any other port stays plaintext end to end.
+
 The sandbox-local bridge accepts localhost traffic from sandbox processes and
 splices it, protocol-agnostic, onto an mTLS connection to the pool proxy
 carrying the sandbox's client certificate. It lives in the dependency-light
@@ -183,7 +193,7 @@ flowchart LR
     req["outbound request\nAuthorization: Bearer <sentinel>"] --> scan["match against client's sentinel set"]
     scan -->|no match| fwd["forward unchanged"]
     scan -->|match| judge["Resolver.Authorize(request as sent, sentinels)"]
-    judge -->|deny / error| refuse["403 from the proxy, audited once as blocked"]
+    judge -->|deny / error| refuse["refused by the proxy (403, or the protocol's own no), audited once as blocked"]
     judge -->|allow| resolve["Resolver.Resolve(sentinel, host, clientID)"]
     resolve -->|approved| swap["substitute real value + redact from audit"]
     resolve -->|denied / pending / error| leave["leave sentinel in place → upstream 401"]
@@ -223,7 +233,10 @@ Key properties:
   resolver's to do and nothing the request says about one could be believed. A
   request it does not allow, or cannot answer for, is refused by the proxy with
   a 403, never sent, and audited once as blocked (`judge: <reason>`) against
-  the uses the verdict named. `Match` reports every sentinel the request
+  the uses the verdict named. A verdict may say no in the request's own
+  protocol instead (`Verdict.Refuse`, ADR 26-09-26-240 §5), for a client that
+  never shows a 403's body — a git push answered with the rejection `git push`
+  prints — and the row records the status that was sent. `Match` reports every sentinel the request
   carries, which is a superset of what `Apply` substitutes — an unresolvable
   one is authorized and then left in place — so nothing is substituted without
   having been authorized, which is the direction that matters. The two share
@@ -449,11 +462,21 @@ both the verdict that authorized a command and every request that spent the
 credential. Reads filter on it with `use_id`, matching a whole element of the
 list rather than a substring.
 
-The column holds the use ID and never a sentinel. An ephemeral sentinel is a
-live bearer token for the length of its activation window, and this trail is
-retained to be read afterwards; a use ID authorizes nothing and only names. A
-swap with no agent-credentials activation behind it leaves the column empty,
-which is the ordinary injected-sentinel case rather than a gap.
+It also records which secrets it spent, for every kind of sentinel
+([ADR 26-10-01-240](../docs/adr/26-10-01-240-a-swapped-request-records-the-secrets-it-spent.md)).
+The control plane's resolve answer names the secret a value is, and
+`ResolveResult.SecretID` rides beside `UseID` through the cache, the value kept
+for the rotated-credential retry, and `Result` onto
+`HTTPExchange.SwappedSecretIDs`. An ordinary injected sentinel has no use, so
+its row names a secret and no use; one taken under an approved use names both.
+A request the judge refused names the uses from the verdict and no secret:
+nothing was resolved, so nothing was spent. The column was added by
+`AutoMigrate`, and rows written before it read it as empty.
+
+Both columns hold IDs and never a sentinel. An ephemeral sentinel is a live
+bearer token for the length of its activation window, and a stable one never
+expires; this trail is retained to be read afterwards, and an ID authorizes
+nothing and only names.
 
 The control API (`ControlHandler`, served by `ListenAndServeControl` only when
 `Control.ListenAddress` is set) is read-only. It lists HTTP and SOCKS audit rows

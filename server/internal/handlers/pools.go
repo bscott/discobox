@@ -247,6 +247,17 @@ func (h *Handler) ReportPoolResources(ctx context.Context, req *apimodel.ReportP
 	return &serverapi.ReportPoolResourcesNoContent{}, nil
 }
 
+func (h *Handler) ListPoolHeldSandboxes(ctx context.Context, params serverapi.ListPoolHeldSandboxesParams) (serverapi.ListPoolHeldSandboxesRes, error) {
+	ids, err := h.services.Pools.ListPoolHeldSandboxes(ctx, params.PoolId)
+	if err != nil {
+		return apiError(err), nil
+	}
+	if ids == nil {
+		ids = []string{}
+	}
+	return &apimodel.PoolHeldSandboxesBody{SandboxIds: ids}, nil
+}
+
 func (h *Handler) MintSandboxAgentStatusTokens(ctx context.Context, req *apimodel.MintSandboxAgentStatusTokensBody, params serverapi.MintSandboxAgentStatusTokensParams) (serverapi.MintSandboxAgentStatusTokensRes, error) {
 	resp, err := h.services.Pools.MintSandboxAgentStatusTokens(ctx, params.PoolId, *req)
 	if err != nil {

@@ -387,7 +387,7 @@ func TestCleanWorkspaceIsNotAskedAbout(t *testing.T) {
 	}
 }
 
-// The window is a ladder — the folder filter above the list above the prompt —
+// The window is a ladder — the filter above the list above the prompt —
 // and the arrows climb it. Each end stops rather than wrapping: the prompt is
 // the bottom, the filter is the top, and a key that jumped from one to the
 // other would be moving the opposite way to what it says.
@@ -400,17 +400,17 @@ func TestTheArrowsClimbTheWindowAndStopAtItsEnds(t *testing.T) {
 		t.Fatal("tab should move to the list")
 	}
 	send(t, m, keyPress("up"))
-	if m.focus != focusFolder {
-		t.Fatal("up off the top of the list should reach the folder filter")
+	if m.focus != focusFilter {
+		t.Fatal("up off the top of the list should reach the filter")
 	}
 	send(t, m, keyPress("up"))
-	if m.focus != focusFolder {
-		t.Fatal("up off the folder filter should stay: it is the top")
+	if m.focus != focusFilter {
+		t.Fatal("up off the filter should stay: it is the top")
 	}
 	// Tab and Esc are still the way back from there.
 	send(t, m, keyPress("esc"))
 	if m.focus != focusPrompt {
-		t.Fatal("esc from the folder filter should return to the prompt")
+		t.Fatal("esc from the filter should return to the prompt")
 	}
 
 	// Down at the prompt stays in it, however many times it is pressed.
@@ -431,10 +431,10 @@ func TestTheArrowsClimbTheWindowAndStopAtItsEnds(t *testing.T) {
 	}
 }
 
-// An empty list is exactly when the folder filter is the thing you want: the
-// folder you are standing in has nothing in it and the sandboxes are elsewhere.
+// An empty list is exactly when the filter is the thing you want: the folder
+// you are standing in has nothing in it and the sandboxes are elsewhere.
 // Refusing to move would leave no way to reach the one control that helps.
-func TestAnEmptyListLandsOnTheFolderFilter(t *testing.T) {
+func TestAnEmptyListLandsOnTheFilter(t *testing.T) {
 	t.Parallel()
 	m := newTestModel(t, newFakeSource(cutFrom(Sandbox{ID: "sbx_one", Name: "one", State: StateRunning}, "/src/elsewhere")))
 	if len(m.list.rows()) != 0 {
@@ -442,11 +442,13 @@ func TestAnEmptyListLandsOnTheFolderFilter(t *testing.T) {
 	}
 
 	send(t, m, keyPress("tab"))
-	if m.focus != focusFolder {
-		t.Fatalf("focus = %v, want the folder filter", m.focus)
+	if m.focus != focusFilter {
+		t.Fatalf("focus = %v, want the filter", m.focus)
 	}
-	// And from there the other folder is one press away.
-	send(t, m, keyPress("right"))
+	// And from there the other folder is one card away.
+	send(t, m, keyPress("enter"))
+	markFilter(t, m, "/src/elsewhere")
+	send(t, m, keyPress("enter"))
 	if m.list.folder.key != testKey("/src/elsewhere") {
 		t.Fatalf("folder = %q, want the one with something in it", m.list.folder.label)
 	}
@@ -712,8 +714,9 @@ func TestArchivedSandboxesAreHiddenUntilAskedFor(t *testing.T) {
 	}
 }
 
-// The window opens on the folder it is running in, which is what `discobox ls`
-// shows, and the header's dropdown is how you reach the others.
+// A window left on the folder it is running in opens on it, and the header's
+// filter is how you reach the others. (A folder never narrowed opens on
+// every folder; see view_test.go.)
 func TestTheFolderFilterOpensOnThisDirectory(t *testing.T) {
 	t.Parallel()
 	m := newTestModel(t, newFakeSource(testSandboxes()...))
@@ -726,9 +729,8 @@ func TestTheFolderFilterOpensOnThisDirectory(t *testing.T) {
 		}
 	}
 
-	// Left off the first choice wraps to "every folder", which is the one
-	// choice that is not a place.
-	send(t, m, keyPress("tab"), keyPress("up"), keyPress("left"))
+	// "Every folder" is the one choice that is not a place.
+	filterTo(t, m, allFolders)
 	if m.list.folder.key != "" {
 		t.Fatalf("folder = %q, want every folder", m.list.folder.label)
 	}
@@ -736,14 +738,13 @@ func TestTheFolderFilterOpensOnThisDirectory(t *testing.T) {
 		t.Fatalf("rows = %d, want every unarchived sandbox", got)
 	}
 
-	// And on round to the folders something else was cut from: the repository
-	// URL's, a folder the way a directory is (ADR 0111), then the other
-	// directory's.
-	send(t, m, keyPress("left"))
+	// And the folders something else was cut from: the repository URL's, a
+	// folder the way a directory is (ADR 0111), and the other directory's.
+	filterTo(t, m, "https://github.com/acme/foo")
 	if m.list.folder.key != testKey("https://github.com/acme/foo") {
 		t.Fatalf("folder = %q, want the repository URL's", m.list.folder.label)
 	}
-	send(t, m, keyPress("left"))
+	filterTo(t, m, "/src/obot")
 	if m.list.folder.key != testKey("/src/obot") {
 		t.Fatalf("folder = %q, want the other folder", m.list.folder.label)
 	}
@@ -752,24 +753,24 @@ func TestTheFolderFilterOpensOnThisDirectory(t *testing.T) {
 	}
 }
 
-// The dropdown lists every folder something was started from, plus the choice
-// to drop the filter, and choosing one applies it.
-func TestTheFolderDropdownListsTheKnownFolders(t *testing.T) {
+// The card lists every folder something was started from, plus the choice to
+// drop the filter, and Enter on one applies it.
+func TestTheFilterCardListsTheKnownFolders(t *testing.T) {
 	t.Parallel()
 	m := newTestModel(t, newFakeSource(testSandboxes()...))
 	send(t, m, keyPress("tab"), keyPress("up"), keyPress("enter"))
 
-	if m.dialog == nil {
-		t.Fatal("enter on the folder filter should open the dropdown")
+	if m.dialog == nil || m.dialog.kind != dlgFilter {
+		t.Fatal("enter on the filter should open its card")
 	}
 	view := m.dialog.view(m.st, &m.zones, 120, 40)
 	for _, want := range []string{"/src/disco2", "/src/obot", "https://github.com/acme/foo", allFolders, "where this window is running"} {
 		if !strings.Contains(view, want) {
-			t.Errorf("the dropdown is missing %q:\n%s", want, view)
+			t.Errorf("the card is missing %q:\n%s", want, view)
 		}
 	}
 
-	// The second choice is the other folder; picking it filters to it.
+	// The second choice is the other folder; Enter on it filters to it.
 	send(t, m, keyPress("down"), keyPress("enter"))
 	if m.list.folder.key != testKey("/src/obot") {
 		t.Fatalf("folder = %q, want the choice that was made", m.list.folder.label)
@@ -786,9 +787,12 @@ func TestTheFolderDropdownListsTheKnownFolders(t *testing.T) {
 func TestTheFolderFilterAlwaysOffersThisDirectory(t *testing.T) {
 	t.Parallel()
 	m := newTestModel(t, newFakeSource())
-	choices := m.folderChoices()
-	if len(choices) != 2 || choices[0].key != testKey("/src/disco2") || choices[1].label != allFolders {
-		t.Fatalf("choices = %+v", choices)
+	var choices []string
+	for _, row := range m.filterDialog().filter.rows() {
+		choices = append(choices, row.label)
+	}
+	if len(choices) != 2 || choices[0] != m.session.folder().label || choices[1] != allFolders {
+		t.Fatalf("choices = %q", choices)
 	}
 }
 
@@ -894,7 +898,7 @@ func TestSwitchingFolderSwitchesWhereTheRunHappens(t *testing.T) {
 		t.Fatalf("source = %q, want the CLI's own default", req.Source)
 	}
 
-	send(t, m, keyPress("tab"), keyPress("up"), keyPress("right")) // on to the other folder
+	filterTo(t, m, "/src/obot") // on to the other folder
 	if m.list.folder.key != testKey("/src/obot") {
 		t.Fatalf("folder = %q", m.list.folder.label)
 	}
@@ -906,7 +910,6 @@ func TestSwitchingFolderSwitchesWhereTheRunHappens(t *testing.T) {
 	}
 
 	// And it is what Enter actually asks for.
-	send(t, m, keyPress("esc"))
 	send(t, m, keyPress("enter"))
 	if len(ds.runs) != 1 || ds.runs[0].Source != "/src/obot" {
 		t.Fatalf("runs = %+v, want the folder the header is on", ds.runs)
@@ -925,7 +928,7 @@ func TestTheSourceChipOnlyShowsWhenItDiffers(t *testing.T) {
 	}
 
 	// Moving the header moves the source with it, so it still says nothing.
-	send(t, m, keyPress("tab"), keyPress("up"), keyPress("right"), keyPress("esc"))
+	filterTo(t, m, "/src/obot")
 	if chips := m.opts.chips(m.st); strings.Contains(chips, "/src/obot") {
 		t.Errorf("the strip repeats the header after a switch: %q", chips)
 	}
@@ -944,11 +947,6 @@ func TestTheSourceChipOnlyShowsWhenItDiffers(t *testing.T) {
 func TestUpFromThePromptLandsOnTheLastRow(t *testing.T) {
 	t.Parallel()
 	m := newTestModel(t, newFakeSource(testSandboxes()...))
-	// Every folder is a list nobody has chosen a row in.
-	send(t, m, keyPress("tab"), keyPress("up"), keyPress("left"), keyPress("esc"))
-	if m.focus != focusPrompt || m.list.visited {
-		t.Fatalf("focus = %v, visited = %v: want the prompt, over an unvisited list", m.focus, m.list.visited)
-	}
 
 	send(t, m, keyPress("up"))
 	if m.focus != focusList {
@@ -957,30 +955,8 @@ func TestUpFromThePromptLandsOnTheLastRow(t *testing.T) {
 	if want := len(m.list.rows()) - 1; m.list.cursor != want {
 		t.Fatalf("cursor = %d, want the last row %d", m.list.cursor, want)
 	}
-}
-
-// The window opens on the prompt, and the first Up out of it lands at the top
-// of the list; from then on Up goes back to wherever the cursor was left.
-func TestFirstUpOfASessionLandsOnTheFirstRow(t *testing.T) {
-	t.Parallel()
-	m := newTestModel(t, newFakeSource(testSandboxes()...))
-	// A refresh keeps the cursor on its sandbox, not its row, so by the time
-	// Up is pressed it may be anywhere; nobody chose it, so it is not kept.
-	m.list.cursor = len(m.list.rows()) - 1
-
-	send(t, m, keyPress("up"))
-	if m.focus != focusList {
-		t.Fatalf("focus = %v, want the list", m.focus)
-	}
-	if m.list.cursor != 0 {
-		t.Fatalf("cursor = %d, want the first row", m.list.cursor)
-	}
-
-	send(t, m, keyPress("down"))
-	on := m.list.current().ID
-	send(t, m, keyPress("esc"), keyPress("up"))
-	if got := m.list.current().ID; got != on {
-		t.Fatalf("cursor on %s, want %s where it was left", got, on)
+	if want := "sbx_two"; m.list.current().ID != want {
+		t.Fatalf("cursor on %s, want %s", m.list.current().ID, want)
 	}
 }
 
@@ -1033,8 +1009,8 @@ func TestDownReachesThePromptThroughAnEmptyList(t *testing.T) {
 	t.Parallel()
 	m := newTestModel(t, newFakeSource())
 	send(t, m, keyPress("tab"))
-	if m.focus != focusFolder {
-		t.Fatalf("focus = %v, want the folder filter: there are no rows to land on", m.focus)
+	if m.focus != focusFilter {
+		t.Fatalf("focus = %v, want the filter: there are no rows to land on", m.focus)
 	}
 
 	send(t, m, keyPress("down"))
@@ -1088,7 +1064,7 @@ func TestSwitchingFolderForgetsTheCursor(t *testing.T) {
 		t.Fatal("moving the cursor should count as having been in the list")
 	}
 
-	send(t, m, keyPress("up"), keyPress("up"), keyPress("right")) // to the folder, on to the next
+	filterTo(t, m, "/src/obot") // on to another folder
 	if m.list.visited {
 		t.Fatal("a new set of sandboxes is a list nobody has chosen a row in")
 	}
@@ -1127,13 +1103,13 @@ func TestLeaderReachesThePaneAndTheKeyLists(t *testing.T) {
 }
 
 // Tab goes round the window in the order it is drawn, bottom to top: the
-// prompt, the discoboxes, the folder they are filtered to, and back. Esc is the
-// way straight out from anywhere.
+// prompt, the discoboxes, the filter over them, and back. Esc is the way
+// straight out from anywhere.
 func TestTabGoesRoundTheWindow(t *testing.T) {
 	t.Parallel()
 	m := newTestModel(t, newFakeSource(testSandboxes()...))
 
-	for _, want := range []focusArea{focusList, focusFolder, focusPrompt, focusList} {
+	for _, want := range []focusArea{focusList, focusFilter, focusPrompt, focusList} {
 		send(t, m, keyPress("tab"))
 		if m.focus != want {
 			t.Fatalf("tab landed on %v, want %v", m.focus, want)
@@ -1145,13 +1121,13 @@ func TestTabGoesRoundTheWindow(t *testing.T) {
 	if m.focus != focusPrompt {
 		t.Fatalf("esc from the list landed on %v", m.focus)
 	}
-	send(t, m, keyPress("tab"), keyPress("tab")) // prompt -> list -> folder
-	if m.focus != focusFolder {
-		t.Fatalf("focus = %v, want the folder filter", m.focus)
+	send(t, m, keyPress("tab"), keyPress("tab")) // prompt -> list -> filter
+	if m.focus != focusFilter {
+		t.Fatalf("focus = %v, want the filter", m.focus)
 	}
 	send(t, m, keyPress("esc"))
 	if m.focus != focusPrompt {
-		t.Fatalf("esc from the folder filter landed on %v", m.focus)
+		t.Fatalf("esc from the filter landed on %v", m.focus)
 	}
 }
 

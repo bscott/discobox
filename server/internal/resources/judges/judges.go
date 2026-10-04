@@ -1,5 +1,7 @@
 // Package judges keeps a project's judge converged: the discobox that answers
-// judging asks and nothing else (ADR 26-09-22-838 §1).
+// judging asks and nothing else (ADR 26-09-22-838 §1). A server that judges
+// with Jev instead has no judge discobox at all, and asks Jev from here
+// (ADR 26-10-01-324).
 //
 // A judge is Discobox's own. It is not the project's work, it is not listed
 // with it, and it exists exactly when the project can have one: a pool to run
@@ -18,6 +20,7 @@ import (
 
 	serverapi "github.com/discobox-ai/discobox/api/gen"
 	"github.com/discobox-ai/discobox/judge"
+	"github.com/discobox-ai/discobox/judge/jev"
 	"github.com/discobox-ai/discobox/server/internal/model"
 	"github.com/discobox-ai/discobox/server/internal/reconcile"
 	"github.com/discobox-ai/discobox/server/internal/services"
@@ -48,18 +51,43 @@ type Service struct {
 	leases    Leases
 	uses      Uses
 	logger    *slog.Logger
-	// enabled is whether this server judges at all. It is a server's decision
-	// rather than a project's: judging puts a model in front of every
-	// credential-bearing request, and a server that has not asked for that
-	// keeps resolving credentials the way it always did.
-	enabled bool
+	// judging is what this server judges. It is a server's decision rather
+	// than a project's, made for commands and requests apart
+	// (ADR 26-10-02-054).
+	judging Judging
+	// jev is what judges instead of a judge discobox, when the server says
+	// so (ADR 26-10-01-324). It is the server's choice, like enabled: no
+	// project has a judge discobox then, and every job goes to Jev.
+	jev *jev.Client
+	// jevFallback sends what Jev is unsure of on to the project's judge
+	// discobox, which every project then keeps (jevUnsure: harness).
+	jevFallback bool
 }
 
-func New(appStore *store.Store, sandboxes Sandboxes, logger *slog.Logger, enabled bool) *Service {
+// Judging is what a server judges (ADR 26-10-02-054). The two are switched
+// apart because they cost differently: a command is judged once, before
+// anything is minted for it, while a request is judged at the proxy with its
+// connection held open, and a busy discobox sends many per command.
+type Judging struct {
+	// Commands judges the command `discobox-access run` declares, and a
+	// discobox handing a credential on, before anything is minted for either.
+	Commands bool
+	// Requests judges each credential-bearing request the proxy observes.
+	Requests bool
+}
+
+// Any reports whether a server judges anything, which is when a project may
+// need a judge.
+func (j Judging) Any() bool { return j.Commands || j.Requests }
+
+// New is the judges service. jevClient is nil for a server whose judge is a
+// discobox per project, and the Jev it asks otherwise; jevFallback has Jev's
+// unsure refusals put to the project's judge discobox instead.
+func New(appStore *store.Store, sandboxes Sandboxes, logger *slog.Logger, judging Judging, jevClient *jev.Client, jevFallback bool) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{store: appStore, sandboxes: sandboxes, logger: logger, enabled: enabled}
+	return &Service{store: appStore, sandboxes: sandboxes, logger: logger, judging: judging, jev: jevClient, jevFallback: jevClient != nil && jevFallback}
 }
 
 // Reconcile brings one project's judge to what the project says it should be.
@@ -194,8 +222,14 @@ func (s *Service) wanted(ctx context.Context, project *model.Project, record boo
 	// Off is off everywhere, and it reads the same as any other reason a
 	// project has no judge: nothing is created, and a judge created while it
 	// was on is taken away by the convergence that finds none wanted.
-	if !s.enabled {
+	if !s.judging.Any() {
 		return nil, "this server does not judge credential use", nil
+	}
+	// Jev is asked by this server, so no discobox is wanted to ask, and one
+	// left from before the server switched is taken away like any other
+	// judge nothing wants — unless what Jev is unsure of goes on to one.
+	if s.jev != nil && !s.jevFallback {
+		return nil, "this server judges with Jev and refuses what it is unsure of, so it runs no judge discobox", nil
 	}
 	poolID, err := s.judgePool(ctx, project, record)
 	if err != nil {

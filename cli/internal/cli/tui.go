@@ -104,6 +104,10 @@ func (a *App) runConsole(cmd *cobra.Command, leaderFlag string, options ...tui.O
 	if err != nil {
 		return err
 	}
+	// What the command line named, which a folder with no saved filters opens
+	// narrowed to (tui.Session.ServerChosen).
+	ds.serverChosen = cmd.Flags().Changed("server")
+	ds.sourceChosen = cmd.Flags().Changed("clone")
 	options = append([]tui.Option{tui.WithLeader(leaderKey)}, options...)
 	// Whether to introduce Discobox is settled before the window opens rather
 	// than when the session load comes back: a welcome that arrives a moment
@@ -126,7 +130,13 @@ func (a *App) runConsole(cmd *cobra.Command, leaderFlag string, options ...tui.O
 	// receive-pack and the lease that guards it — the thing the push path is
 	// careful not to do.
 	defer ds.waitForPushes(cmd.ErrOrStderr())
-	return tui.Run(cmd.Context(), ds, options...)
+	// Started last, just before the window takes the terminal: the guard
+	// saves the terminal's state as it finds it, and a crash before this
+	// point leaves nothing to put back.
+	guard := startConsoleGuard()
+	err = tui.Run(cmd.Context(), ds, options...)
+	guard.Release()
+	return err
 }
 
 // canOpenWindow reports whether this invocation can put a full-screen window
@@ -158,6 +168,9 @@ type apiDataSource struct {
 	app       *App
 	client    *apiclientgen.Client
 	projectID string
+
+	// serverChosen and sourceChosen are whether --server and -C were given.
+	serverChosen, sourceChosen bool
 
 	// servers is every server the window lists, the primary first, when there
 	// is more than one (ADR 0116 §4). Nil with one, and on the data source
@@ -399,6 +412,10 @@ func (d *apiDataSource) Session(ctx context.Context) (tui.Session, error) {
 	// project's: a draft belongs to the checkout it was written in and to the
 	// machine it was written on. See drafts.go.
 	session.Draft = promptDraftFor(session.Directory)
+	// And the header's filters the last window here was left on, by the same
+	// rule: they belong to this checkout on this machine. See consoleviews.go.
+	session.View = consoleViewFor(session.Directory)
+	session.ServerChosen, session.SourceChosen = d.serverChosen, d.sourceChosen
 	// The harnesses are not here: they are read on their own by Harnesses,
 	// which is what both the run options and the harnesses screen are drawn
 	// from. See tui_harnesses.go.
@@ -436,6 +453,13 @@ func (d *apiDataSource) MarkWelcomed(ctx context.Context) error {
 // is holding may already be on its way down with the program.
 func (d *apiDataSource) SaveDraft(_ context.Context, folder, prompt string) error {
 	return savePromptDraft(folder, prompt)
+}
+
+// SaveView keeps the header's filters against the folder the window is open
+// in, for the next window that opens on it. The context is unused, for the
+// reason SaveDraft's is.
+func (d *apiDataSource) SaveView(_ context.Context, folder string, view tui.ListView) error {
+	return saveConsoleView(folder, view)
 }
 
 // List is every sandbox in the project, newest-created first — the same
@@ -806,7 +830,7 @@ func toTUISandbox(sb apimodel.Sandbox, hostID string) tui.Sandbox {
 		Message:    sandboxMessage(sb),
 		Created:    sb.CreatedAt,
 	}
-	// Where the discobox is filed: what the header's folder filter matches it
+	// Where the discobox is filed: what the header filter's folder matches it
 	// against (ADR 0111). Read, not derived, so the window never files a row
 	// somewhere the server did not.
 	row.OriginKey = strings.TrimSpace(sb.OriginKey.Or(""))

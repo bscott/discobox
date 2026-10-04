@@ -152,9 +152,13 @@ type resolvedRunSource struct {
 	// checkout — so there is nothing there a sandbox's origin may be bound to
 	// (ADR 0093). Its commits stay here, as NoLocalCommits' do.
 	NoLocalGitDirectory bool
-	Checkout            resolvedRunSourceCheckout
-	Workspace           resolvedRunSourceWorkspace
-	Destination         resolvedRunSourceDestination
+	// UpstreamURL is the remote the checked-out branch tracks in the local
+	// repository, which the sandbox adds as its upstream remote. Empty when the
+	// branch tracks nothing the sandbox could reach (localUpstreamURL).
+	UpstreamURL string
+	Checkout    resolvedRunSourceCheckout
+	Workspace   resolvedRunSourceWorkspace
+	Destination resolvedRunSourceDestination
 	// cleanup releases the throwaway repository, and is nil for a source that
 	// did not need one.
 	cleanup func()
@@ -333,6 +337,7 @@ func (s resolvedRunSource) apiGitSource() (*apimodel.GitSource, error) {
 	if s.NoLocalGitDirectory {
 		source.SetNoLocalGitDirectory(apiclientgen.NewOptBool(true))
 	}
+	source.SetUpstreamUrl(optionalString(s.UpstreamURL))
 	checkout := apimodel.GitSourceCheckout{}
 	checkout.SetCommit(optionalString(s.Checkout.Commit))
 	checkout.SetRefName(optionalString(s.Checkout.RefName))
@@ -384,6 +389,7 @@ func resolveLocalRunSource(ctx context.Context, source, ref string, explicitRef 
 			return resolvedRunSource{}, err
 		}
 		resolved.NoLocalGitDirectory = noGitDirectory
+		resolved.UpstreamURL = localUpstreamURL(ctx, repoRoot, resolved.Checkout)
 		return resolved, nil
 	}
 	destination := localRunDestination(repoRoot, absSource)
@@ -408,6 +414,7 @@ func resolveLocalRunSource(ctx context.Context, source, ref string, explicitRef 
 			return resolvedRunSource{}, err
 		}
 		resolved.Checkout = localRunCheckout(ctx, repoRoot, ref, commit)
+		resolved.UpstreamURL = localUpstreamURL(ctx, repoRoot, resolved.Checkout)
 		return resolved, nil
 	}
 	baseCommit, err := gitutil.ResolveCommit(ctx, repoRoot, "HEAD")
@@ -415,6 +422,7 @@ func resolveLocalRunSource(ctx context.Context, source, ref string, explicitRef 
 		return resolvedRunSource{}, err
 	}
 	resolved.Checkout = localRunCheckout(ctx, repoRoot, "", baseCommit)
+	resolved.UpstreamURL = localUpstreamURL(ctx, repoRoot, resolved.Checkout)
 	if opts.IncludeDirty == IncludeDirtyNever {
 		return resolved, nil
 	}
@@ -764,6 +772,84 @@ func localRunCheckout(ctx context.Context, repoRoot, ref, commit string) resolve
 		return resolvedRunSourceCheckout{Commit: commit, RefName: ref, RefType: runSourceRefTypeTag}
 	}
 	return resolvedRunSourceCheckout{Commit: commit, RefType: runSourceRefTypeCommit}
+}
+
+// localUpstreamURL is the URL of the remote the checked-out branch tracks in
+// repoRoot, for the sandbox to add as its upstream remote. Its origin is this
+// repository, so the remote this checkout pushes to and pulls from is otherwise
+// unknown inside it.
+//
+// Only the remote travels, not the tracking: the branch in the sandbox keeps
+// tracking origin. And only a remote the sandbox can reach: a branch that
+// tracks another local branch (".") or a remote that is a path on this machine
+// has nothing to offer it, and gets no upstream rather than a broken one.
+//
+// A URL already written in full is sent as it is, not as this machine's
+// url.*.insteadOf rewrites it: those are this machine's way of reaching it
+// (https rewritten to ssh for a key the sandbox does not hold), and the sandbox
+// has its own Git config. Anything else — an alias such as gh:org/repo, or an
+// scp-style address — is only a URL after the rewrite, so it is sent as Git
+// resolves it here. Either way it is the remote's first URL, the one Git
+// fetches from. Credentials written into the URL are dropped
+// (networkRemoteURL): the URL is stored on the sandbox and the sandbox's own
+// credentials are what reach the remote.
+func localUpstreamURL(ctx context.Context, repoRoot string, checkout resolvedRunSourceCheckout) string {
+	if checkout.RefType != runSourceRefTypeBranch || checkout.RefName == "" {
+		return ""
+	}
+	remote, err := gitutil.Output(ctx, repoRoot, nil, nil, "config", "--get", "branch."+checkout.RefName+".remote")
+	if err != nil {
+		return ""
+	}
+	remote = strings.TrimSpace(remote)
+	if remote == "" || remote == "." {
+		return ""
+	}
+	// branch.<name>.remote may name a URL rather than a configured remote;
+	// ls-remote --get-url resolves either, and is the first URL rewritten.
+	resolved, err := gitutil.Output(ctx, repoRoot, nil, nil, "ls-remote", "--get-url", remote)
+	if err != nil {
+		return ""
+	}
+	value := strings.TrimSpace(resolved)
+	if configured, err := gitutil.Output(ctx, repoRoot, nil, nil, "config", "--get-all", "remote."+remote+".url"); err == nil {
+		first, _, _ := strings.Cut(strings.TrimSpace(configured), "\n")
+		if first = strings.TrimSpace(first); strings.Contains(first, "://") {
+			value = first
+		}
+	}
+	return networkRemoteURL(value)
+}
+
+// networkRemoteURL returns value when it is a Git URL reached over the network,
+// with any password or token removed, and empty otherwise. Both forms Git
+// accepts count: a URL with a scheme and a host, and the scp-like
+// [user@]host:path, which is told from a local path the way Git tells them —
+// no slash before the colon. A drive letter (C:\src) is a path.
+func networkRemoteURL(value string) string {
+	if value == "" {
+		return ""
+	}
+	if strings.Contains(value, "://") {
+		u, err := url.Parse(value)
+		if err != nil || u.Host == "" || u.Scheme == "file" {
+			return ""
+		}
+		switch {
+		case u.User == nil:
+		case u.Scheme == "http" || u.Scheme == "https":
+			// A token is as often the username as the password here.
+			u.User = nil
+		default:
+			u.User = url.User(u.User.Username())
+		}
+		return u.String()
+	}
+	host, _, ok := strings.Cut(value, ":")
+	if !ok || host == "" || strings.ContainsAny(host, `/\`) || len(host) == 1 {
+		return ""
+	}
+	return value
 }
 
 func resolveRemoteGitRef(ctx context.Context, source, ref string, explicitRef bool) (string, string, string, error) {

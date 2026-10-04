@@ -910,6 +910,7 @@ func (m *Model) closeWorkspace() {
 	// The push loop ends with the generation, and what it was holding against
 	// this workspace goes with it.
 	m.pushHeld = nil
+	m.closeAudit()
 	m.endNarration()
 	m.busy = ""
 	if m.forward != nil {

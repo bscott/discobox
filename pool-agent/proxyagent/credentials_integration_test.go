@@ -97,7 +97,7 @@ func TestMintedSentinelIsSwappedOnRealTraffic(t *testing.T) {
 
 	// Minting is what registers the sentinel. It happens before any request,
 	// exactly as `get` does, and must take effect without waiting for a poll.
-	record, err := live.mint("sb-1", "STABLE-SENTINEL", "use-1", originHost, "ghp_{base62:36}", []string{"gh", "pr", "create"})
+	record, err := live.mint("sb-1", "STABLE-SENTINEL", "use-1", []string{originHost}, "ghp_{base62:36}", []string{"gh", "pr", "create"})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestMintedSentinelIsNotSwappedForAnotherHost(t *testing.T) {
 	go func() { _ = server.ListenAndServe() }()
 
 	// Approved for somewhere the request is not going.
-	record, err := live.mint("sb-1", "STABLE-SENTINEL", "use-1", "api.github.com", "ghp_{base62:36}", nil)
+	record, err := live.mint("sb-1", "STABLE-SENTINEL", "use-1", []string{"api.github.com"}, "ghp_{base62:36}", nil)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -200,11 +200,19 @@ func TestCredentialsEndpointIdentifiesTheSandboxByItsCertificate(t *testing.T) {
 	defer cancel()
 	withTestRoot(t)
 
-	var sawSandboxIDs []string
+	var sawSandboxIDs, judgedSandboxIDs []string
 	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/judge-commands") {
+			var ask commandAskDoc
+			_ = json.NewDecoder(r.Body).Decode(&ask)
+			judgedSandboxIDs = append(judgedSandboxIDs, ask.SandboxID)
+			allow := true
+			_ = json.NewEncoder(w).Encode(judgeAnswer{Allow: &allow, Reason: "matches the approved use"})
+			return
+		}
 		sawSandboxIDs = append(sawSandboxIDs, r.URL.Query().Get("sandboxId"))
 		_ = json.NewEncoder(w).Encode(listCredentialsDoc{Credentials: []credentialDoc{{
-			Name: "github", EnvVar: "GITHUB_TOKEN", Host: "api.github.com",
+			Name: "github", EnvVar: "GITHUB_TOKEN", Hosts: []string{"api.github.com"},
 			SecretID: "sec-1", GrantID: "grant-1", Sentinel: "STABLE-SENTINEL",
 			Format: "ghp_{base62:36}",
 			Uses:   []credentialUseDoc{{UseID: "use-1", Description: "Open a PR"}},
@@ -252,15 +260,15 @@ func TestCredentialsEndpointIdentifiesTheSandboxByItsCertificate(t *testing.T) {
 		t.Fatalf("control plane was asked about %v, want the certificate's sandbox", sawSandboxIDs)
 	}
 
-	// A `get` mints against that identity, and the value handed back is an
-	// ephemeral sentinel rather than anything the control plane holds.
-	result, err := client.Get(ctx, agentcreds.UseBody{
-		UseID:   "use-1",
-		Command: []string{"gh", "pr", "create"},
-		Verdict: agentcreds.Verdict{Allow: true, Reason: "matches the approved use", Role: "judge", Prompt: "..."},
-	})
+	// A `get` is judged and mints against that identity, and the value handed
+	// back is an ephemeral sentinel rather than anything the control plane
+	// holds.
+	result, err := client.Get(ctx, agentcreds.UseBody{UseID: "use-1", Command: []string{"gh", "pr", "create"}})
 	if err != nil {
 		t.Fatalf("get over mTLS: %v", err)
+	}
+	if len(judgedSandboxIDs) != 1 || judgedSandboxIDs[0] != "sb-1" {
+		t.Fatalf("the judge was asked about %v, want the certificate's sandbox", judgedSandboxIDs)
 	}
 	if result.EnvVar != "GITHUB_TOKEN" || result.Value == "STABLE-SENTINEL" || !strings.HasPrefix(result.Value, "ghp_") {
 		t.Fatalf("get returned %#v, want a freshly minted lookalike", result)

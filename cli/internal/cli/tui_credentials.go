@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/discobox-ai/discobox/agentcreds"
 	apiclientgen "github.com/discobox-ai/discobox/api/gen"
 	apimodel "github.com/discobox-ai/discobox/api/model"
-	"github.com/discobox-ai/discobox/cli/internal/lifetime"
 	"github.com/discobox-ai/discobox/cli/internal/refreshcmd"
 	"github.com/discobox-ai/discobox/cli/internal/tui"
 	"github.com/discobox-ai/discobox/internal/hostid"
@@ -183,14 +183,14 @@ func toTUICredentialRequest(r apimodel.SecretRequest) tui.CredentialRequest {
 		SandboxID:     strings.TrimSpace(r.SandboxId.Or("")),
 		Name:          strings.TrimSpace(r.Name.Or("")),
 		EnvVar:        strings.TrimSpace(r.EnvName.Or("")),
-		Host:          strings.TrimSpace(r.Host.Or("")),
 		Type:          string(r.Type),
 		Justification: strings.TrimSpace(r.Justification.Or("")),
-		GrantTTL:      lifetime.FromRequest(r.GrantTTLSeconds.Or(0)),
+		GrantTTL:      agentcreds.AskedGrantTTL(r.GrantTTLSeconds.Or(0)),
 		Delegate:      r.Purpose.Or("") == apiclientgen.SecretRequestPurposeDelegate,
 		WellKnownID:   strings.TrimSpace(r.WellKnownId.Or("")),
 		Created:       r.CreatedAt,
 	}
+	req.Hosts = r.Hosts
 	if r.Reason.Or("") == apiclientgen.SecretRequestReasonRefresh {
 		req.Refresh = &tui.RefreshAsk{
 			SecretID: strings.TrimSpace(r.SecretId.Or("")),
@@ -224,7 +224,7 @@ func toTUITrustRequest(r apimodel.HostTrustRequest) tui.CredentialRequest {
 		SandboxID:     r.SandboxId,
 		Host:          r.Host,
 		Justification: strings.TrimSpace(r.Justification.Or("")),
-		GrantTTL:      lifetime.FromRequest(r.GrantTTLSeconds.Or(0)),
+		GrantTTL:      agentcreds.AskedGrantTTL(r.GrantTTLSeconds.Or(0)),
 		Created:       r.CreatedAt,
 		Trust:         ask,
 	}
@@ -356,6 +356,8 @@ func (d *apiDataSource) Secrets(ctx context.Context, server string) ([]tui.Secre
 				row.OAuth.AccessTokenExpiresAt = time.UnixMilli(expires).UTC()
 			}
 		}
+		row.Format = s.Format.Or("")
+		row.FormatSet = s.FormatSet.Or(false)
 		row.RefreshCommand = s.RefreshCommand.Or(nil)
 		row.ValueTTL = time.Duration(s.TtlSeconds.Or(0)) * time.Second
 		if staleAt, ok := s.StaleAt.Get(); ok {
@@ -393,6 +395,9 @@ func (d *apiDataSource) CreateSecret(ctx context.Context, server string, secret 
 	}
 	if id := strings.TrimSpace(secret.WellKnownID); id != "" {
 		body.SetWellKnownId(apiclientgen.NewOptString(id))
+	}
+	if format := strings.TrimSpace(secret.Format); format != "" {
+		body.SetFormat(apiclientgen.NewOptString(format))
 	}
 	// A token got from a command starts with a value, which the command is run
 	// here for, as `discobox secret create --refresh-command` does
@@ -472,6 +477,9 @@ func (d *apiDataSource) UpdateSecret(ctx context.Context, server, secretID strin
 	}
 	if update.ValueTTLSeconds != nil {
 		body.SetTtlSeconds(apiclientgen.NewOptInt64(*update.ValueTTLSeconds))
+	}
+	if update.Format != nil {
+		body.SetFormat(apiclientgen.NewOptString(strings.TrimSpace(*update.Format)))
 	}
 	res, err := d.client.UpdateSecret(ctx, body, apiclientgen.UpdateSecretParams{
 		ProjectId: d.projectID,
@@ -614,7 +622,7 @@ func (d *apiDataSource) Grants(ctx context.Context, server, secretID string) ([]
 			SecretID:  g.SecretId,
 			Scope:     string(g.Scope),
 			ScopeKey:  strings.TrimSpace(g.ScopeKey),
-			Host:      strings.TrimSpace(g.Host.Or("")),
+			Host:      strings.Join(g.Hosts, ", "),
 			Delegate:  g.Purpose == apiclientgen.SecretGrantPurposeDelegate,
 			GrantedBy: strings.TrimSpace(g.GrantedBy.Or("")),
 			Granted:   g.GrantedAt,
@@ -651,9 +659,12 @@ func (d *apiDataSource) CreateGrant(ctx context.Context, server string, grant tu
 	if grant.ScopeKey != "" {
 		body.SetScopeKey(apiclientgen.NewOptString(grant.ScopeKey))
 	}
-	// Set even when empty: an unset host takes the secret's own binding, and
-	// "anywhere the secret allows" has to be sayable.
-	body.SetHost(apiclientgen.NewOptString(grant.Host))
+	// Sent even when empty: a list left out takes the secret's own binding,
+	// and "anywhere the secret allows" — an empty list — has to be sayable.
+	body.SetHosts([]string{})
+	if host := strings.TrimSpace(grant.Host); host != "" {
+		body.SetHosts([]string{host})
+	}
 	// Said even when zero: the window asked how long it lives and was answered,
 	// and zero is the answer "never expires" — dropping it would quietly
 	// substitute the secret's limit for what the person typed.
@@ -679,7 +690,7 @@ func (d *apiDataSource) CreateGrant(ctx context.Context, server string, grant tu
 		SecretID: created.SecretId,
 		Scope:    string(created.Scope),
 		ScopeKey: strings.TrimSpace(created.ScopeKey),
-		Host:     strings.TrimSpace(created.Host.Or("")),
+		Host:     strings.Join(created.Hosts, ", "),
 	}, nil
 }
 

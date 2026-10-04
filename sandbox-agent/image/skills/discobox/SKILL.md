@@ -124,6 +124,12 @@ things, and they behave differently:
   nothing is bound. `origin` is that real remote, and a push is a live push
   upstream. Do not push there unless the user asked for it.
 
+A source cloned from the user's disk may also have an **`upstream`** remote:
+the URL the user's own checkout of that branch tracks — their GitHub remote, a
+fork, or a mirror. It is live, it is not what your branch tracks, and a push
+there is a push to the real remote. The same rule holds: not unless the user
+asked, and check its URL first.
+
 The user runs `discobox apply` on their side, which cherry-picks your commits
 onto their working tree with your commit boundaries preserved.
 
@@ -425,14 +431,22 @@ a person for with `discobox-access` — the `discobox-access` skill says how —
 and run under: `discobox-access run --use <id> -- discobox …`. Without one,
 every call is refused by the pool.
 
-With it, you may create discoboxes with `discobox new --json` — cut from the
-directory you run it in, and given uses of project secrets through its
-`"grants"`; the `discobox-access` skill shows the request — list and read them
-(`admin box ls`, `admin box get`), and list and answer credential requests
-(`discobox secret request ls`, `approve`, `deny`). Nothing else: the user's
-other commands above need their machine or reach further than a box may, and
-are refused. A box you create is the user's, and cannot be given
-`ai.discobox.sandbox` by you — a person approves that when it asks.
+With it, you may create discoboxes with `discobox new`, cut from the directory
+you run it in; list and read them (`admin box ls`, `admin box get`); read
+and type into the terminals of the ones you created (`admin terminal screen`,
+`input`, `wait`); start, stop, and restart the ones you created
+(`admin box start`, `stop`, `restart`); and list and answer credential
+requests (`discobox secret request ls`, `approve`, `deny`). Nothing else: the
+user's other commands above need their machine or reach further than a box
+may, and are refused. A box you create is the user's,
+and cannot be given `ai.discobox.sandbox` by you — a person approves that when
+it asks.
+
+Launch a box with no credentials and a prompt that states its task and nothing
+else, then approve only what it asks for, and only for the boxes you created.
+Do not pass `--grant` or `"grants"` at create. The `discobox-access` skill's
+"Launching other discoboxes" section says how, including the access to ask for
+up front so you can run the boxes on your own.
 
 For the threat model and what discobox does not defend against, point at
 https://discobox.ai and https://discobox.ai/security. Parts of the security

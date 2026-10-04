@@ -30,13 +30,19 @@ and is marked by whatever changes those. Its reconcile id is a project ID,
 because a project has one judge, and its scan names every project so a judge
 converges even when whatever changed did not think to say so.
 
-Judging is off until a server opts in (`judgeCredentials`). It is a server's
-decision rather than a project's, because it puts a model in front of every
-credential-bearing request, and a server that has not asked for that keeps
-resolving credentials as it always did. While it is off, no project wants a
-judge, so the convergence makes none and takes away any made while it was on —
-the same path as removing the project's default harness. A pool that asks
-anyway is refused before a judge is looked for.
+What a server judges is its decision rather than a project's, made for
+commands and requests apart (`judges.Judging`,
+[ADR 26-10-02-054](../../../docs/adr/26-10-02-054-commands-are-judged-by-default-and-requests-by-opt-in.md)):
+`judgeCommands`, on by default, judges the command `discobox-access run`
+declares and a discobox handing a credential on, each before anything is
+minted; `judgeCredentials`, off by default, judges every credential-bearing
+request the proxy observes, holding its connection open. A project wants a
+judge while either is on. While both are off, the convergence makes none and
+takes away any made while one was on — the same path as removing the project's
+default harness. A pool that asks about a kind the server does not judge is
+answered with the judging-disabled problem before a judge is looked for: for a
+request the proxy allows it, for a command the pool mints with no verdict, and
+a delegation is refused.
 
 A judge is an ordinary discobox in judge mode. Judge mode is a create body's to
 ask for like any other, so what makes one *the project's* judge is that the
@@ -57,7 +63,10 @@ What a pool asks with is which discobox is spending which approved use, and
 what its proxy observed. It does not say what that use allows. The sentence
 being judged against, the credential's name and the host it is approved for are
 read here from the live grant the use belongs to (`secrets.ApprovedUse`), so
-nothing a pool or a sandbox sends can widen its own question. The same read
+nothing a pool or a sandbox sends can widen its own question. The same goes
+for guidance: a pool names the protocol and endpoint it recognized the request
+as, and the words about them are added here from the judge package
+(`judge.GuidanceFor`, ADR 26-09-26-240 §4), never taken from the pool. The same read
 happens again after the verdict, because a verdict takes a while and a grant can
 be revoked inside one. The question is composed only once a judge is found: a
 project with no judge refuses whatever the use turns out to say, and that
@@ -91,11 +100,43 @@ exchange when it writes the audit row, after the judge has answered, so there
 is no ID to send with the ask; a verdict joins the http trail by use, discobox
 and time, which is ambiguous for a use that made several requests at once.
 
+A command is asked the same way (`command.go`,
+`POST /api/pools/{poolId}/judge-commands`, ADR 26-09-22-838 §3): the pool asks
+before it mints a sentinel, naming the discobox and the use, with the argv,
+its stdin and what the discobox reported about where it runs as evidence. The
+purpose, credential and host come from the live grant
+(`secrets.ApprovedCredentialUse`, which a host trust's use never matches),
+the use is re-read after the verdict, nothing stands, and the answer is
+recorded as a command `CredentialVerdict` (kind `command`, origin `judge`)
+before it goes back.
+
 Pools never call each other: they sit behind NAT, in clouds, and inside VMs,
 and the only thing every pool can reach is the control plane.
 That is what lets a pool whose own discoboxes are whole VMs of another
 operating system judge at all. Every refusal on that path is the same answer —
 no verdict — and the reason travels back so the pool can say why.
+
+A server may judge with Jev instead (ADR 26-10-01-324). `judgeBackend: jev`
+chooses it, and so does the default, `auto`, when `jevApiKey` is set. The
+backend is the server's choice, like judging itself. With `jevUnsure: refuse`
+no project wants a judge discobox, so the convergence makes none and takes away
+any made before the switch. `put` sends the job to Jev (`judge/jev`) rather than to a discobox:
+there is nothing to reach, so the bound is `judge.Timeout` alone. Everything
+around the call is unchanged: the question read from the live grant, standing
+rows (Jev proposes none, but rows a judge discobox left still cover until they
+lapse), the re-check of the use, and the verdict recorded first. A Jev verdict
+names its `Model`, the `Probabilities` it was decided from, and
+`jev.QuestionsVersion` as its prompt version, in place of a discobox, harness
+and image. Jev refusing the key, being too busy, or saying something that is
+not an answer are each no verdict, and what Jev said goes to the log, not to
+the discobox.
+
+With `jevUnsure: harness`, the default, a project keeps its judge discobox, and `put` asks it
+about exactly the jobs Jev refused as unsure (`jev.Verdict.Unsure`). Its
+answer is the verdict, recorded with Jev's model and probabilities beside the
+discobox that decided. The bound is a judge discobox's, since one may have to
+be reached. A judge discobox that cannot be had leaves Jev's refusal standing
+and recorded, rather than no verdict.
 
 Judge-mode discoboxes are left out of listings unless asked for
 (`store.IncludingJudges`, the API's `includeJudge`, `discobox admin box ls

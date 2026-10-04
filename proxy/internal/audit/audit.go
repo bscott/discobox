@@ -48,6 +48,7 @@ type HTTPEvent struct {
 	AppliedPattern       string
 	AppliedHeaders       []string
 	SwappedUseIDs        []string
+	SwappedSecretIDs     []string
 	RedactRequestHeaders []string
 	RequestHeaders       http.Header
 	ResponseHeaders      http.Header
@@ -146,7 +147,15 @@ type HTTPExchange struct {
 	// the highest-volume table in the schema and nothing else. The scan it
 	// implies is bounded in practice by client_id, which is indexed and which
 	// every real caller sends.
-	SwappedUseIDs       string
+	SwappedUseIDs string
+	// SwappedSecretIDs names the secrets whose values this request carried,
+	// comma-joined, for every kind of sentinel — an ordinary injected one too,
+	// which has no use to name (ADR 26-10-01-240). An ID, never a sentinel,
+	// for the reason SwappedUseIDs gives. Unindexed for that reason too.
+	//
+	// AutoMigrate adds it to a database written before it, where those rows
+	// read it as empty: nothing was recorded about their secrets.
+	SwappedSecretIDs    string
 	RequestHeaders      string
 	ResponseHeaders     string
 	ResponseBytes       int64
@@ -684,6 +693,7 @@ func (r *Recorder) write(event any) {
 			AppliedPattern:      e.AppliedPattern,
 			AppliedHeaders:      strings.Join(e.AppliedHeaders, ","),
 			SwappedUseIDs:       strings.Join(e.SwappedUseIDs, ","),
+			SwappedSecretIDs:    strings.Join(e.SwappedSecretIDs, ","),
 			RequestHeaders:      marshalHeaders(e.RequestHeaders, e.RedactRequestHeaders),
 			ResponseHeaders:     marshalHeaders(e.ResponseHeaders, nil),
 			ResponseBytes:       e.ResponseBytes,

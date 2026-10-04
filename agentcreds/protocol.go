@@ -70,10 +70,19 @@ const (
 	PathRequests = "/" + Version + "/credentials/requests"
 	// PathUse takes a value for one declared command.
 	PathUse = "/" + Version + "/credentials/use"
-	// PathDenials volunteers a verdict for a command the judge refused, which
-	// never reached PathUse (ADR 0091 §3).
-	PathDenials = "/" + Version + "/credentials/denials"
 )
+
+// MaxReportedBytes is the most any one field of Reported may be. An
+// implementation may refuse a use whose report has a longer one. It is small
+// because JSON may write a byte as six, and the four fields share one body
+// (MaxBodyBytes) with the most of stdin a caller shows.
+const MaxReportedBytes = 256
+
+// UseTimeout is how long a use call may take. An implementation may judge the
+// command before it hands out a value, and a judge that has to be brought up
+// first takes minutes rather than seconds, so a client waits this long for
+// the answer rather than the few seconds every other call gets.
+const UseTimeout = 4 * time.Minute
 
 // Request status values. A request settles from Pending to exactly one of
 // Granted or Denied and never moves again.
@@ -92,12 +101,12 @@ type Use struct {
 }
 
 // Credential is one credential the caller may use, as reported by list. It
-// never carries a value.
+// never carries a value. Hosts are where it may be sent (ADR 26-10-02-393).
 type Credential struct {
-	Name   string `json:"name"`
-	EnvVar string `json:"envVar"`
-	Host   string `json:"host,omitempty"`
-	Uses   []Use  `json:"uses,omitempty"`
+	Name   string   `json:"name"`
+	EnvVar string   `json:"envVar"`
+	Hosts  []string `json:"hosts,omitempty"`
+	Uses   []Use    `json:"uses,omitempty"`
 }
 
 // ListResponse is the list operation's body.
@@ -122,6 +131,35 @@ type RequestedUse struct {
 // to be asked again.
 const MaxGrantTTLSeconds = 30 * 24 * 60 * 60
 
+// DefaultGrantTTL is what an approval lasts when nobody said otherwise: the
+// approver named no lifetime, and the agent asked for nothing in particular.
+// The server answers an approval that names none with it, the window opens on
+// it, and the CLI says it, so the same act mints the same grant wherever it is
+// made.
+//
+// An hour: the shortest answer still long enough to finish the task the
+// credential was asked for, and the one that costs nothing to be wrong about —
+// a grant that outlives its task is a credential nobody remembers handing out.
+const DefaultGrantTTL = time.Hour
+
+// AskedGrantTTL is the lifetime an agent asked for, as RequestBody carries it.
+// Zero is "asked for nothing in particular", which is what an ask outside what
+// an agent may ask for (MaxGrantTTLSeconds) also becomes.
+//
+// Out of range is treated as no ask rather than clamped into one. The number
+// arrives from inside a sandbox, and the value of an ask is that a person is
+// shown what the agent said it needed; a number nobody could have meant is not
+// that, and quietly rewriting it to thirty days would put words in the agent's
+// mouth. The range check is also what keeps the multiplication below from
+// overflowing, which would land a huge ask back near zero — indistinguishable
+// from forever once rounded to whole seconds.
+func AskedGrantTTL(seconds int64) time.Duration {
+	if seconds <= 0 || seconds > MaxGrantTTLSeconds {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 // What a request asks the credential for. A grant is one or the other, never
 // both, so a person approving one agrees to one thing.
 const (
@@ -144,15 +182,18 @@ const (
 // asked again is never the default.
 //
 // Purpose is PurposeUse or PurposeDelegate; empty asks for PurposeUse.
+//
+// Hosts are where the credential will be sent, one or several
+// (ADR 26-10-02-393).
 type RequestBody struct {
 	// ID names a well-known credential — a reverse-DNS ID such as
-	// "com.github.api" — in place of Name, EnvVar, and Host, which an
+	// "com.github.api" — in place of Name, EnvVar, and the hosts, which an
 	// implementation fills from what it knows the ID to mean. An
 	// implementation that knows no such ID refuses the request as invalid.
 	ID              string         `json:"id,omitempty"`
 	Name            string         `json:"name"`
 	EnvVar          string         `json:"envVar"`
-	Host            string         `json:"host"`
+	Hosts           []string       `json:"hosts,omitempty"`
 	Justification   string         `json:"justification,omitempty"`
 	Uses            []RequestedUse `json:"uses,omitempty"`
 	GrantTTLSeconds int64          `json:"grantTTLSeconds,omitempty"`
@@ -181,46 +222,43 @@ func (s RequestStatus) Settled() bool {
 	return s.Status == StatusGranted || s.Status == StatusDenied
 }
 
-// Verdict is what a judge decided about a command, carried on the call that
-// takes a value for it so that a credential cannot be issued without one
-// (ADR 0091): the call that mints the value is the call that carries the
-// record of why.
-//
-// Role names what discobox-prompt was asked for (e.g. "judge"), never a
-// vendor model id — the judge itself never learns one to report. Prompt is
-// stored in full, not digested: the value of an audit record here is being
-// able to read exactly what the judge saw, not a hash of it.
-type Verdict struct {
-	Allow     bool   `json:"allow"`
-	Reason    string `json:"reason,omitempty"`
-	Role      string `json:"role"`
-	Prompt    string `json:"prompt"`
-	LatencyMS int64  `json:"latencyMs,omitempty"`
-}
-
 // UseBody takes a value for one command. Command is the argv the caller is
-// about to run, declared before the value is handed out. It narrows the window
-// and gives the audit log a per-use story; it is never a trust anchor, because
-// the caller could lie about it.
+// about to run, declared before the value is handed out; Stdin and Reported
+// are what that command will read on standard input and where the caller says
+// it runs.
 //
-// Verdict is required: an implementation may reject a body without one, the
-// same way it rejects a body without a UseID (ADR 0091 §1).
+// An implementation may judge the command before it hands out anything, and
+// Discobox does: a value is handed out only when its judge allows the command
+// for the use, and a refusal is CodeDenied with the judge's reason (ADR
+// 26-09-22-838 §3). Everything here is the caller's word, so it is evidence
+// for that judgement and never authority; the use is what was approved.
 type UseBody struct {
-	UseID   string   `json:"useId"`
-	Command []string `json:"command,omitempty"`
-	Verdict Verdict  `json:"verdict"`
+	UseID    string    `json:"useId"`
+	Command  []string  `json:"command,omitempty"`
+	Stdin    *Stdin    `json:"stdin,omitempty"`
+	Reported *Reported `json:"reported,omitempty"`
 }
 
-// DenialReport volunteers a verdict that never reached UseBody because the
-// judge refused before a value was ever taken (ADR 0079 §1's ordering means a
-// refusal mints nothing, so the use call this would otherwise ride never
-// happens). Reporting it is best-effort on the caller's side — nothing about
-// what the CLI does next depends on whether this call succeeds — but what it
-// stores, once it arrives, is as real as an issued verdict.
-type DenialReport struct {
-	UseID   string   `json:"useId"`
-	Command []string `json:"command,omitempty"`
-	Verdict Verdict  `json:"verdict"`
+// Stdin is what a command will read on standard input, as much of it as the
+// caller shows: text, and a sentence for whatever of it is not shown.
+type Stdin struct {
+	// Content is the input shown, which is text. Empty when none of it is
+	// shown, and Missing then says why.
+	Content string `json:"content"`
+	// Missing says why Content is not the whole input: longer than the caller
+	// shows, still arriving, not text, or a read that failed.
+	Missing string `json:"missing,omitempty"`
+}
+
+// Reported is what the caller says about where a command runs. Every field is
+// optional, and at most MaxReportedBytes: they are a path or a line.
+type Reported struct {
+	WorkingDirectory string `json:"workingDirectory,omitempty"`
+	RepositoryRoot   string `json:"repositoryRoot,omitempty"`
+	// RefCommit and RefSubject are the commit a git ref the command names
+	// resolves to, and that commit's subject line.
+	RefCommit  string `json:"refCommit,omitempty"`
+	RefSubject string `json:"refSubject,omitempty"`
 }
 
 // UseResponse carries the value to place in EnvVar for that one command, and

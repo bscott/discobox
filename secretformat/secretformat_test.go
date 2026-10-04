@@ -73,7 +73,9 @@ func TestValidateRejectsWrongShape(t *testing.T) {
 // sets on the secret, never a guess from a prefix.
 func TestProviderDescribeKeepsTheShapeAndClaimsNoHost(t *testing.T) {
 	cases := map[string]string{
-		"sk-ant-api03-" + strings.Repeat("a", 95):                     "sk-ant-",
+		"sk-ant-api03-" + strings.Repeat("a", 95):                     "sk-ant-api03-",
+		"sk-ant-oat01-" + strings.Repeat("e", 95):                     "sk-ant-oat01-",
+		"sk-ant-xyz99-" + strings.Repeat("f", 95):                     "sk-ant-",
 		"sk-proj-" + strings.Repeat("b", 48):                          "sk-proj-",
 		"github_pat_" + strings.Repeat("c", 82):                       "github_pat_",
 		"xoxb-1111111111111-2222222222222-" + strings.Repeat("d", 24): "xoxb-",
@@ -215,5 +217,27 @@ func TestClassifyTightest(t *testing.T) {
 		if got := classify(seg); got != want {
 			t.Fatalf("classify(%q) = %q, want %q", seg, got, want)
 		}
+	}
+}
+
+// A template a person writes is bounded; one read from a value is not, since a
+// long credential still has to mint a sentinel of its own shape.
+func TestOnlyAChosenTemplateIsBounded(t *testing.T) {
+	for _, format := range []string{"{alnum:4097}", "{alnum:4000}{alnum:100}"} {
+		if _, err := ParseChosen(format); err == nil {
+			t.Fatalf("ParseChosen(%q) expected error", format)
+		}
+	}
+	if _, err := ParseChosen("sk-ant-oat01-{base64url:95}"); err != nil {
+		t.Fatalf("ParseChosen refused an ordinary template: %v", err)
+	}
+	long := "eyJ" + strings.Repeat("a", 6000) + "." + strings.Repeat("b", 100)
+	format := Describe(long)
+	if _, err := Parse(format); err != nil {
+		t.Fatalf("the format read from a %d-character value does not parse: %v", len(long), err)
+	}
+	sentinel, err := MintSentinel(format)
+	if err != nil || len(sentinel) != len(long) {
+		t.Fatalf("sentinel is %d characters (%v), want the value's %d", len(sentinel), err, len(long))
 	}
 }

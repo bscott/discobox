@@ -9,7 +9,7 @@ require (
 	github.com/coder/websocket v1.8.14
 	github.com/containerd/errdefs v1.0.0
 	github.com/discobox-ai/discobox/pool-agent v0.0.0-00010101000000-000000000000
-	github.com/discobox-ai/x v0.0.0-20260917050848-32cef8aa6b78
+	github.com/discobox-ai/x v0.0.0-20260928053835-39c36487e906
 	github.com/distribution/reference v0.6.0
 	github.com/ebitengine/purego v0.10.2
 	github.com/go-faster/jx v1.2.0
@@ -424,7 +424,7 @@ replace github.com/discobox-ai/discobox => ..
 
 replace github.com/discobox-ai/discobox/pool-agent => ../pool-agent
 
-replace github.com/charmbracelet/x/ansi => github.com/discobox-ai/charm-x/ansi v0.11.9-0.20260813023456-57e8cef06953
+replace github.com/charmbracelet/x/ansi => github.com/discobox-ai/charm-x/ansi v0.11.9-0.20260926040046-9d904b1c7255
 
 // Code-Hex/vz closes the descriptor a VZVirtioSocketConnection owns, so the
 // framework's own close lands on whatever reused the number; the server exits
@@ -440,3 +440,5 @@ replace github.com/Code-Hex/vz/v3 => github.com/discobox-ai/vz/v3 v3.7.2-0.20260
 // Drop this with the one in the root go.mod, once an upstream release fixes both
 // call sites (elazarl/goproxy#805 covers only the MITM half).
 replace github.com/elazarl/goproxy => github.com/discobox-ai/goproxy v0.0.0-20260912041536-a9c9419932d8
+
+replace github.com/charmbracelet/ultraviolet => github.com/discobox-ai/ultraviolet v0.0.0-20260926043624-eff2d8acf8a4

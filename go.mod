@@ -8,7 +8,7 @@ require (
 	github.com/adrg/xdg v0.5.3
 	github.com/coder/websocket v1.8.14
 	github.com/discobox-ai/iroh-go v0.4.0
-	github.com/discobox-ai/x v0.0.0-20260917050848-32cef8aa6b78
+	github.com/discobox-ai/x v0.0.0-20260928053835-39c36487e906
 	github.com/elazarl/goproxy v1.9.0
 	github.com/go-faster/errors v0.7.1
 	github.com/go-faster/jx v1.2.0
@@ -329,7 +329,7 @@ require (
 require (
 	aidanwoods.dev/go-result v0.3.1 // indirect
 	github.com/bmatcuk/doublestar/v4 v4.10.0 // indirect
-	github.com/discobox-ai/hooks v0.0.0-20260901000815-a2b5db14cd78 // indirect
+	github.com/discobox-ai/hooks v0.0.0-20261002233137-6a9cf2d0f23a // indirect
 	github.com/discobox-ai/iroh-go/libs/darwin_amd64 v0.4.0 // indirect
 	github.com/discobox-ai/iroh-go/libs/darwin_arm64 v0.4.0 // indirect
 	github.com/discobox-ai/iroh-go/libs/linux_amd64 v0.4.0 // indirect
@@ -381,7 +381,7 @@ tool (
 	golang.org/x/tools/gopls
 )
 
-replace github.com/charmbracelet/x/ansi => github.com/discobox-ai/charm-x/ansi v0.11.9-0.20260813023456-57e8cef06953
+replace github.com/charmbracelet/x/ansi => github.com/discobox-ai/charm-x/ansi v0.11.9-0.20260926040046-9d904b1c7255
 
 // goproxy drops the bytes a client sends in the same write as an upgrade
 // request: net/http has already read them into the request parser's buffer, and
@@ -395,3 +395,5 @@ replace github.com/charmbracelet/x/ansi => github.com/discobox-ai/charm-x/ansi v
 // in websocket.go — is untouched by it. discobox-ai/discobox#25 tracks that, and
 // proxy's TestHTTPProxyUpgradeEarlyClientBytes is what says whether it is safe.
 replace github.com/elazarl/goproxy => github.com/discobox-ai/goproxy v0.0.0-20260912041536-a9c9419932d8
+
+replace github.com/charmbracelet/ultraviolet => github.com/discobox-ai/ultraviolet v0.0.0-20260926043624-eff2d8acf8a4

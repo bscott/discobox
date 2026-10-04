@@ -872,6 +872,10 @@ func (s *routerTestServices) ReportPoolResources(context.Context, string, servic
 	return nil
 }
 
+func (s *routerTestServices) ListPoolHeldSandboxes(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+
 func (s *routerTestServices) ReportSandboxAgentStatus(context.Context, string, services.ReportSandboxAgentStatusBody) error {
 	return nil
 }

@@ -57,10 +57,13 @@ func (a ProjectAuthorizer) Authorize(r *http.Request) (bool, error) {
 
 // SandboxRoleAuthorizer authorizes a sandbox's own calls against the sandbox
 // role (ADR 0140 §4): a fixed list of routes, in the sandbox's own project, and
-// nothing else. It is decided by the route, and for source delivery by whether
-// the sandbox created the discobox the route names (ADR 26-09-24-630 §2). No grant,
-// and no use's text, is read here: what a call is for is the judge's question,
-// asked in the pool.
+// nothing else. It is decided by the route, and for some routes by what the
+// route names: source delivery only into a discobox the sandbox created (ADR
+// 26-09-24-630 §2), its terminals read and typed into only for a discobox it
+// created (ADR 26-10-01-397 §1), its power instructed only for a discobox it
+// created (ADR 26-10-02-478 §1), and a secret request only when a discobox it
+// created filed it (ADR 26-09-30-782 §2). No use's text is read here: what a
+// call is for is the judge's question, asked in the pool.
 //
 // It answers every request a sandbox principal makes, refusing what the role
 // does not list, rather than stepping aside. The authorizers after it answer
@@ -78,10 +81,24 @@ type sandboxRoleRoute struct {
 	// service, when set, is the only value the route's `service` query
 	// parameter may have: Git's info/refs answers both push and fetch.
 	service string
-	// created allows the route only on a discobox the calling sandbox
-	// created, named by the path's first "*" (ADR 26-09-24-630 §2).
-	created bool
+	// owner is what the route's first "*" must belong to the calling sandbox
+	// as. The zero value asks nothing of it.
+	owner ownership
 }
+
+// ownership is how what a route names must belong to the sandbox calling it.
+type ownership int
+
+const (
+	// The zero value asks nothing of what a route names.
+	_ ownership = iota
+	// createdSandbox: the path names a discobox the caller created (ADR
+	// 26-09-24-630 §2, 26-10-01-397 §1, 26-10-02-478 §1).
+	createdSandbox
+	// ownedRequest: the path names a secret request filed by a discobox the
+	// caller created — the request's owner (ADR 26-09-30-782 §2).
+	ownedRequest
+)
 
 // sandboxRole is the sandbox role. Adding a route here is widening what every
 // sandbox holding the discobox credential may do; ADR 0140 §4 lists it, and
@@ -93,17 +110,34 @@ var sandboxRole = []sandboxRoleRoute{
 	// Delivering a source into a discobox the sandbox created: the push into
 	// its origin, and the report that ends its wait (ADR 26-09-24-630 §2). Fetching
 	// from an origin is not delivery, and is not here.
-	{method: http.MethodGet, path: "sandboxes/*/git-origins/*/info/refs", service: "git-receive-pack", created: true},
-	{method: http.MethodPost, path: "sandboxes/*/git-origins/*/git-receive-pack", created: true},
-	{method: http.MethodPost, path: "sandboxes/*/complete-source-push", created: true},
-	// Secrets are listed so a request can be answered with one, or a new
-	// discobox given one: the listing carries names and bindings, never a
-	// value, and nothing in the role changes a secret.
+	{method: http.MethodGet, path: "sandboxes/*/git-origins/*/info/refs", service: "git-receive-pack", owner: createdSandbox},
+	{method: http.MethodPost, path: "sandboxes/*/git-origins/*/git-receive-pack", owner: createdSandbox},
+	{method: http.MethodPost, path: "sandboxes/*/complete-source-push", owner: createdSandbox},
+	// Reading and typing into the terminals of a discobox the sandbox created,
+	// one judged call at a time (ADR 26-10-01-397 §1). Attaching, and creating
+	// or ending an exec, are not here (§2).
+	{method: http.MethodGet, path: "sandboxes/*/execs", owner: createdSandbox},
+	{method: http.MethodGet, path: "sandboxes/*/execs/*/screen", owner: createdSandbox},
+	{method: http.MethodPost, path: "sandboxes/*/execs/*/wait", owner: createdSandbox},
+	{method: http.MethodPost, path: "sandboxes/*/execs/*/input", owner: createdSandbox},
+	// Starting, stopping, and restarting a discobox the sandbox created (ADR
+	// 26-10-02-478 §1). Archive, purge, repair, and upgrade change what exists,
+	// not whether it runs, and are not here (§2).
+	{method: http.MethodPost, path: "sandboxes/*/start", owner: createdSandbox},
+	{method: http.MethodPost, path: "sandboxes/*/stop", owner: createdSandbox},
+	{method: http.MethodPost, path: "sandboxes/*/restart", owner: createdSandbox},
+	// The secrets it was delegated, and no others (ADR 26-09-30-782 §3): the
+	// listing is filtered to them where it is served, so a discobox can name
+	// what it may hand on and see nothing else of the project's credentials.
+	// It carries names and bindings, never a value.
 	{method: http.MethodGet, path: "secrets"},
+	// The requests of the discoboxes it created, and no others (ADR
+	// 26-09-30-782 §2). The listing is filtered to them where it is served,
+	// since a route cannot filter what it answers with.
 	{method: http.MethodGet, path: "secret-requests"},
-	{method: http.MethodGet, path: "secret-requests/*"},
-	{method: http.MethodPost, path: "secret-requests/*/approve"},
-	{method: http.MethodPost, path: "secret-requests/*/deny"},
+	{method: http.MethodGet, path: "secret-requests/*", owner: ownedRequest},
+	{method: http.MethodPost, path: "secret-requests/*/approve", owner: ownedRequest},
+	{method: http.MethodPost, path: "secret-requests/*/deny", owner: ownedRequest},
 }
 
 func (a SandboxRoleAuthorizer) Authorize(r *http.Request) (bool, error) {
@@ -131,8 +165,12 @@ func (a SandboxRoleAuthorizer) Authorize(r *http.Request) (bool, error) {
 		if route.service != "" && r.URL.Query().Get("service") != route.service {
 			continue
 		}
-		if route.created {
-			return a.authorizeCreated(r, principal, strings.Split(rest, "/")[1])
+		named := strings.Split(rest, "/")[1:]
+		switch route.owner {
+		case createdSandbox:
+			return a.authorizeCreated(r, principal, named[0])
+		case ownedRequest:
+			return a.authorizeOwnedRequest(r, principal, named[0])
 		}
 		return true, nil
 	}
@@ -151,7 +189,36 @@ func (a SandboxRoleAuthorizer) authorizeCreated(r *http.Request, principal Princ
 		return false, authorizationError{status: http.StatusInternalServerError, err: err}
 	}
 	if target.CreatedBySandboxID == nil || *target.CreatedBySandboxID != principal.SandboxID {
-		return false, authorizationError{status: http.StatusForbidden, err: errors.New("a discobox delivers source only to a discobox it created")}
+		return false, authorizationError{status: http.StatusForbidden, err: errors.New("a discobox acts only on a discobox it created")}
+	}
+	return true, nil
+}
+
+// authorizeOwnedRequest allows a route on a secret request only when a
+// discobox the calling sandbox created filed it. A request a person or a pool
+// opened has no discobox, and one whose discobox is gone has no owner left:
+// both are a person's to answer.
+func (a SandboxRoleAuthorizer) authorizeOwnedRequest(r *http.Request, principal Principal, requestID string) (bool, error) {
+	notYours := authorizationError{status: http.StatusForbidden, err: errors.New("a discobox answers only the requests of discoboxes it created")}
+	req, err := a.Store.GetSecretRequest(r.Context(), principal.ProjectID, requestID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return false, authorizationError{status: http.StatusNotFound, err: errors.New("secret request not found")}
+		}
+		return false, authorizationError{status: http.StatusInternalServerError, err: err}
+	}
+	if req.SandboxID == "" {
+		return false, notYours
+	}
+	requester, err := a.Store.GetSandbox(r.Context(), principal.ProjectID, req.SandboxID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return false, notYours
+		}
+		return false, authorizationError{status: http.StatusInternalServerError, err: err}
+	}
+	if requester.CreatedBySandboxID == nil || *requester.CreatedBySandboxID != principal.SandboxID {
+		return false, notYours
 	}
 	return true, nil
 }

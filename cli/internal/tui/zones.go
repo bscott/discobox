@@ -46,6 +46,7 @@ const (
 	hitHarnessRow
 	hitSecretRow
 	hitRequestRow
+	hitAuditRow
 
 	// hitOptionRow is a row of the run options panel; hitOptionCycle is one of
 	// the ‹ › arrows on it, with delta saying which.
@@ -64,12 +65,10 @@ const (
 	// where the pointer is.
 	hitInput
 
-	// hitFolder is the header's folder filter, and hitServer the server filter
-	// beside it: each one the dropdown, closed.
-	hitFolder
-	hitServer
-	// hitTags is the header's tag filter, after the folder.
-	hitTags
+	// hitFilter is the header's filter, closed; hitFilterRow is one choice on
+	// its card, opened, by index.
+	hitFilter
+	hitFilterRow
 
 	// hitGit is the workspace header's git position and status. Pressing it
 	// opens the diff tool, the same as the leader's tools, diff chord.

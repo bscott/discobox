@@ -38,6 +38,95 @@ func TestResolveRunSourceCleanLocalBranch(t *testing.T) {
 	if source.NoLocalGitDirectory {
 		t.Fatalf("source = %#v, want a repository with its Git directory in place", source)
 	}
+	if source.UpstreamURL != "" {
+		t.Fatalf("upstream URL = %q, want none for a branch that tracks nothing", source.UpstreamURL)
+	}
+}
+
+// The remote the checked-out branch tracks travels with the source, whatever
+// it is called here, without the credentials written into it.
+func TestResolveRunSourceCarriesTheBranchsUpstreamURL(t *testing.T) {
+	repo := newRunSourceTestRepo(t)
+	git := runSourceTestGit(t, repo)
+	git("remote", "add", "fork", "https://x-access-token:secret@github.com/example/project.git")
+	git("config", "branch.feature-foo.remote", "fork")
+	git("config", "branch.feature-foo.merge", "refs/heads/feature-foo")
+	// The remote as written, not as this machine's config rewrites it.
+	git("config", "url.git@github.com:.insteadOf", "https://github.com/")
+
+	source, err := resolveRunSource(context.Background(), repo, runSourceOptions{IncludeDirty: IncludeDirtyAuto})
+	if err != nil {
+		t.Fatalf("resolveRunSource: %v", err)
+	}
+	if want := "https://github.com/example/project.git"; source.UpstreamURL != want {
+		t.Fatalf("upstream URL = %q, want %q", source.UpstreamURL, want)
+	}
+}
+
+// A remote written as an alias is only a URL once this machine's insteadOf
+// rewrites it, and a remote with several URLs fetches from the first.
+func TestResolveRunSourceResolvesAnAliasedUpstreamToItsFirstURL(t *testing.T) {
+	repo := newRunSourceTestRepo(t)
+	git := runSourceTestGit(t, repo)
+	git("config", "url.https://github.com/.insteadOf", "gh:")
+	git("remote", "add", "origin", "gh:example/project.git")
+	git("config", "--add", "remote.origin.url", "https://mirror.example.com/project.git")
+	git("config", "branch.feature-foo.remote", "origin")
+
+	source, err := resolveRunSource(context.Background(), repo, runSourceOptions{IncludeDirty: IncludeDirtyAuto})
+	if err != nil {
+		t.Fatalf("resolveRunSource: %v", err)
+	}
+	if want := "https://github.com/example/project.git"; source.UpstreamURL != want {
+		t.Fatalf("upstream URL = %q, want %q", source.UpstreamURL, want)
+	}
+}
+
+// A branch that tracks another local branch, or a remote that is a path on
+// this machine, has no upstream a sandbox could reach.
+func TestResolveRunSourceLeavesOutAnUpstreamTheSandboxCannotReach(t *testing.T) {
+	for name, configure := range map[string][]string{
+		"local branch": {"config", "branch.feature-foo.remote", "."},
+		"local path":   {"remote", "add", "elsewhere", "/srv/git/project.git"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := newRunSourceTestRepo(t)
+			git := runSourceTestGit(t, repo)
+			git(configure...)
+			if configure[0] == "remote" {
+				git("config", "branch.feature-foo.remote", "elsewhere")
+			}
+			source, err := resolveRunSource(context.Background(), repo, runSourceOptions{IncludeDirty: IncludeDirtyAuto})
+			if err != nil {
+				t.Fatalf("resolveRunSource: %v", err)
+			}
+			if source.UpstreamURL != "" {
+				t.Fatalf("upstream URL = %q, want none", source.UpstreamURL)
+			}
+		})
+	}
+}
+
+func TestNetworkRemoteURL(t *testing.T) {
+	//nolint:gosec // G101: fake credentials, here to prove they are stripped.
+	for in, want := range map[string]string{
+		"https://github.com/example/project.git":             "https://github.com/example/project.git",
+		"https://token@github.com/example/project.git":       "https://github.com/example/project.git",
+		"https://user:secret@github.com/example/project.git": "https://github.com/example/project.git",
+		"ssh://git:secret@github.com/example/project.git":    "ssh://git@github.com/example/project.git",
+		"git@github.com:example/project.git":                 "git@github.com:example/project.git",
+		"github.com:example/project.git":                     "github.com:example/project.git",
+		"file:///srv/git/project.git":                        "",
+		"/srv/git/project.git":                               "",
+		"../project":                                         "",
+		"./host:path":                                        "",
+		`C:\src\project`:                                     "",
+		"":                                                   "",
+	} {
+		if got := networkRemoteURL(in); got != want {
+			t.Errorf("networkRemoteURL(%q) = %q, want %q", in, got, want)
+		}
+	}
 }
 
 // A linked worktree's .git is a file naming the main checkout's Git directory.
@@ -282,6 +371,7 @@ func TestResolvedRunSourceConvertsToAPIGitSource(t *testing.T) {
 	source := resolvedRunSource{
 		Kind:           runSourceKindGit,
 		LocalDirectory: "/repo",
+		UpstreamURL:    "git@github.com:example/project.git",
 		Checkout: resolvedRunSourceCheckout{
 			Commit:  "abc123",
 			RefName: "feature-foo",
@@ -304,6 +394,9 @@ func TestResolvedRunSourceConvertsToAPIGitSource(t *testing.T) {
 	}
 	if apiSource.Kind != apiclientgen.GitSourceKindGit || apiSource.LocalDirectory.Value != "/repo" {
 		t.Fatalf("api source identity = %#v", apiSource)
+	}
+	if got := apiSource.UpstreamUrl.Or(""); got != "git@github.com:example/project.git" {
+		t.Fatalf("api upstream URL = %q", got)
 	}
 	checkout, ok := apiSource.Checkout.Get()
 	if !ok || checkout.Commit.Value != "abc123" || checkout.RefName.Value != "feature-foo" || checkout.RefType.Value != runSourceRefTypeBranch {

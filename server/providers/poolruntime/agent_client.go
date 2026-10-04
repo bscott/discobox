@@ -220,6 +220,7 @@ func (p *poolAgentClient) ListHTTPAudit(ctx context.Context, projectID string, q
 			BlockedReason:    e.BlockedReason.Or(""),
 			CacheHit:         e.CacheHit.Or(false),
 			SwappedUseIDs:    append([]string{}, e.SwappedUseIds...),
+			SwappedSecretIDs: append([]string{}, e.SwappedSecretIds...),
 			RequestBodyBytes: e.RequestBodyBytes.Or(0),
 			ResponseBytes:    e.ResponseBytes.Or(0),
 			Upgrade:          e.Upgrade.Or(false),
@@ -269,6 +270,7 @@ func httpAuditExchangeDetail(res *poolapimodel.PoolHTTPAuditExchangeDetail) (*sa
 			BlockedReason:    res.BlockedReason.Or(""),
 			CacheHit:         res.CacheHit.Or(false),
 			SwappedUseIDs:    append([]string{}, res.SwappedUseIds...),
+			SwappedSecretIDs: append([]string{}, res.SwappedSecretIds...),
 			RequestBodyBytes: res.RequestBodyBytes.Or(0),
 			ResponseBytes:    res.ResponseBytes.Or(0),
 			Upgrade:          res.Upgrade.Or(false),
@@ -833,6 +835,11 @@ func poolGitSource(in model.GitSource, dataKey string) (poolapimodel.GitSource, 
 		if in.LocalDirectory != nil {
 			out.LocalDirectory = poolclient.NewOptString(*in.LocalDirectory)
 		}
+	}
+	// Forwarded in both delivery modes: it is a network remote the sandbox
+	// itself fetches from, not a location the pool is asked to reach.
+	if in.UpstreamURL != nil && *in.UpstreamURL != "" {
+		out.UpstreamUrl = poolclient.NewOptString(*in.UpstreamURL)
 	}
 	if in.Checkout != nil {
 		checkout := poolapimodel.GitSourceCheckout{}

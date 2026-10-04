@@ -685,7 +685,7 @@ func TestTheComposerGrowsToThreeRowsAndThenScrolls(t *testing.T) {
 }
 
 // A menu's label column fits its longest label. The action menu's labels are a
-// word, but the folder dropdown's are paths, and a path cut off at a fixed
+// word, but the filter card's folders are paths, and a path cut off at a fixed
 // fourteen cells is not a path you can choose between.
 func TestMenuLabelsFitTheirContent(t *testing.T) {
 	t.Parallel()
@@ -695,15 +695,15 @@ func TestMenuLabelsFitTheirContent(t *testing.T) {
 	// on the filter rather than on an empty list.
 	send(t, m, keyPress("tab"), keyPress("enter"))
 
-	if m.dialog == nil {
-		t.Fatal("the dropdown should be open")
+	if m.dialog == nil || m.dialog.kind != dlgFilter {
+		t.Fatal("the filter card should be open")
 	}
 	view := m.dialog.view(m.st, &m.zones, 120, 40)
 	if !strings.Contains(view, long) {
-		t.Errorf("the dropdown truncated the path:\n%s", view)
+		t.Errorf("the card truncated the path:\n%s", view)
 	}
-	if !strings.Contains(view, "Enter shows that folder's discoboxes") {
-		t.Errorf("the dropdown should say what choosing a row does:\n%s", view)
+	if !strings.Contains(view, "Space marks") || !strings.Contains(view, "Enter picks it and shows") {
+		t.Errorf("the card should say what its keys do:\n%s", view)
 	}
 }
 

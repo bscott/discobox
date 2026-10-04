@@ -85,8 +85,8 @@ func TestJudgeAnswersFromTheHarness(t *testing.T) {
 			judge.Answer{Allow: true, Reason: "opening the PR it was approved for"}},
 		{"a refusal", `{"allow":false,"reason":"deleting a repository is not opening a PR"}`,
 			judge.Answer{Reason: "deleting a repository is not opening a PR"}},
-		{"an ask for the body", `{"need":{"body":"json"},"reason":"the operation is in the body"}`,
-			judge.Answer{Need: &judge.Need{Body: judge.FormJSON}, Reason: "the operation is in the body"}},
+		{"an ask for the body", `{"need":{"body":true},"reason":"the operation is in the body"}`,
+			judge.Answer{Need: &judge.Need{Body: true}, Reason: "the operation is in the body"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := newJudgeService(t, config.HarnessModeJudge, "#!/bin/sh\nprintf '%s\\n' '"+tc.said+"'\n")

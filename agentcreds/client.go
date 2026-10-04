@@ -42,7 +42,9 @@ func WithHTTPClient(client *http.Client) ClientOption {
 func NewClient(baseURL string, opts ...ClientOption) *Client {
 	c := &Client{
 		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		http:    &http.Client{Timeout: 30 * time.Second},
+		// No client-wide timeout: each call is bounded by its own (do), since
+		// a use waits on a judge and nothing else should wait that long.
+		http: &http.Client{},
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -55,7 +57,7 @@ func NewClient(baseURL string, opts ...ClientOption) *Client {
 // List returns the credentials the caller may use.
 func (c *Client) List(ctx context.Context) ([]Credential, error) {
 	var out ListResponse
-	if err := c.do(ctx, http.MethodGet, PathCredentials, nil, &out); err != nil {
+	if err := c.do(ctx, callTimeout, http.MethodGet, PathCredentials, nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Credentials, nil
@@ -64,36 +66,29 @@ func (c *Client) List(ctx context.Context) ([]Credential, error) {
 // Request asks for a credential and returns immediately.
 func (c *Client) Request(ctx context.Context, body RequestBody) (RequestStatus, error) {
 	var out RequestStatus
-	err := c.do(ctx, http.MethodPost, PathRequests, body, &out)
+	err := c.do(ctx, callTimeout, http.MethodPost, PathRequests, body, &out)
 	return out, err
 }
 
 // RequestStatus reads a request's current status.
 func (c *Client) RequestStatus(ctx context.Context, requestID string) (RequestStatus, error) {
 	var out RequestStatus
-	err := c.do(ctx, http.MethodGet, PathRequests+"/"+requestID, nil, &out)
+	err := c.do(ctx, callTimeout, http.MethodGet, PathRequests+"/"+requestID, nil, &out)
 	return out, err
 }
 
-// Get takes a value for one declared command.
+// Get takes a value for one declared command. It waits up to UseTimeout,
+// since the implementation may judge the command first.
 func (c *Client) Get(ctx context.Context, body UseBody) (UseResponse, error) {
 	var out UseResponse
-	err := c.do(ctx, http.MethodPost, PathUse, body, &out)
+	err := c.do(ctx, UseTimeout, http.MethodPost, PathUse, body, &out)
 	return out, err
-}
-
-// ReportDenial volunteers a verdict for a command the judge refused, which
-// never reached Get. Best-effort by contract (ADR 0091 §3): a caller may, and
-// the reference CLI does, ignore this call's own failure rather than let it
-// change what the caller reports for the refusal that prompted it.
-func (c *Client) ReportDenial(ctx context.Context, body DenialReport) error {
-	return c.do(ctx, http.MethodPost, PathDenials, body, nil)
 }
 
 // Trusts returns the host trusts the caller holds.
 func (c *Client) Trusts(ctx context.Context) ([]Trust, error) {
 	var out TrustListResponse
-	if err := c.do(ctx, http.MethodGet, PathTrusts, nil, &out); err != nil {
+	if err := c.do(ctx, callTimeout, http.MethodGet, PathTrusts, nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Trusts, nil
@@ -102,14 +97,14 @@ func (c *Client) Trusts(ctx context.Context) ([]Trust, error) {
 // RequestTrust asks for a host to be trusted and returns immediately.
 func (c *Client) RequestTrust(ctx context.Context, body TrustRequestBody) (TrustRequestStatus, error) {
 	var out TrustRequestStatus
-	err := c.do(ctx, http.MethodPost, PathTrustRequests, body, &out)
+	err := c.do(ctx, callTimeout, http.MethodPost, PathTrustRequests, body, &out)
 	return out, err
 }
 
 // TrustRequestStatus reads a trust request's current status.
 func (c *Client) TrustRequestStatus(ctx context.Context, requestID string) (TrustRequestStatus, error) {
 	var out TrustRequestStatus
-	err := c.do(ctx, http.MethodGet, PathTrustRequests+"/"+requestID, nil, &out)
+	err := c.do(ctx, callTimeout, http.MethodGet, PathTrustRequests+"/"+requestID, nil, &out)
 	return out, err
 }
 
@@ -152,10 +147,15 @@ func waitFor[T any](ctx context.Context, interval time.Duration, poll func() (T,
 	}
 }
 
-func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
+// callTimeout bounds every call but a use, which waits for UseTimeout.
+const callTimeout = 30 * time.Second
+
+func (c *Client) do(ctx context.Context, timeout time.Duration, method, path string, body, out any) error {
 	if c.baseURL == "" {
 		return fmt.Errorf("%w: no credentials service URL configured", ErrInvalid)
 	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	var reader io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -185,7 +185,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	if out == nil {
 		return nil
 	}
-	return json.NewDecoder(io.LimitReader(resp.Body, maxBodyBytes)).Decode(out)
+	return json.NewDecoder(io.LimitReader(resp.Body, MaxBodyBytes)).Decode(out)
 }
 
 // statusError maps a response back onto the package's sentinel errors, so a
@@ -196,7 +196,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 // implementation that classified its own failure knows more than the status
 // line does, and the code is the part a caller branches on.
 func statusError(resp *http.Response) error {
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, MaxBodyBytes))
 	message := strings.TrimSpace(string(data))
 	var parsed ErrorResponse
 	if json.Unmarshal(data, &parsed) == nil && strings.TrimSpace(parsed.Error) != "" {

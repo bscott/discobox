@@ -360,19 +360,20 @@ func (h *httpProxy) refuseUntrusted(req *http.Request, meta *requestMeta, cause 
 	meta.answered = true
 	meta.span.SetAttributes(attribute.Bool("proxy.blocked", true), attribute.Int("http.response.status_code", http.StatusBadGateway))
 	h.audit.RecordHTTP(audit.HTTPEvent{
-		Context:        meta.ctx,
-		Time:           time.Now().UTC(),
-		ClientID:       meta.client.ID,
-		ClientSubject:  meta.client.Subject,
-		ClientSerial:   meta.client.Serial,
-		Method:         req.Method,
-		URL:            meta.url(req),
-		Host:           req.Host,
-		Status:         http.StatusBadGateway,
-		Blocked:        true,
-		BlockedReason:  reason + ": " + cause.Error(),
-		SwappedUseIDs:  meta.swappedUseIDs,
-		RequestHeaders: req.Header,
+		Context:          meta.ctx,
+		Time:             time.Now().UTC(),
+		ClientID:         meta.client.ID,
+		ClientSubject:    meta.client.Subject,
+		ClientSerial:     meta.client.Serial,
+		Method:           req.Method,
+		URL:              meta.url(req),
+		Host:             req.Host,
+		Status:           http.StatusBadGateway,
+		Blocked:          true,
+		BlockedReason:    reason + ": " + cause.Error(),
+		SwappedUseIDs:    meta.swappedUseIDs,
+		SwappedSecretIDs: meta.swappedSecretIDs,
+		RequestHeaders:   req.Header,
 	})
 	meta.span.End()
 	body := fmt.Sprintf("blocked by proxy: %s for %s (%v).\n"+

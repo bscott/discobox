@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -117,8 +116,8 @@ func (a *App) newSecretGrantListCommand() *cobra.Command {
 }
 
 func (a *App) newSecretGrantCreateCommand() *cobra.Command {
-	var secretRef, scope, scopeKey, host, envVar, ttl string
-	var uses []string
+	var secretRef, scope, scopeKey, envVar, ttl string
+	var uses, hosts []string
 	var delegate bool
 	cmd := &cobra.Command{Use: "create --secret SECRET_ID --scope SCOPE", Short: "Create a standing grant (pre-approval)", RunE: func(cmd *cobra.Command, _ []string) error {
 		client, err := a.apiClient()
@@ -141,9 +140,7 @@ func (a *App) newSecretGrantCreateCommand() *cobra.Command {
 		if strings.TrimSpace(scopeKey) != "" {
 			body.SetScopeKey(apiclientgen.NewOptString(strings.TrimSpace(scopeKey)))
 		}
-		if strings.TrimSpace(host) != "" {
-			body.SetHost(apiclientgen.NewOptString(strings.TrimSpace(host)))
-		}
+		body.Hosts = grantHosts(hosts)
 		seconds, given, err := grantLifetime(cmd.Flags(), "grant-ttl", ttl)
 		if err != nil {
 			return err
@@ -180,7 +177,7 @@ func (a *App) newSecretGrantCreateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&secretRef, "secret", "", "Secret to grant, by name or ID")
 	cmd.Flags().StringVar(&scope, "scope", "", "Grant scope: sandbox, harnessConfig, or project")
 	cmd.Flags().StringVar(&scopeKey, "scope-key", "", "Discobox ID or harness config ID the scope resolves against (defaults to project ID for project scope)")
-	cmd.Flags().StringVar(&host, "host", "", "Limit the grant to a host; defaults to the secret's host")
+	cmd.Flags().StringSliceVar(&hosts, "hosts", nil, "Limit the grant to these hosts, comma-separated or repeated; defaults to the secret's host")
 	cmd.Flags().StringVar(&ttl, "grant-ttl", "", grantTTLCreateFlagUsage)
 	cmd.Flags().StringArrayVar(&uses, "use", nil, "What the credential may be used for (repeatable). With uses the credential is never injected into the discobox: only `discobox-access` can take it, one use at a time. Sandbox scope and a host are required")
 	cmd.Flags().StringVar(&envVar, "env-var", "", "Environment variable an agent receives the credential in; required with --use")
@@ -274,8 +271,12 @@ func (a *App) newSecretGetCommand() *cobra.Command {
 	}}
 }
 
+// secretFormatFlagUsage is the help for --format on create and update: the
+// template grammar, since nothing else in the CLI shows it.
+const secretFormatFlagUsage = `Shape of the sentinels that stand in for this secret: literal text with {charset:length} tokens, such as 'sk-ant-oat01-{base64url:95}'. Charsets: digits, hex, HEX, lower, upper, alnum, base62, base32, base64url, base64. Default: read from the value` //nolint:gosec // A template for sentinels, not a credential.
+
 func (a *App) newSecretCreateCommand() *cobra.Command {
-	var name, secretType, host, ttl, wellKnownID string
+	var name, secretType, host, ttl, wellKnownID, format string
 	var value secretValueOptions
 	var renewal secretRenewalOptions
 	cmd := &cobra.Command{Use: "create --name NAME --type TYPE", Short: "Create a secret", Long: `Create a secret.
@@ -285,7 +286,11 @@ machine (--refresh-command), which is run now for the first value and offered
 to whoever renews the token when it goes stale. --well-known fills in the name,
 host, and command a well-known credential suggests, such as com.github.api's
 'gh auth token', and makes the secret the one that answers requests for that
-ID; --token instead stores the value given and no command.`, RunE: func(cmd *cobra.Command, _ []string) error {
+ID; --token instead stores the value given and no command.
+
+A sentinel stands in for the secret inside a discobox, shaped like the value so
+a client that checks a key's prefix accepts it. --format sets that shape when
+reading it from the value gets it wrong, and is kept when the value changes.`, RunE: func(cmd *cobra.Command, _ []string) error {
 		client, err := a.apiClient()
 		if err != nil {
 			return err
@@ -300,6 +305,9 @@ ID; --token instead stores the value given and no command.`, RunE: func(cmd *cob
 		body, err := createSecretBody(cmd.Flags(), name, secretType, host, ttl, value)
 		if err != nil {
 			return err
+		}
+		if f := strings.TrimSpace(format); f != "" {
+			body.SetFormat(apiclientgen.NewOptString(f))
 		}
 		if id := strings.TrimSpace(wellKnownID); id != "" {
 			body.SetWellKnownId(apiclientgen.NewOptString(id))
@@ -336,6 +344,7 @@ ID; --token instead stores the value given and no command.`, RunE: func(cmd *cob
 	cmd.Flags().StringVar(&secretType, "type", "", "Secret type: token or oauth (default token)")
 	cmd.Flags().StringVar(&host, "host", "", "Optional host hint, such as github.com")
 	cmd.Flags().StringVar(&ttl, "max-grant-ttl", "", maxGrantTTLCreateFlagUsage)
+	cmd.Flags().StringVar(&format, "format", "", secretFormatFlagUsage)
 	cmd.Flags().StringVar(&wellKnownID, "well-known", "", "Well-known credential the secret answers, such as com.github.api; fills in the name, host, and refresh command it suggests")
 	addSecretValueFlags(cmd.Flags(), &value)
 	addSecretRenewalFlags(cmd.Flags(), &renewal)
@@ -373,7 +382,7 @@ func applyWellKnownDefaults(flags *pflag.FlagSet, id string, name, host *string,
 }
 
 func (a *App) newSecretUpdateCommand() *cobra.Command {
-	var name, host, ttl string
+	var name, host, ttl, format string
 	var value secretValueOptions
 	var renewal secretRenewalOptions
 	cmd := &cobra.Command{Use: "update SECRET_ID", Short: "Update a secret", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -392,6 +401,9 @@ func (a *App) newSecretUpdateCommand() *cobra.Command {
 		body, err := updateSecretBody(cmd.Flags(), name, host, ttl, value)
 		if err != nil {
 			return err
+		}
+		if cmd.Flags().Changed("format") {
+			body.SetFormat(apiclientgen.NewOptString(strings.TrimSpace(format)))
 		}
 		if err := renewal.apply(cmd.Flags(), func(command []string) {
 			body.SetRefreshCommand(apiclientgen.NewOptNilStringArray(command))
@@ -413,6 +425,7 @@ func (a *App) newSecretUpdateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "Secret name")
 	cmd.Flags().StringVar(&host, "host", "", "Optional host hint, such as github.com")
 	cmd.Flags().StringVar(&ttl, "max-grant-ttl", "", maxGrantTTLUpdateFlagUsage)
+	cmd.Flags().StringVar(&format, "format", "", secretFormatFlagUsage+`; "" goes back to that. A running discobox keeps the sentinel already in its environment`)
 	addSecretValueFlags(cmd.Flags(), &value)
 	addSecretRenewalFlags(cmd.Flags(), &renewal)
 	return cmd
@@ -542,8 +555,8 @@ func (a *App) newSecretRequestCreateCommand() *cobra.Command {
 }
 
 func (a *App) newSecretRequestApproveCommand() *cobra.Command {
-	var secretID, scope, host, ttl string
-	var uses []string
+	var secretID, scope, ttl string
+	var uses, hosts []string
 	cmd := &cobra.Command{Use: "approve REQUEST_ID [--secret-id SECRET_ID]", Short: "Approve a secret request", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := a.apiClient()
 		if err != nil {
@@ -568,21 +581,17 @@ func (a *App) newSecretRequestApproveCommand() *cobra.Command {
 			}
 			body.SetSecretId(apiclientgen.NewOptString(selectedSecretID))
 		}
-		// The lifetime is always sent. Left out, the server would take the
-		// secret's own limit — forever, for a credential nobody capped — and
-		// approving here would mint a different grant from approving the same
-		// request in the window, which opens on the same lifetime.
+		// The lifetime is sent only when one was given. Left out, the server
+		// grants what the agent asked for, else an hour, within the secret's
+		// limit — what the window opens on — so approving reads nothing first
+		// (ADR 26-09-30-782 §4).
 		seconds, given, err := grantLifetime(cmd.Flags(), "grant-ttl", ttl)
 		if err != nil {
 			return err
 		}
-		if !given {
-			seconds, err = requestedGrantLifetime(cmd.Context(), client, projectID, requestID)
-			if err != nil {
-				return err
-			}
+		if given {
+			body.SetGrantTTLSeconds(apiclientgen.NewOptInt64(seconds))
 		}
-		body.SetGrantTTLSeconds(apiclientgen.NewOptInt64(seconds))
 		if strings.TrimSpace(scope) != "" {
 			typedScope, err := approveSecretRequestBodyScope(scope)
 			if err != nil {
@@ -590,9 +599,7 @@ func (a *App) newSecretRequestApproveCommand() *cobra.Command {
 			}
 			body.SetScope(apiclientgen.NewOptApproveSecretRequestBodyScope(typedScope))
 		}
-		if trimmed := strings.TrimSpace(host); trimmed != "" {
-			body.SetHost(apiclientgen.NewOptString(trimmed))
-		}
+		body.Hosts = grantHosts(hosts)
 		// Uses are only ever narrowed here. Omitting --use approves what the
 		// agent asked for as written, which is the common case: the approver read
 		// the request and said yes to it.
@@ -615,34 +622,23 @@ func (a *App) newSecretRequestApproveCommand() *cobra.Command {
 	}}
 	cmd.Flags().StringVar(&secretID, "secret-id", "", "Secret to grant, by name or ID")
 	cmd.Flags().StringVar(&scope, "scope", "", "Grant scope: sandbox, harnessConfig, or project (defaults to sandbox for sandbox requests, else project)")
-	cmd.Flags().StringVar(&host, "host", "", "Host the grant is limited to (defaults to the host the request named)")
+	cmd.Flags().StringSliceVar(&hosts, "hosts", nil, "Hosts the grant is limited to, comma-separated or repeated; defaults to the hosts the request named")
 	cmd.Flags().StringArrayVar(&uses, "use", nil, "Replace an agent's declared uses with these (repeatable); omit to approve them as asked")
 	cmd.Flags().StringVar(&ttl, "grant-ttl", "", grantTTLApproveFlagUsage)
 	return cmd
 }
 
-// requestedGrantLifetime is what approving a request grants for when
-// --grant-ttl is left out: the lifetime the agent asked for, or
-// lifetime.Default when it asked for nothing in particular. It is the lifetime
-// the window opens on for the same request, so the two mint the same grant.
-func requestedGrantLifetime(ctx context.Context, client *apiclientgen.Client, projectID, requestID string) (int64, error) {
-	res, err := client.GetSecretRequest(ctx, apiclientgen.GetSecretRequestParams{ProjectId: projectID, RequestId: requestID})
-	if err != nil {
-		return 0, err
+// grantHosts are the --hosts values as a body takes them: trimmed, with empty
+// ones dropped. None at all is nil, which leaves the list out and the server
+// its default.
+func grantHosts(values []string) []string {
+	var hosts []string
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			hosts = append(hosts, value)
+		}
 	}
-	request, err := expectResponse[apimodel.SecretRequest](res)
-	if err != nil {
-		return 0, err
-	}
-	// Through FromRequest, like every other reader of an ask. A stored value
-	// outside what an agent may ask for is no ask at all, and must not mint
-	// here what the window, reading the same row, would refuse to open on —
-	// this is the path that hands out the grant, so it is the last place that
-	// should take the number on trust.
-	if asked := lifetime.FromRequest(request.GrantTTLSeconds.Or(0)); asked > 0 {
-		return lifetime.Seconds(asked), nil
-	}
-	return lifetime.Seconds(lifetime.Default), nil
+	return hosts
 }
 
 func approveSecretRequestBodyScope(value string) (apiclientgen.ApproveSecretRequestBodyScope, error) {
@@ -701,12 +697,12 @@ func addSecretValueFlags(flags *pflag.FlagSet, opts *secretValueOptions) {
 // window's picker offers (see cli/internal/lifetime).
 //
 // Each command says what leaving its flag out means, because they differ:
-// approving a request grants for what the agent asked, else lifetime.Default,
+// approving a request grants for what the agent asked, else agentcreds.DefaultGrantTTL,
 // as the window does; a
 // standing grant takes the secret's limit; a new secret's limit is the
 // server's default; and update leaves the limit as it is.
 const (
-	grantTTLApproveFlagUsage   = "How long the grant lives: 1h, 90m, 3d, 2w, 1mo, or forever (default: what the agent asked for, else 1h; a secret whose limit is shorter refuses the default, so pass one within it)"
+	grantTTLApproveFlagUsage   = "How long the grant lives: 1h, 90m, 3d, 2w, 1mo, or forever (default: what the agent asked for, else 1h, within the secret's limit)"
 	grantTTLCreateFlagUsage    = "How long the grant lives: 1h, 90m, 3d, 2w, 1mo, or forever (default: the secret's limit)"
 	maxGrantTTLCreateFlagUsage = "Longest a grant on this secret may live: 1h, 3d, 2w, 1mo, or forever (default 1h)"
 	maxGrantTTLUpdateFlagUsage = "Longest a grant on this secret may live: 1h, 3d, 2w, 1mo, or forever (omit to leave it as it is)"

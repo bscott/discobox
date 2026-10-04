@@ -562,38 +562,114 @@ func shellQuote(s string) string {
 }
 
 // wrap word wraps while honoring existing newlines, so text already laid out
-// in columns — the help — keeps its alignment.
+// in columns — the help, a record's fields — keeps its alignment. Nothing is
+// lost to the width: see wrapLine.
 func wrap(s string, width int) []string {
 	if width < 4 {
 		width = 4
 	}
 	var out []string
 	for _, para := range strings.Split(strings.TrimRight(s, "\n"), "\n") {
-		if para == "" {
-			out = append(out, "")
-			continue
-		}
 		if lipgloss.Width(para) <= width {
 			out = append(out, para)
 			continue
 		}
-		line := ""
-		for _, word := range strings.Fields(para) {
-			switch {
-			case line == "":
-				line = word
-			case lipgloss.Width(line)+1+lipgloss.Width(word) <= width:
-				line += " " + word
-			default:
-				out = append(out, line)
-				line = word
-			}
-		}
-		if line != "" {
-			out = append(out, line)
-		}
+		out = append(out, wrapLine(para, width)...)
 	}
 	return out
+}
+
+// wrapLine breaks one line too wide for width, and loses none of it.
+//
+// A word wider than the whole line — a URL, a header value, a token, a JSON
+// string — is broken where the line runs out rather than cut: a card that
+// drops the end of a value is a card that shows a different value.
+//
+// The spacing inside the line is kept, and the rows it continues onto hang
+// under its second column: what follows the first run of two or more spaces,
+// which is where the value of a `label:  value` row starts and the description
+// of a key in the help. A line with no second column hangs under its own
+// indentation, so indented JSON stays indented. A hang past half the width
+// would leave too little to hang, and falls back to less.
+func wrapLine(line string, width int) []string {
+	indent := len(line) - len(strings.TrimLeft(line, " "))
+	hang := indent
+	if gap := strings.Index(line[indent:], "  "); gap > 0 {
+		if rest := strings.TrimLeft(line[indent+gap:], " "); rest != "" {
+			hang = lipgloss.Width(line[:len(line)-len(rest)])
+		}
+	}
+	if hang > width/2 {
+		hang = indent
+	}
+	if hang > width/2 {
+		hang = 0
+	}
+	prefix := strings.Repeat(" ", hang)
+
+	var out []string
+	cur, curW := "", 0
+	started := false // whether the row in progress holds any text yet
+	flush := func() {
+		out = append(out, cur)
+		cur, curW, started = prefix, hang, false
+	}
+	space := ""
+	for _, tok := range spaceRuns(line) {
+		if strings.HasPrefix(tok, " ") {
+			space = tok
+			continue
+		}
+		word, w, sw := tok, lipgloss.Width(tok), len(space)
+		if !started && len(out) > 0 {
+			// A continuation starts at its hang, not after the spaces that
+			// happened to fall at the break.
+			space, sw = "", 0
+		}
+		// A word too wide for a fresh row as well is broken where it stands,
+		// so a long value starts beside its label rather than under it.
+		if curW+sw+w > width && started && w <= width-hang {
+			flush()
+			space, sw = "", 0
+		}
+		cur, curW, space = cur+space, curW+sw, ""
+		if curW+w > width {
+			// Broken in one pass over the word, never by cutting what is left
+			// of it again for each row: a body can be a megabyte on one line,
+			// and re-cutting it per row is minutes, not milliseconds.
+			if room := width - curW; room > 0 {
+				cur += ansi.Cut(word, 0, room)
+				word = ansi.TruncateLeft(word, room, "")
+			}
+			flush()
+			rows := strings.Split(ansi.Hardwrap(word, width-hang, false), "\n")
+			for _, row := range rows[:len(rows)-1] {
+				cur += row
+				flush()
+			}
+			word = rows[len(rows)-1]
+			w = lipgloss.Width(word)
+		}
+		cur, curW, started = cur+word, curW+w, true
+	}
+	if started {
+		out = append(out, cur)
+	}
+	return out
+}
+
+// spaceRuns splits a line into runs of spaces and runs of everything else,
+// in order, so joining them gives the line back.
+func spaceRuns(line string) []string {
+	var runs []string
+	start := 0
+	for i := 1; i <= len(line); i++ {
+		if i == len(line) || (line[i] == ' ') != (line[start] == ' ') {
+			runs = append(runs, line[start:i])
+			start = i
+		}
+	}
+	return runs
 }
 
 func itoa(n int) string { return fmt.Sprintf("%d", n) }

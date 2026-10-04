@@ -3,12 +3,15 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	serverapi "github.com/discobox-ai/discobox/api/gen"
 	"github.com/discobox-ai/discobox/judge"
+	"github.com/discobox-ai/discobox/pool-agent/poolauth"
+	"github.com/discobox-ai/discobox/server/internal/auth"
 	"github.com/discobox-ai/discobox/server/internal/model"
 	svcapi "github.com/discobox-ai/discobox/server/internal/services"
 	"github.com/discobox-ai/discobox/server/internal/store"
@@ -149,10 +152,6 @@ func (fakeSecretService) GetSandboxCredentialRequest(context.Context, string, st
 	return &model.SecretRequest{ID: "sreq-1", Status: model.SecretRequestStatusPending}, nil, nil
 }
 
-func (fakeSecretService) RecordCredentialVerdict(context.Context, string, svcapi.RecordCredentialVerdictBody) error {
-	return nil
-}
-
 func (fakeSecretService) ListCredentialVerdicts(context.Context, string, store.CredentialVerdictFilter) ([]model.CredentialVerdict, error) {
 	return nil, nil
 }
@@ -179,7 +178,7 @@ func fakeSecretRequest() model.SecretRequest {
 		ProjectID:   "project-1",
 		RequestedBy: "user-1",
 		Type:        model.SecretTypeToken,
-		Host:        "github.com",
+		Hosts:       []string{"api.github.com", "api.githubcopilot.com"},
 		SecretID:    "secret-1",
 		Status:      model.SecretRequestStatusApproved,
 		GrantID:     "grant-1",
@@ -196,7 +195,7 @@ func fakeSecretGrant() model.SecretGrant {
 		SecretID:  "secret-1",
 		Scope:     model.SecretGrantScopeProject,
 		ScopeKey:  "project-1",
-		Host:      "github.com",
+		Hosts:     []string{"api.github.com", "api.githubcopilot.com"},
 		GrantedAt: now,
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -334,6 +333,30 @@ func TestListCredentialVerdictsReturnsEveryField(t *testing.T) {
 	}
 }
 
+// A Jev verdict's model and probabilities reach the response, since the
+// verdict was decided from them (ADR 26-10-01-324 §6).
+func TestListCredentialVerdictsReturnsAJevVerdictsFields(t *testing.T) {
+	var got store.CredentialVerdictFilter
+	h := New(svcapi.Services{Secrets: capturingVerdictService{filter: &got, rows: []model.CredentialVerdict{{
+		ID: "cv_3", ProjectID: "project-1", Kind: model.CredentialVerdictKindRequest, Origin: model.CredentialVerdictOriginJudge,
+		SandboxID: "sbx_a", UseID: "use_1", Round: 1, Allow: true, Reason: "Allowed", PromptVersion: "jev-1",
+		Model: "jev-1.13.0", Probabilities: map[string]float64{"within": 0.93, "claims_approval": 0.01},
+	}}}})
+	res, err := h.ListCredentialVerdicts(context.Background(), serverapi.ListCredentialVerdictsParams{ProjectId: "project-1"})
+	if err != nil {
+		t.Fatalf("ListCredentialVerdicts() error = %v", err)
+	}
+	body, ok := res.(*serverapi.ListCredentialVerdictsBody)
+	if !ok || len(body.CredentialVerdicts) != 1 {
+		t.Fatalf("response = %#v, want the one verdict", res)
+	}
+	v := body.CredentialVerdicts[0]
+	said := v.Probabilities.Or(nil)
+	if v.Model.Or("") != "jev-1.13.0" || said["within"] != 0.93 || said["claims_approval"] != 0.01 {
+		t.Fatalf("verdict lost Jev's model or what it said: %+v", v)
+	}
+}
+
 // A request verdict's own fields reach the response too: the evidence, the
 // answer that asked rather than decided, and the judge that gave it.
 func TestListCredentialVerdictsReturnsARequestVerdictsFields(t *testing.T) {
@@ -343,7 +366,7 @@ func TestListCredentialVerdictsReturnsARequestVerdictsFields(t *testing.T) {
 		SandboxID: "sbx_a", UseID: "use_1",
 		Request: &judge.Request{Method: "POST", URL: "https://api.github.com/repos/org/repo/pulls",
 			Body: &judge.Body{MediaType: "application/json", Length: 42}},
-		Round: 1, Need: &judge.Need{Body: judge.FormJSON, Bytes: 512}, Reason: "the operation is in the body",
+		Round: 1, Need: &judge.Need{Body: true, Bytes: 512}, Reason: "the operation is in the body",
 		Role: judge.Role, Prompt: "{}", PromptVersion: judge.PromptVersion, LatencyMS: 1500,
 		JudgeSandboxID: "sbx_judge", HarnessConfigID: "hc_1", Image: "harness:1", ImageDigest: "sha256:one",
 	}}}})
@@ -362,10 +385,65 @@ func TestListCredentialVerdictsReturnsARequestVerdictsFields(t *testing.T) {
 	if v.Kind.Or("") != serverapi.CredentialVerdictKindRequest || v.Origin.Or("") != serverapi.CredentialVerdictOriginJudge ||
 		!hasRequest || request.Method != "POST" || request.URL != "https://api.github.com/repos/org/repo/pulls" ||
 		!hasBody || requestBody.Length.Or(0) != 42 || v.Round.Or(0) != 1 ||
-		!hasNeed || need.Body != serverapi.JudgeNeedBodyJSON || need.Bytes.Or(0) != 512 ||
+		!hasNeed || !need.Body || need.Bytes.Or(0) != 512 ||
 		v.PromptVersion.Or("") != judge.PromptVersion || v.LatencyMs.Or(0) != 1500 ||
 		v.JudgeSandboxId.Or("") != "sbx_judge" || v.HarnessConfigId.Or("") != "hc_1" ||
 		v.Image.Or("") != "harness:1" || v.ImageDigest.Or("") != "sha256:one" {
 		t.Fatalf("request verdict lost a field on the way out: %+v", v)
+	}
+}
+
+// resolvingSecretService approves every resolve with one secret's value.
+type resolvingSecretService struct{ fakeSecretService }
+
+func (resolvingSecretService) ResolveSandboxSecret(context.Context, string, string, string, string) (*model.SandboxSecretResolution, error) {
+	return &model.SandboxSecretResolution{
+		Status:   model.SecretRequestStatusApproved,
+		Value:    &model.SecretValue{Token: "real-token"},
+		SecretID: "sec_1",
+	}, nil
+}
+
+// An approved answer names the secret it is, so the pool's proxy can record
+// which secret a request spent (ADR 26-10-01-240).
+func TestResolveSandboxSecretNamesTheSecret(t *testing.T) {
+	h := New(svcapi.Services{Secrets: resolvingSecretService{}})
+	ctx := auth.WithPrincipal(context.Background(), auth.Principal{
+		Type: auth.PrincipalTypePool, PoolID: "pool-1", Scopes: []string{poolauth.ScopeSecretResolve},
+	})
+	res, err := h.ResolveSandboxSecret(ctx, &serverapi.ResolveSandboxSecretBody{SandboxId: "sb-1", Sentinel: "SENT", Host: "api.example.com"}, serverapi.ResolveSandboxSecretParams{PoolId: "pool-1"})
+	if err != nil {
+		t.Fatalf("ResolveSandboxSecret() error = %v", err)
+	}
+	body, ok := res.(*serverapi.ResolveSandboxSecretResponse)
+	if !ok {
+		t.Fatalf("response = %T, want the resolution", res)
+	}
+	if body.Status != serverapi.ResolveSandboxSecretResponseStatusApproved || body.SecretId.Or("") != "sec_1" {
+		t.Fatalf("resolution = %+v, want approved and naming sec_1", body)
+	}
+}
+
+// A grant and a request carry their hosts (ADR 26-10-02-393).
+func TestSecretGrantsAndRequestsCarryTheirHosts(t *testing.T) {
+	h := New(svcapi.Services{Secrets: fakeSecretService{}})
+	ctx := context.Background()
+	want := []string{"api.github.com", "api.githubcopilot.com"}
+
+	listRes, err := h.ListSecretGrants(ctx, serverapi.ListSecretGrantsParams{ProjectId: "project-1"})
+	if err != nil {
+		t.Fatalf("list grants: %v", err)
+	}
+	grants := listRes.(*serverapi.ListSecretGrantsBody).SecretGrants
+	if len(grants) != 1 || !slices.Equal(grants[0].Hosts, want) {
+		t.Fatalf("grants = %+v, want hosts %q", grants, want)
+	}
+
+	getRes, err := h.GetSecretRequest(ctx, serverapi.GetSecretRequestParams{ProjectId: "project-1", RequestId: "request-1"})
+	if err != nil {
+		t.Fatalf("get request: %v", err)
+	}
+	if request := getRes.(*serverapi.SecretRequest); !slices.Equal(request.Hosts, want) {
+		t.Fatalf("request = %+v, want hosts %q", request, want)
 	}
 }

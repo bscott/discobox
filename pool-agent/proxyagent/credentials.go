@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/discobox-ai/discobox/agentcreds"
+	"github.com/discobox-ai/discobox/judge"
 	"github.com/discobox-ai/discobox/wellknown"
 )
 
@@ -34,6 +35,13 @@ import (
 // process open.
 const credentialBrokerTimeout = 15 * time.Second
 
+// credentialUseTimeout bounds a use, which waits on the project's judge before
+// anything is minted (ADR 26-09-22-838 §3). It allows the judge's whole
+// deadline and the calls around it, and stays inside what the sandbox waits
+// (agentcreds.UseTimeout), so a judge that takes its time is answered with its
+// sentence rather than the sandbox giving up first.
+const credentialUseTimeout = judgeHTTPTimeout + credentialBrokerTimeout
+
 // controlPlaneCredentials calls the control plane's agent credentials broker
 // routes with the scoped token from ResolveContextFile — the same file the
 // sentinel resolver reads, re-read per call so a token refresh takes effect
@@ -51,7 +59,7 @@ type credentialUseDoc struct {
 type credentialDoc struct {
 	Name      string             `json:"name"`
 	EnvVar    string             `json:"envVar"`
-	Host      string             `json:"host"`
+	Hosts     []string           `json:"hosts,omitempty"`
 	SecretID  string             `json:"secretId"`
 	GrantID   string             `json:"grantId"`
 	Sentinel  string             `json:"sentinel"`
@@ -64,20 +72,15 @@ type listCredentialsDoc struct {
 	Credentials []credentialDoc `json:"credentials"`
 }
 
-type credentialVerdictDoc struct {
-	Allow     bool   `json:"allow"`
-	Reason    string `json:"reason,omitempty"`
-	Role      string `json:"role"`
-	Prompt    string `json:"prompt"`
-	LatencyMs int64  `json:"latencyMs,omitempty"`
-}
-
-type recordCredentialVerdictDoc struct {
-	SandboxID   string               `json:"sandboxId"`
-	UseID       string               `json:"useId"`
-	Command     []string             `json:"command,omitempty"`
-	Verdict     credentialVerdictDoc `json:"verdict"`
-	Volunteered bool                 `json:"volunteered"`
+// commandAskDoc is a command a sandbox is about to run, as the control plane
+// is asked about it (ADR 26-09-22-838 §3). Everything in it but the sandbox
+// is the sandbox's word.
+type commandAskDoc struct {
+	SandboxID string          `json:"sandboxId"`
+	UseID     string          `json:"useId"`
+	Command   []string        `json:"command"`
+	Stdin     *judge.Input    `json:"stdin,omitempty"`
+	Reported  *judge.Reported `json:"reported,omitempty"`
 }
 
 type createCredentialRequestDoc struct {
@@ -85,7 +88,7 @@ type createCredentialRequestDoc struct {
 	ID              string             `json:"id,omitempty"`
 	Name            string             `json:"name"`
 	EnvVar          string             `json:"envVar"`
-	Host            string             `json:"host"`
+	Hosts           []string           `json:"hosts,omitempty"`
 	Justification   string             `json:"justification,omitempty"`
 	Uses            []credentialUseDoc `json:"uses"`
 	GrantTTLSeconds int64              `json:"grantTTLSeconds,omitempty"`
@@ -120,27 +123,6 @@ func (c *controlPlaneCredentials) requestStatus(ctx context.Context, sandboxID, 
 	path := "sandbox-credential-requests/" + url.PathEscape(requestID)
 	err := c.do(ctx, http.MethodGet, path, query, nil, &out)
 	return out, err
-}
-
-// recordVerdict persists one judge decision to the control plane (ADR 0091).
-// volunteered is false for a verdict recorded on the same call that mints a
-// value, and true for one a sandbox reports on its own after the judge
-// refused and no value was ever taken.
-func (c *controlPlaneCredentials) recordVerdict(ctx context.Context, sandboxID, useID string, command []string, verdict agentcreds.Verdict, volunteered bool) error {
-	body := recordCredentialVerdictDoc{
-		SandboxID: sandboxID,
-		UseID:     useID,
-		Command:   command,
-		Verdict: credentialVerdictDoc{
-			Allow:     verdict.Allow,
-			Reason:    verdict.Reason,
-			Role:      verdict.Role,
-			Prompt:    verdict.Prompt,
-			LatencyMs: verdict.LatencyMS,
-		},
-		Volunteered: volunteered,
-	}
-	return c.do(ctx, http.MethodPost, "sandbox-credential-verdicts", nil, body, nil)
 }
 
 func (c *controlPlaneCredentials) do(ctx context.Context, method, path string, query url.Values, body, out any) error {
@@ -224,6 +206,9 @@ func controlPlaneError(resp *http.Response) error {
 type credentialBroker struct {
 	sandboxID   string
 	controlPlan *controlPlaneCredentials
+	// judge reaches the same control plane with a client that waits as long
+	// as a verdict takes.
+	judge       *controlPlaneCredentials
 	activations *activations
 	trusts      *hostTrusts
 }
@@ -243,7 +228,7 @@ func (b *credentialBroker) List(ctx context.Context) ([]agentcreds.Credential, e
 		out = append(out, agentcreds.Credential{
 			Name:   doc.Name,
 			EnvVar: doc.EnvVar,
-			Host:   doc.Host,
+			Hosts:  doc.Hosts,
 			Uses:   protocolUses(doc.Uses, doc.ExpiresAt),
 		})
 	}
@@ -255,7 +240,7 @@ func (b *credentialBroker) Request(ctx context.Context, body agentcreds.RequestB
 	for _, use := range body.Uses {
 		uses = append(uses, credentialUseDoc{Description: use.Description})
 	}
-	// A well-known credential says its own name, variable, and host. What
+	// A well-known credential says its own name, variable, and hosts. What
 	// the agent spelled out is passed on as it was sent, not replaced: the
 	// control plane fills what was left out and refuses what contradicts the
 	// ID, and it can only refuse what it is shown.
@@ -267,7 +252,7 @@ func (b *credentialBroker) Request(ctx context.Context, body agentcreds.RequestB
 		ID:              body.ID,
 		Name:            body.Name,
 		EnvVar:          body.EnvVar,
-		Host:            body.Host,
+		Hosts:           body.Hosts,
 		Justification:   body.Justification,
 		Uses:            uses,
 		GrantTTLSeconds: body.GrantTTLSeconds,
@@ -292,7 +277,8 @@ func (d credentialRequestStatusDoc) protocol() agentcreds.RequestStatus {
 	return agentcreds.RequestStatus{RequestID: d.RequestID, Status: d.Status, Purpose: d.Purpose, Uses: protocolUses(d.Uses, nil)}
 }
 
-// Get mints one ephemeral sentinel for one approved use.
+// Get mints one ephemeral sentinel for one approved use, once the project's
+// judge has allowed the command it is for (ADR 26-09-22-838 §3).
 //
 // It re-reads the credential from the control plane rather than trusting a
 // cache: the answer to "may this sandbox still use this?" is the control
@@ -303,8 +289,8 @@ func (b *credentialBroker) Get(ctx context.Context, body agentcreds.UseBody) (ag
 	if useID == "" {
 		return agentcreds.UseResponse{}, fmt.Errorf("%w: useId is required", agentcreds.ErrInvalid)
 	}
-	if err := validateVerdict(body.Verdict); err != nil {
-		return agentcreds.UseResponse{}, err
+	if len(body.Command) == 0 || strings.TrimSpace(body.Command[0]) == "" {
+		return agentcreds.UseResponse{}, fmt.Errorf("%w: command is required: a value is only handed out for a command to judge", agentcreds.ErrInvalid)
 	}
 	docs, err := b.controlPlan.list(ctx, b.sandboxID)
 	if err != nil {
@@ -315,12 +301,13 @@ func (b *credentialBroker) Get(ctx context.Context, body agentcreds.UseBody) (ag
 			if use.UseID != useID {
 				continue
 			}
-			// Recorded before the mint, and gating it: a failure here must stop
-			// the value from being issued, not merely go unlogged (ADR 0091).
-			if err := b.controlPlan.recordVerdict(ctx, b.sandboxID, useID, body.Command, body.Verdict, false); err != nil {
+			// Judged before the mint, and gating it. The control plane records
+			// the verdict before it answers, so nothing is minted for a verdict
+			// that is not on record (ADR 0091).
+			if err := b.judgeCommand(ctx, useID, body); err != nil {
 				return agentcreds.UseResponse{}, err
 			}
-			record, err := b.activations.mint(b.sandboxID, doc.Sentinel, useID, doc.Host, doc.Format, body.Command)
+			record, err := b.activations.mint(b.sandboxID, doc.Sentinel, useID, doc.Hosts, doc.Format, body.Command)
 			if err != nil {
 				return agentcreds.UseResponse{}, err
 			}
@@ -338,33 +325,41 @@ func (b *credentialBroker) Get(ctx context.Context, body agentcreds.UseBody) (ag
 	return agentcreds.UseResponse{}, fmt.Errorf("%w: no live approved use %s", agentcreds.ErrDenied, useID)
 }
 
-// ReportDenial records a verdict for a command the judge refused, which never
-// reached Get: a refusal mints no ephemeral sentinel and leaves no activation
-// behind (ADR 0079 §1), so this is the only route that decision reaches the
-// control plane by (ADR 0091 §3). There is no value to gate here, so nothing
-// about this call depends on which use the sandbox is naming, only that a
-// verdict was actually given.
-func (b *credentialBroker) ReportDenial(ctx context.Context, body agentcreds.DenialReport) error {
-	useID := strings.TrimSpace(body.UseID)
-	if useID == "" {
-		return fmt.Errorf("%w: useId is required", agentcreds.ErrInvalid)
+// judgeCommand asks the project's judge whether the command carries out the
+// use, and returns nil only for an explicit allow, or for a server that says
+// it does not judge commands (ADR 26-10-02-054 §3). Everything else refuses:
+// a refusal, a judge that could not be reached, an answer that could not be
+// read. Unlike a request, no answer from a server that judges never lets a
+// command through, because a command is asked about before anything exists
+// to lose.
+func (b *credentialBroker) judgeCommand(ctx context.Context, useID string, body agentcreds.UseBody) error {
+	ask := commandAskDoc{SandboxID: b.sandboxID, UseID: useID, Command: body.Command}
+	if in := body.Stdin; in != nil {
+		ask.Stdin = &judge.Input{Content: in.Content, Missing: in.Missing}
 	}
-	if err := validateVerdict(body.Verdict); err != nil {
-		return err
+	if r := body.Reported; r != nil {
+		ask.Reported = &judge.Reported{
+			WorkingDirectory: r.WorkingDirectory,
+			RepositoryRoot:   r.RepositoryRoot,
+			RefCommit:        r.RefCommit,
+			RefSubject:       r.RefSubject,
+		}
 	}
-	return b.controlPlan.recordVerdict(ctx, b.sandboxID, useID, body.Command, body.Verdict, true)
-}
-
-// validateVerdict rejects a call with nothing to record. ADR 0091 makes a
-// verdict a required part of both Get and ReportDenial, not merely a welcome
-// addition to either — Role and Prompt are what the CLI always has by
-// construction, so their absence means the caller sent no verdict at all
-// rather than an incomplete one.
-func validateVerdict(v agentcreds.Verdict) error {
-	if strings.TrimSpace(v.Role) == "" || strings.TrimSpace(v.Prompt) == "" {
-		return fmt.Errorf("%w: verdict is required", agentcreds.ErrInvalid)
+	answer, err := b.judge.askJudge(ctx, "judge-commands", ask)
+	switch {
+	case err == nil && answer.Allow != nil && *answer.Allow:
+		return nil
+	case err == nil:
+		reason := strings.TrimSpace(answer.Reason)
+		if reason == "" {
+			reason = "the judge did not allow the command"
+		}
+		return fmt.Errorf("%w: %s", agentcreds.ErrDenied, reason)
+	case outcomeOf(err) == outcomeNobodyJudges:
+		return nil
+	default:
+		return fmt.Errorf("%w: the command could not be judged, so nothing was issued for it: %w", agentcreds.ErrDenied, err)
 	}
-	return nil
 }
 
 func protocolUses(docs []credentialUseDoc, expiresAt *time.Time) []agentcreds.Use {

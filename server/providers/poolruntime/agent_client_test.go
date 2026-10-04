@@ -90,3 +90,25 @@ func TestPoolCreateRequestForwardsSourceSlugs(t *testing.T) {
 		t.Fatalf("reference slug = %q, want %q", refs["/home/user/src/hooks"].Slug.Or(""), refSlug)
 	}
 }
+
+// The upstream URL is a network remote the sandbox fetches from itself, so it
+// reaches the pool in both delivery modes — including push, which withholds the
+// client's own location from the pool.
+func TestPoolGitSourceForwardsTheUpstreamURLInEitherDelivery(t *testing.T) {
+	local := "/home/dev/project"
+	upstream := "git@github.com:example/project.git"
+	for _, delivery := range []string{model.GitSourceDeliveryClone, model.GitSourceDeliveryPush} {
+		out, err := poolGitSource(model.GitSource{
+			Kind:           "git",
+			Delivery:       delivery,
+			LocalDirectory: &local,
+			UpstreamURL:    &upstream,
+		}, "")
+		if err != nil {
+			t.Fatalf("%s: poolGitSource: %v", delivery, err)
+		}
+		if got := out.UpstreamUrl.Or(""); got != upstream {
+			t.Fatalf("%s: upstream URL = %q, want %q", delivery, got, upstream)
+		}
+	}
+}

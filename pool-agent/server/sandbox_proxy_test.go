@@ -15,6 +15,7 @@ import (
 
 	"aidanwoods.dev/go-paseto"
 
+	workerapimodel "github.com/discobox-ai/discobox/pool-agent/api/model"
 	"github.com/discobox-ai/discobox/pool-agent/sandboxruntime"
 )
 
@@ -43,7 +44,7 @@ func TestSandboxAgentProxyRewritesToSandboxAgentAndForwardsDownstreamToken(t *te
 	publicKey, sign := testPoolTokenSigner(t)
 	router, err := NewRouter(Config{
 		Identity:              Identity{ProjectID: projectID, PoolID: poolID},
-		Runtime:               proxyTestRuntime{MemorySandboxRuntime: sandboxruntime.NewMemorySandboxRuntime(), baseURL: baseURL},
+		Runtime:               newProxyTestRuntime(t, baseURL),
 		ControlPlanePublicKey: publicKey,
 	})
 	if err != nil {
@@ -80,7 +81,7 @@ func TestSandboxHarnessHookProxyRequiresExecReadScope(t *testing.T) {
 	publicKey, sign := testPoolTokenSigner(t)
 	router, err := NewRouter(Config{
 		Identity:              Identity{ProjectID: projectID, PoolID: poolID},
-		Runtime:               proxyTestRuntime{MemorySandboxRuntime: sandboxruntime.NewMemorySandboxRuntime(), baseURL: baseURL},
+		Runtime:               newProxyTestRuntime(t, baseURL),
 		ControlPlanePublicKey: publicKey,
 	})
 	if err != nil {
@@ -115,7 +116,7 @@ func TestSandboxTerminalProxyScopes(t *testing.T) {
 	publicKey, sign := testPoolTokenSigner(t)
 	router, err := NewRouter(Config{
 		Identity:              Identity{ProjectID: projectID, PoolID: poolID},
-		Runtime:               proxyTestRuntime{MemorySandboxRuntime: sandboxruntime.NewMemorySandboxRuntime(), baseURL: baseURL},
+		Runtime:               newProxyTestRuntime(t, baseURL),
 		ControlPlanePublicKey: publicKey,
 	})
 	if err != nil {
@@ -160,7 +161,7 @@ func TestSandboxExecProxyRequiresExecScope(t *testing.T) {
 	publicKey, sign := testPoolTokenSigner(t)
 	router, err := NewRouter(Config{
 		Identity:              Identity{ProjectID: projectID, PoolID: poolID},
-		Runtime:               proxyTestRuntime{MemorySandboxRuntime: sandboxruntime.NewMemorySandboxRuntime(), baseURL: baseURL},
+		Runtime:               newProxyTestRuntime(t, baseURL),
 		ControlPlanePublicKey: publicKey,
 	})
 	if err != nil {
@@ -189,7 +190,7 @@ func TestSandboxExecProxyRejectsTerminalScope(t *testing.T) {
 	publicKey, sign := testPoolTokenSigner(t)
 	router, err := NewRouter(Config{
 		Identity:              Identity{ProjectID: projectID, PoolID: poolID},
-		Runtime:               proxyTestRuntime{MemorySandboxRuntime: sandboxruntime.NewMemorySandboxRuntime(), baseURL: baseURL},
+		Runtime:               newProxyTestRuntime(t, baseURL),
 		ControlPlanePublicKey: publicKey,
 	})
 	if err != nil {
@@ -259,6 +260,16 @@ type proxyTestRuntime struct {
 	baseURL *url.URL
 }
 
+// Model the sandbox behind the test upstream so auto-start sees it running.
+func newProxyTestRuntime(t *testing.T, baseURL *url.URL) proxyTestRuntime {
+	t.Helper()
+	runtime := sandboxruntime.NewMemorySandboxRuntime()
+	if _, err := runtime.CreateSandbox(t.Context(), &workerapimodel.PoolSandboxCreateRequest{SandboxId: "sandbox-1"}); err != nil {
+		t.Fatal(err)
+	}
+	return proxyTestRuntime{MemorySandboxRuntime: runtime, baseURL: baseURL}
+}
+
 func (r proxyTestRuntime) HTTPBaseURL(context.Context, string, int) (*url.URL, error) {
 	copied := *r.baseURL
 	return &copied, nil
@@ -310,7 +321,7 @@ func TestSandboxTCPTunnelProxyRequiresTCPConnectScope(t *testing.T) {
 	publicKey, sign := testPoolTokenSigner(t)
 	router, err := NewRouter(Config{
 		Identity:              Identity{ProjectID: projectID, PoolID: poolID},
-		Runtime:               proxyTestRuntime{MemorySandboxRuntime: sandboxruntime.NewMemorySandboxRuntime(), baseURL: baseURL},
+		Runtime:               newProxyTestRuntime(t, baseURL),
 		ControlPlanePublicKey: publicKey,
 	})
 	if err != nil {
@@ -350,7 +361,7 @@ func TestSandboxTCPTunnelProxyForwardsWithTCPConnectScope(t *testing.T) {
 	publicKey, sign := testPoolTokenSigner(t)
 	router, err := NewRouter(Config{
 		Identity:              Identity{ProjectID: projectID, PoolID: poolID},
-		Runtime:               proxyTestRuntime{MemorySandboxRuntime: sandboxruntime.NewMemorySandboxRuntime(), baseURL: baseURL},
+		Runtime:               newProxyTestRuntime(t, baseURL),
 		ControlPlanePublicKey: publicKey,
 	})
 	if err != nil {
@@ -392,7 +403,7 @@ func TestSandboxUDPTunnelProxyRequiresUDPConnectScope(t *testing.T) {
 	publicKey, sign := testPoolTokenSigner(t)
 	router, err := NewRouter(Config{
 		Identity:              Identity{ProjectID: projectID, PoolID: poolID},
-		Runtime:               proxyTestRuntime{MemorySandboxRuntime: sandboxruntime.NewMemorySandboxRuntime(), baseURL: baseURL},
+		Runtime:               newProxyTestRuntime(t, baseURL),
 		ControlPlanePublicKey: publicKey,
 	})
 	if err != nil {

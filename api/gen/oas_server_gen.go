@@ -398,6 +398,16 @@ type Handler interface {
 	//
 	// GET /projects/{projectId}/trust-requests/{requestId}
 	GetTrustRequest(ctx context.Context, params GetTrustRequestParams) (GetTrustRequestRes, error)
+	// JudgeCommandForPool implements judge-command-for-pool operation.
+	//
+	// Asks the judge of the project that owns this pool whether a command one of its discoboxes is about
+	// to run carries out the use it names, before the pool mints a credential for it (ADR 26-09-22-838
+	// §3). The verdict is recorded before the answer goes back. A server that does not judge commands
+	// says so with the judging-disabled problem type, and the pool then mints without a verdict (ADR
+	// 26-10-02-054); anything else that is not an explicit allow mints nothing.
+	//
+	// POST /api/pools/{poolId}/judge-commands
+	JudgeCommandForPool(ctx context.Context, req *PoolCommandAsk, params JudgeCommandForPoolParams) (JudgeCommandForPoolRes, error)
 	// JudgeForPool implements judge-for-pool operation.
 	//
 	// Puts one judging job to the judge of the project that owns this pool. The control plane forwards
@@ -486,6 +496,13 @@ type Handler interface {
 	//
 	// GET /peers
 	ListPeers(ctx context.Context) (ListPeersRes, error)
+	// ListPoolHeldSandboxes implements list-pool-held-sandboxes operation.
+	//
+	// List every sandbox the control plane holds on this pool, the set the pool agent may not reap the
+	// trees of.
+	//
+	// GET /api/pools/{poolId}/sandboxes
+	ListPoolHeldSandboxes(ctx context.Context, params ListPoolHeldSandboxesParams) (ListPoolHeldSandboxesRes, error)
 	// ListPoolHostTrusts implements list-pool-host-trusts operation.
 	//
 	// List the live host trusts of every sandbox on the pool.
@@ -653,12 +670,6 @@ type Handler interface {
 	//
 	// POST /projects/{projectId}/sandboxes/{sandboxId}/reconcile
 	ReconcileSandbox(ctx context.Context, params ReconcileSandboxParams) (ReconcileSandboxRes, error)
-	// RecordCredentialVerdict implements record-credential-verdict operation.
-	//
-	// Record a judge's verdict about a command run under an agent credential use.
-	//
-	// POST /api/pools/{poolId}/sandbox-credential-verdicts
-	RecordCredentialVerdict(ctx context.Context, req *RecordCredentialVerdictBody, params RecordCredentialVerdictParams) (RecordCredentialVerdictRes, error)
 	// RefreshHarnessConfigImage implements refresh-harness-config-image operation.
 	//
 	// Re-inspect the harness config's image and re-snapshot its label metadata and digest.

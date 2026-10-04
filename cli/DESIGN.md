@@ -22,6 +22,7 @@ transport helpers where OpenAPI does not model the stream.
 | `internal/localpty` | Running one of this CLI's own commands on a pty of its own for a console pane: `creack/pty` on Unix, ConPTY on Windows (ADR 0065). Sets `DISCOBOX_PARENT_PID` on the child. |
 | `internal/lifetime` | How long a grant lives, said the way people say it: the presets an approval offers, the words `--grant-ttl` and `--max-grant-ttl` parse, and how one is read back. Owned here because the window's picker and the flags have to mean the same thing by "1 week". Zero is forever. |
 | `internal/refreshcmd` | Running the command a token suggests for its renewal (ADR 26-09-25-122): an argument vector split as a person types it, run with no shell, no stdin, a deadline, and a bound on output, printed value trimmed. Shared by `discobox secret refresh`/`create` and the console's data source, so the command a person was shown is run one way everywhere. |
+| `internal/termguard` | Putting the terminal back when the console dies holding it, and saying why: a second process (`discobox admin console-guard`) on a lifeline pipe, plus the runtime's crash output sent to a temporary file it names. See below. |
 | `internal/keys` | The leader: its default, its `DISCOBOX_LEADER` override, normalization, and the byte a raw stream matches it as. Owned here because the console's panes and a plain attach must reserve the same key. |
 
 ## UI Dependency Direction
@@ -199,6 +200,41 @@ transport helpers where OpenAPI does not model the stream.
   (opt-in, `DISCOBOX_PANE_E2E=1`) is what catches the omission, since a pane
   attached to an unstarted exec draws an empty screen forever with no error.
 
+## The Console Leaves the Terminal as It Found It
+
+The console must not leave the terminal broken, however it ends. Bubble
+Tea restores it on every exit it sees, but not one it does not: a panic on a
+goroutine it did not start (its own renderer and input reader included), a
+runtime fatal error, `os.Exit`, SIGKILL. `runConsole` therefore starts
+`internal/termguard` just before the window opens: the same binary re-run as
+`discobox admin console-guard`, which saves the terminal's modes and waits on
+a pipe only the console writes. A proper exit writes a byte before closing
+it; a pipe that closes without one is a console that died, and the guard
+writes every reset Bubble Tea could have needed, restores the modes, and
+names in one line the temporary file holding the crash report
+(`debug.SetCrashOutput`, tracebacks of every goroutine) that the alternate
+screen swallowed. The report is named rather than printed: it runs to a
+thousand lines, and on screen it would scroll the rest away. With no report,
+the guard still says why where it can. SIGHUP is the one catchable signal
+that ends a Go program without a trace and that Bubble Tea leaves alone, so
+the console catches it, writes its name down the lifeline, and re-raises it.
+On Linux the guard polls its cgroup's `oom_kill` count and blames the
+out-of-memory killer for a rise within a poll of the death: the cgroup may be
+a tmux server's or an ssh session's, shared with other panes. Where that count
+can be read, what is left is a SIGKILL from another process or an exit that
+skipped `Release`, and the guard says so with the `bpftrace` line that shows
+the next sender; elsewhere it says only that the console was killed without
+warning. A kill that takes the whole cgroup (systemd-oomd) takes the guard
+with it, and nothing is said. Bubble Tea's own panic recovery stays on:
+a panic it recovers ends `Run` normally, so the terminal is already back and
+an in-flight push still finishes (`waitForPushes`); the guard is for the
+deaths nothing in the process can catch. The guard is a child rather than a
+supervisor so nothing the command did before the window is run twice; the
+cost is that the shell gets the terminal back as the guard does, which the
+guard wins in practice because the kernel closes the pipe before it tells
+the shell, and survives otherwise by ignoring SIGTTOU/SIGTTIN (and SIGHUP,
+which a console that led its own session sends it by dying).
+
 ## The Key That Dials Is Not the Key That Is Enrolled
 
 A CLI process dials with a key it generates at startup and never writes down,
@@ -310,7 +346,8 @@ private key another principal can reach, and reports only "Bad owner or
 permissions". `assertPrivateToUser` in the tests checks the real thing on each
 platform — the mode on Unix, the owner and every ACE on Windows.
 
-The JSON memories under it — `recent-selections.json` and `prompt-drafts.json` —
+The JSON memories under it — `recent-selections.json`, `prompt-drafts.json` and
+`console-views.json` —
 are written by `writeStateFile` (`internal/cli/statefile.go`) through a
 temporary file beside the target, so a crash mid-write cannot leave a reader
 parsing half a file for the rest of the install's life. Each is bounded to a
@@ -324,6 +361,11 @@ unwritable or corrupt file costs the convenience and never the command.
   back in another. An empty prompt deletes its entry rather than storing nothing
   under it, and a prompt past the cap is cut on a rune boundary — a state file
   is not where a pasted log belongs.
+- `console-views.json` (`internal/cli/consoleviews.go`) is the console header's
+  server, folder and tag filters per project directory, keyed the same way:
+  what `tui.Session.View` is loaded from and what `DataSource.SaveView` writes.
+  A directory with no entry opens on every server, folder and tag, and saving
+  that default deletes the entry.
 
 ## Uninstall (`discobox admin uninstall`)
 
@@ -384,7 +426,7 @@ is an error rather than a lost convenience.
   auto-started; the server's default project, since a project ID names a
   project on one server; and no `--token`, which was given for the primary.
   Every path to "the server" — the API client, the git transport, the
-  terminals, the ssh bridge, the child commands the console runs — reads the
+  terminals, the ssh ProxyCommand, the child commands the console runs — reads the
   App it is on, so aiming one is the whole of routing.
 - **`App.servers`** is the set, the primary first, read once per invocation. A
   primary that is also registered is listed once, under its registered name:
@@ -484,6 +526,17 @@ is an error rather than a lost convenience.
   server at once, so an ID copied from `ls` works whichever server listed it.
   The picker lists every server; a registered server's rows say `on <name>`
   and are keyed `<name>/<id>`, which is how the pick says where to go.
+- **A reference typed beside a command follows the same rule.** `shell` (and
+  `tools ssh`, `tools run`, which share `resolveShellTarget`) and `cp` match a
+  name or short ID by `matchSandboxArg`'s rules, and with one server that is
+  unchanged. With more than one, a full generated ID goes to
+  `findOnEveryServer` rather than being trusted onto the primary, a name or
+  short ID is matched against the cross-server `ls` candidates and routed to
+  the row's server (`matchServerSandboxArg`), and the picker is
+  `pickServerSandbox` — `selectSandbox`'s own, over candidates the caller has
+  already listed, in the caller's words. `findOnEveryServer` and the picker
+  answer with the `*server`, so a caller comparing where two discoboxes are
+  can name both.
 - **The console routes two ways.** A call about one discobox finds its server
   from the ID the listing located it under (`apiDataSource.at`). A call about
   a server's configuration — harnesses, secrets, grants, answering a
@@ -514,15 +567,18 @@ is an error rather than a lost convenience.
   is the home directory exactly as `mybox:` is; a `?` is a query this cannot
   split past, since `?addr=` holds `host:port` and the colon after it is as
   likely the port's as the path's, so such an operand is refused by name with
-  `discobox admin remote add` as the way round it. One scp runs over one
-  bridge, so `resolveCPTarget` decides from the operands alone — before anything is
+  `discobox admin remote add` as the way round it. One scp is pointed at
+  one server, so `resolveCPTarget` decides from the operands alone — before anything is
   contacted, and so before an address registers its server — that they name one
   server, refuses two, and then resolves each address there. **A name or a bare
   `:PATH` in the same command resolves on that server too**, not on the
-  primary: it is the only server the copy can reach. What stays the primary's
-  is a *name* when no address is present, unique only within the directory that
-  issued it on one server (`matchSandboxArg`), and completion, since a
-  registered server that is down would hang a shell's tab.
+  primary: it is the only server the copy can reach. With no address present,
+  each distinct reference is resolved across every server
+  (`resolveCPTargetOnEveryServer`) — a short ID matching no candidate is still
+  looked for project-wide on each, a name matching none is an error — and
+  references that land on two servers are refused like two addresses are.
+  What stays the primary's is completion, since a registered server that is
+  down would hang a shell's tab.
 
 ## The Server Is a Separate Program
 
@@ -835,6 +891,11 @@ sees one flat `[]string` and cannot tell DISCOBOX_ID from CMD apart, so
   `args[0]` was never a sandbox reference — but more than one is reported as
   ambiguous, since its shape said it was meant as an ID.
 
+A full or short ID may also be spelled `sbx-…`, the way the discobox's
+hostname spells it; `id.Canonical` reads it back as `sbx_…` (a short one only
+after the name match), here and wherever else a discobox ID is resolved
+(`resolveSandboxID`).
+
 A match consumes `args[0]` as DISCOBOX_ID and leaves the rest as CMD. No
 match — including no arguments at all — means every argument is CMD, and the
 sandbox falls back to the same picker `discobox apply` uses when DISCOBOX_ID is
@@ -869,25 +930,33 @@ directory. With a full `--discobox-id` the whole command is create + attach +
 start + status, so a one-shot `discobox t git status` costs no round trip it does
 not need.
 
-`discobox tools ssh` needs no SSH port on the server. The session is carried over
-the endpoint the CLI already uses: a loopback TCP port opened for the life of
-the command splices each connection to a `GET /ssh/connect` websocket, whose
-byte stream the server hands to its in-process sshd — which binds no listener
-of its own; `/ssh/connect` is the only way in (ADR 0057).
-`endpoint.StartLoopbackProxy` cannot serve this — it is an HTTP reverse proxy,
-and these are not HTTP bytes.
+`discobox tools ssh` needs no SSH port on the server. ssh reaches the server's
+in-process sshd the one way anything does — a `GET /ssh/connect` websocket,
+whose byte stream the server hands to the sshd, which binds no listener of its
+own (ADR 0057) — through the same `ProxyCommand` the emitted ssh_config names:
+this executable, `--server` the server the discobox is on (the App resolution
+returned), `admin ssh-proxy`. There is one path to the sshd, not a second one
+for commands this CLI runs itself; ssh starts the proxy per connection, so
+nothing listens and the connection does not depend on this process staying up.
 
 Everything the session needs is passed on the command line, so nothing is
-written down: address and port from the bridge, `-l` from the sandbox ID, `-i`
-from the managed key, and `UserKnownHostsFile` from a temp file holding the
-host key this run fetched. `sshBridgeSession` opens those three together —
-key, host key, bridge — because a bridge with no pinned host key is a
-connection nothing can verify; `discobox cp` uses the same one, differing only
-in how the client spells the port and names the sandbox. `-F none` keeps the
-user's own `ssh_config` out of it, since a `Host *` block there could otherwise
-override the identity or user just resolved. The enrolled key is the single
-persisted thing, and `resolveSSHIdentity` reuses an already-enrolled one rather
-than adding another.
+written down: `-o ProxyCommand=` quoted by `sshTarget.proxyCommandLine` and
+percent-escaped exactly as the written config spells it, `-l` from the sandbox
+ID, `-i` from the managed key, and `HostKeyAlias` — the project's
+`<project>.discobox.internal`, the alias `admin ssh-config` pins under — with
+`UserKnownHostsFile` naming a temp file holding the host key this run fetched.
+The host argument is `<sandbox id>.discobox.internal`, which resolves to
+nothing and only names the discobox in ssh's messages. `startSSHClientSession`
+assembles those for `tools ssh` and `discobox cp` alike, which differ only in
+how the client names the user. The proxy's command line carries only
+`--server`; the token and iroh settings the App dials with reach it through
+the environment (`sshProxyEnv`), set outright so an App aimed at a registered
+server — which carries no `--token` — does not hand it one inherited for the
+primary. `-F none` keeps the user's own `ssh_config` out of it, since a
+`Host *` block there could otherwise override the identity, user or proxy just
+resolved. The enrolled key is the single persisted thing, and
+`resolveSSHIdentity` reuses an already-enrolled one rather than adding
+another.
 
 Flag parsing is **off** for `tools ssh` (`DisableFlagParsing`), not merely
 non-interspersed: `discobox tools ssh -L 8080:localhost:3000` puts ssh's own flags
@@ -901,12 +970,13 @@ the user's options from their remote command and places them either side of it.
 Appending everything after the host only works on glibc, whose getopt permutes
 argv; anywhere else every option would be sent to the remote as a command.
 
-`ssh -f` is refused rather than passed through. It forks and returns, and the
-bridge lives in this process, so honouring it would silently tear the
-connection down under the backgrounded ssh. Backgrounding the whole command keeps both lifetimes
-together and leaves one process to kill.
+`ssh -f` is passed through like any other option. The proxy is ssh's own child,
+so a backgrounded ssh keeps its connection after this command returns. ssh
+goes to the background only after the host key is verified and the user
+authenticated, which is all the temporary known_hosts removed on the way out
+was for.
 
-`discobox cp` is `scp`, pointed at the same bridge (`internal/cli/cp.go`). It is
+`discobox cp` is `scp`, pointed at the same ProxyCommand (`internal/cli/cp.go`). It is
 a root command rather than a `tools` subcommand because it is an everyday verb
 with no `--discobox-id` to inherit: which sandbox is named inside each path.
 
@@ -918,8 +988,8 @@ business. A `cp` built on the exec primitive instead — a `tar` pipe, the way
 `docker cp` and `kubectl cp` work — would have reimplemented all of that against
 a sandbox image that may or may not have `tar`, to reach the same place.
 
-What the command owns is the two things scp cannot work out: the bridge's port,
-key and pinned host key, and what a `DISCOBOX:PATH` operand means. The reference
+What the command owns is the two things scp cannot work out: the proxy, key
+and pinned host key, and what a `DISCOBOX:PATH` operand means. The reference
 before the colon is resolved by `shell`'s rule (`matchSandboxArg`), not
 `--discobox-id`'s: it is typed alongside a path, so a name has to work there.
 `selectSandbox` is deliberately not used for it — given a non-empty argument it
@@ -928,12 +998,13 @@ username no sandbox answers to.
 
 `splitSCPArgs` finds the operands — scp's option table is needed for that, so
 `-o ProxyJump=x` is not read as a path — and `resolveCPOperands` rewrites each
-one to `<sandbox id>@127.0.0.1:<path>`. The sandbox travels in the operand
+one to `<sandbox id>@<sandbox id>.discobox.internal:<path>`. The sandbox travels in the operand
 rather than in a `-l`, so one command can name two different discoboxes; when it
 does, `-3` is added. Current OpenSSH already routes an sftp-mode copy through
 the local host and `-3` changes nothing there — it is pinned because the direct
 path is one `-R`, one older client, or one `ssh_config` default away, and it
-cannot work here: the source would dial `127.0.0.1:22` inside its own sandbox.
+cannot work here: the source would look up the destination's alias inside its
+own sandbox, where no ProxyCommand reaches it. With `-3` each end runs its own.
 
 `splitCPPath` is scp's own `colon()` rule with one deliberate difference: a
 leading colon is a discobox reference, not part of a filename. scp has no use
@@ -1543,10 +1614,12 @@ per ADR 0112. Each trail is read where it is kept, through the control plane:
 | `list` | every trail but `dns` unless `--source` names it, merged by time, for one discobox | | each trail's own | each trail's own |
 | `get` | whichever trail the ID names | | | |
 
-`creds` lists both judges' verdicts, `--kind` picks one: `command`, a
-discobox's own judge, recorded at `use` or by `report`; and `request`, the
-project's judge, recorded `judge` by the control plane for every answer. `RTT`
-is the round trip each asker timed.
+`creds` lists the judge's verdicts, `--kind` picks one: `command`, a command
+`discobox-access run` declared, judged before its value was minted;
+`request`, a request the proxy observed; and `delegation`, a discobox handing a
+credential on. The control plane records each `judge` before it answers. A
+`command` row of origin `sandbox` predates that: a discobox's own judge's word.
+`RTT` is the round trip each asker timed.
 `refresh` is the asks for a new value of a token and how each closed
 (ADR 26-09-25-122 §6), two events per request — `asked`, then `answered` or
 `dismissed` — so a follower reading forward by time sees the answer arrive
@@ -1695,8 +1768,8 @@ level or layering on the attach transports above.
   the current project plus a `known_hosts` line. The stanzas name **no address**
   (ADR 0057): they carry a `ProxyCommand` that runs this executable as `discobox
   --server <endpoint> admin ssh-proxy`, which splices its own stdio onto `GET
-  /ssh/connect` — the same door `discobox tools ssh`'s bridge dials, with `ssh`
-  owning the process instead of a loopback port. There is no other way in: the
+  /ssh/connect` — the same ProxyCommand `discobox tools ssh` and `cp` pass on
+  the command line. There is no other way in: the
   server binds no SSH port. Everything built on `ssh` rather than on our client
   — Remote-SSH, `scp`, `git` — reaches a sandbox wherever this CLI reaches the
   API, and nothing has to be configured, published, or firewalled for it.
@@ -1738,8 +1811,9 @@ level or layering on the attach transports above.
   not pile up duplicates. The private key is written in OpenSSH's own format,
   not the PKCS#8 PEM the server uses for its host key, because this file is
   read by the `ssh` binary rather than by `x/crypto/ssh`.
-- Each stanza carries four `Host` patterns: the sandbox name and the sandbox
-  ID, each bare and suffixed with `.discobox.internal`. The bare name is what
+- Each stanza carries six `Host` patterns: the sandbox name, the sandbox ID,
+  and the ID's hyphenated spelling (`sbx-…`, the discobox's own hostname, via
+  `id.Hostname`), each bare and suffixed with `.discobox.internal`. The bare name is what
   anyone actually types; the suffixed form is the unambiguous spelling to fall
   back on, and is the reason dropping the suffix from the primary alias is
   affordable — a bare pattern lives in the same namespace as the user's real
@@ -1882,7 +1956,7 @@ level or layering on the attach transports above.
   quotes what contains a space and escapes what contains a percent sign, and
   `sshConfigFields` reads them back so a re-run recognizes its own line. It
   covers `IdentityFile`, `UserKnownHostsFile` and the `Include` line, and the
-  bridge's `-o UserKnownHostsFile=` too — ssh reads a `-o` argument as a config
+  `-o UserKnownHostsFile=` `tools ssh` and `cp` pass too — ssh reads a `-o` argument as a config
   line, so a value there is split on whitespace and expanded exactly as one in
   a file is. A Windows profile under a name with a space in it is ordinary, and
   unquoted ssh takes the first word as the whole filename. The `-i` beside it

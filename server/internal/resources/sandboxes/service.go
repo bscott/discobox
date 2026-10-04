@@ -47,6 +47,10 @@ type Service struct {
 	// discobox://<server>/<discobox> address a sandbox is started with. Empty
 	// when the server is not reachable at it, and then no address is given.
 	serverPeerID string
+	// secrets prepares the grants a create gives the new discobox, which
+	// holds a discobox giving them to what it was delegated (ADR
+	// 26-09-30-782 §1).
+	secrets *resourcesecrets.Service
 }
 
 func NewService(store *store.Store, manager *sandbox.ProviderManager, defaultUserID string, engine *reconcile.Engine, providerStore ...any) *Service {
@@ -105,6 +109,12 @@ func (s *Service) SetServerPeerID(id string) {
 // bind its source directory instead of pushing it.
 func (s *Service) SetHostID(hostID string) {
 	s.hostID = strings.TrimSpace(hostID)
+}
+
+// SetSecrets gives the service the credential broker a create's grants are
+// prepared by.
+func (s *Service) SetSecrets(secrets *resourcesecrets.Service) {
+	s.secrets = secrets
 }
 
 // SandboxProviderCatalogItem describes a registered sandbox provider type.
@@ -340,9 +350,14 @@ func (s *Service) CreateSandbox(ctx context.Context, projectID string, input ser
 			assignments = append(assignments, harnessAssignments...)
 		}
 	}
-	grants, err := resourcesecrets.PrepareSandboxGrants(ctx, s.store, projectID, sandbox.ID, input.Grants)
-	if err != nil {
-		return nil, err
+	var grants resourcesecrets.SandboxGrants
+	if len(input.Grants) > 0 {
+		if s.secrets == nil {
+			return nil, apperrors.NewStatusError(http.StatusServiceUnavailable, "this server cannot give a new discobox grants")
+		}
+		if grants, err = s.secrets.PrepareSandboxGrants(ctx, projectID, sandbox.ID, input.Grants); err != nil {
+			return nil, err
+		}
 	}
 	for _, binding := range grants.Bindings {
 		for _, assignment := range assignments {
@@ -352,7 +367,7 @@ func (s *Service) CreateSandbox(ctx context.Context, projectID string, input ser
 			}
 		}
 	}
-	return s.createSandboxIntent(ctx, sandbox, append(assignments, grants.Bindings...), grants.Grants)
+	return s.createSandboxIntent(ctx, sandbox, append(assignments, grants.Bindings...), grants)
 }
 
 // resolveHarnessConfigID is which harness a sandbox runs: what the request
@@ -483,13 +498,17 @@ func authorizeRequestedScopes(ctx context.Context, scopes []string) error {
 	}
 	principal, ok := auth.PrincipalFromContext(ctx)
 	if ok && principal.Type == auth.PrincipalTypeSandbox {
-		// A sandbox holds no scopes. The sandbox role admits one call of its
-		// that reaches a sandbox — the push into the origin of a discobox it
-		// created (ADR 26-09-24-630 §2) — and that push is all this allows, so a route
-		// added to the role by mistake does not reach terminals or execs too.
+		// A sandbox holds no scopes. The sandbox role admits two kinds of call
+		// of its that reach a discobox it created: the push into its origin (ADR
+		// 26-09-24-630 §2), and reading and typing into its terminals (ADR
+		// 26-10-01-397 §1). Those scopes are all this allows, so a route added
+		// to the role by mistake reaches no legacy terminal, tunnel, or sandbox
+		// HTTP. Attaching is refused where it waits (AwaitSandboxHTTPClient).
 		for _, scope := range scopes {
-			if scope != poolagentauth.ScopeSandboxWrite {
-				return apperrors.NewStatusError(http.StatusForbidden, "a discobox may only push source into another: "+scope)
+			switch scope {
+			case poolagentauth.ScopeSandboxWrite, poolagentauth.ScopeExecRead, poolagentauth.ScopeExecWrite:
+			default:
+				return apperrors.NewStatusError(http.StatusForbidden, "a discobox may only push source into another or drive its terminals: "+scope)
 			}
 		}
 		return nil

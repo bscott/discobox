@@ -8,33 +8,31 @@ import (
 	"testing"
 	"time"
 
-	"github.com/discobox-ai/discobox/pool-agent/poolauth"
 	"github.com/discobox-ai/discobox/server/internal/model"
+	"github.com/discobox-ai/discobox/server/internal/store"
 )
 
-// The verdict trail end to end: written by a pool through the broker route,
-// read back by a project member through list-credential-verdicts, after the
-// sandbox it describes is gone. Every layer between runs for real — ogen's
-// query decoding of the tri-state allow and the date-time since, the project
-// authorizer, the handler, the store.
+// The verdict trail read back by a project member through
+// list-credential-verdicts, after the sandbox it describes is gone. Every layer
+// between runs for real — ogen's query decoding of the tri-state allow and the
+// date-time since, the project authorizer, the handler, the store.
 func TestCredentialVerdictsReadBackAfterTheirSandboxIsGone(t *testing.T) {
 	skipWithoutDocker(t)
 	ctx := context.Background()
 	db := newAppTestDB(ctx, t)
 	router := newTestApp(ctx, t, db)
-	projectID, privateKey := seedCredentialRoutePool(ctx, t, db.Write, router)
-	broker := signPoolAssertion(t, projectID, routeTestPoolID, privateKey, poolauth.ScopeCredentialBroker)
+	projectID, _ := seedCredentialRoutePool(ctx, t, db.Write, router)
 	before := time.Now().UTC().Add(-time.Minute)
 
-	for _, body := range []string{
-		`{"sandboxId":"` + routeTestSandboxID + `","useId":"use_issued","command":["gh","pr","create"],` +
-			`"verdict":{"allow":true,"reason":"matches the approved use","role":"judge","prompt":"facts","latencyMs":400},"volunteered":false}`,
-		`{"sandboxId":"` + routeTestSandboxID + `","useId":"use_issued","command":["gh","repo","delete"],` +
-			`"verdict":{"allow":false,"reason":"not what was approved","role":"judge","prompt":"facts","latencyMs":350},"volunteered":true}`,
+	appStore := store.New(db.Write, db.Read)
+	for _, row := range []*model.CredentialVerdict{
+		{Command: []string{"gh", "pr", "create"}, Allow: true, Reason: "matches the approved use", LatencyMS: 400},
+		{Command: []string{"gh", "repo", "delete"}, Allow: false, Reason: "not what was approved", LatencyMS: 350},
 	} {
-		resp := callRoute(t, router, http.MethodPost, "/api/pools/"+routeTestPoolID+"/sandbox-credential-verdicts", body, broker)
-		if resp.Code != http.StatusNoContent {
-			t.Fatalf("record status = %d, body = %s", resp.Code, resp.Body.String())
+		row.ProjectID, row.SandboxID, row.UseID = projectID, routeTestSandboxID, "use_issued"
+		row.Kind, row.Origin, row.Round, row.Prompt = model.CredentialVerdictKindCommand, model.CredentialVerdictOriginJudge, 1, "{}"
+		if err := appStore.CreateCredentialVerdict(ctx, row); err != nil {
+			t.Fatalf("record verdict: %v", err)
 		}
 	}
 
@@ -72,8 +70,8 @@ func TestCredentialVerdictsReadBackAfterTheirSandboxIsGone(t *testing.T) {
 	farEast := time.FixedZone("UTC+14", 14*60*60)
 	farWest := time.FixedZone("UTC-12", -12*60*60)
 	denials := list(t, url.Values{"allow": {"false"}, "since": {before.In(farEast).Format(time.RFC3339)}})
-	if len(denials) != 1 || denials[0].Allow || !denials[0].Volunteered || denials[0].Reason != "not what was approved" {
-		t.Fatalf("denials = %+v, want the one reported denial", denials)
+	if len(denials) != 1 || denials[0].Allow || denials[0].Reason != "not what was approved" {
+		t.Fatalf("denials = %+v, want the one denial", denials)
 	}
 
 	if future := list(t, url.Values{"since": {time.Now().Add(time.Hour).In(farWest).Format(time.RFC3339)}}); len(future) != 0 {

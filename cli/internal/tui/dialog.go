@@ -24,6 +24,9 @@ const (
 	// dlgStatus is a dialog nobody answers: it reports what is happening and
 	// takes itself down when that finishes. See statusDialog.
 	dlgStatus
+	// dlgFilter is the header's filter opened: every server, folder and tag
+	// on one card, marked and then applied together. See filterPicker.
+	dlgFilter
 )
 
 // dialog is the single modal layer. Everything that is not the list or the
@@ -74,6 +77,10 @@ type dialog struct {
 	// values: what it holds is typed by the rows themselves.
 	form   *form
 	submit func(f *form) tea.Cmd
+
+	// filter is the choices of a dlgFilter, which answers with what they
+	// have marked.
+	filter *filterPicker
 
 	// answerLabel is the question, drawn as a rule immediately above whatever
 	// answers it: the menu rows, the input line, or the y/n pair. It is the one
@@ -142,6 +149,33 @@ type dialog struct {
 	// apply report under the successful-apply menu. The question goes when
 	// that screen does, because every answer it offers is a way of leaving it.
 	over *pane
+
+	// offers are what a card to be read can do besides being read: an audit
+	// record's "open its response body". Each is a key on the card and an
+	// offer on its key line, answered only while no search is being typed.
+	offers []cardKey
+	// back is the card this one was opened from, which closing it — however
+	// it is closed — puts up again: a body read from a record goes back to
+	// the record, not past it.
+	back *dialog
+
+	// wrapped is the body as last laid out, and the room and body it was laid
+	// out for. A body can be a megabyte of response, and the card is drawn on
+	// every key, every poll and every move of the pointer.
+	wrapped wrappedBody
+}
+
+type wrappedBody struct {
+	body  string
+	room  int
+	lines []string
+}
+
+// cardKey is one of a card's offers: the key, what it does, and doing it.
+type cardKey struct {
+	key   string
+	label string
+	act   func() tea.Cmd
 }
 
 // action is one row of the action menu.
@@ -410,6 +444,9 @@ func (d *dialog) update(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		}
 		return d.form.update(msg), false
 
+	case dlgFilter:
+		return d.filter.update(msg)
+
 	case dlgInput:
 		if keyName(msg) == "enter" {
 			if d.action != nil {
@@ -479,6 +516,11 @@ func (d *dialog) updateText(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, false
 	}
 
+	for _, offer := range d.offers {
+		if keyName(msg) == offer.key {
+			return offer.act(), false
+		}
+	}
 	switch keyName(msg) {
 	case "/":
 		d.resume, d.typing = d.offset, true
@@ -753,6 +795,10 @@ func (d *dialog) view(st *styles, z *zones, width, height int) string {
 		}
 		drawHints(formHints(d.form, line))
 
+	case dlgFilter:
+		b.WriteString(d.filter.view(st, z, strings.Count(b.String(), "\n")+dialogPadTop, inner, maxBody))
+		keys(says("↑↓ moves"), pressing("Space marks", " "), pressing("Enter picks it and shows", "enter"), pressing("Esc cancels", "esc"))
+
 	case dlgInput:
 		answer()
 		// The field is a field: a press in it puts the caret where the
@@ -784,16 +830,7 @@ func (d *dialog) bodyLines(st *styles, room int) []string {
 		lines = append(lines, truncateMiddle(d.subject, room))
 	}
 	if d.body != "" {
-		start := len(lines)
-		lines = append(lines, wrap(d.body, room)...)
-		// Wrapping is not enough on its own: a line the wrapper could not break
-		// — the help text's key columns are one long run of spaces and words —
-		// comes back wider than the box, and lipgloss wraps it again into a row
-		// the height was not budgeted for. One row over is a frame one row
-		// taller than the terminal.
-		for i := start; i < len(lines); i++ {
-			lines[i] = truncate(lines[i], room)
-		}
+		lines = append(lines, d.bodyAt(room)...)
 	}
 	if len(d.sections) == 0 {
 		return lines
@@ -802,6 +839,24 @@ func (d *dialog) bodyLines(st *styles, room int) []string {
 		lines = append(lines, "")
 	}
 	return append(lines, d.sectionLines(st, room)...)
+}
+
+// bodyAt is the prose body wrapped to room, laid out again only when the room
+// or the body changed.
+func (d *dialog) bodyAt(room int) []string {
+	if w := d.wrapped; w.lines != nil && w.room == room && w.body == d.body {
+		return w.lines
+	}
+	lines := wrap(d.body, room)
+	// A guard, not a cut: wrap breaks every line to the room. A row that came
+	// back wider anyway would be wrapped again by lipgloss into a row the
+	// height was not budgeted for, and one row over is a frame one row taller
+	// than the terminal.
+	for i := range lines {
+		lines[i] = truncate(lines[i], room)
+	}
+	d.wrapped = wrappedBody{body: d.body, room: room, lines: lines}
+	return lines
 }
 
 // sectionLines draws the structured body: a rule carrying each section's name,
@@ -901,7 +956,7 @@ func (d *dialog) viewItems(st *styles, z *zones, top, inner int) string {
 		keyCol = pressW + 2
 	}
 	// The label column fits the longest label rather than a fixed width:
-	// action names are a word, but the folder dropdown's are paths, and a
+	// action names are a word, but the Source row's list is paths, and a
 	// path cut off at fourteen cells is not a path you can choose between.
 	labelW := 14
 	for _, it := range d.items {
@@ -1050,6 +1105,11 @@ func (d *dialog) viewSearch(st *styles, z *zones, inner int) string {
 	// Offered in every state the key works in, which is every state but a
 	// search being typed: an offer that came and went as a query was set would
 	// be one nobody trusts.
+	// A card's own offers go ahead of copying: they are what it is for, and
+	// the tail is what a narrow card gives up first.
+	for _, offer := range d.offers {
+		line = append(line, keyed(offer.key, offer.key, offer.label))
+	}
 	if d.copy != nil {
 		line = append(line, pressing("c copies", "c"))
 	}

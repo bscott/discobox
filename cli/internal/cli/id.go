@@ -87,6 +87,9 @@ func (a *App) resolveProjectID(ctx context.Context, client *apiclientgen.Client,
 
 func (a *App) resolveSandboxID(ctx context.Context, client *apiclientgen.Client, projectID, value string) (string, error) {
 	id, err := parseIDArg(value, "discobox ID")
+	// The hyphenated spelling a discobox's hostname uses ("sbx-…") is the same
+	// ID, copied from a shell prompt.
+	id = idpkg.Canonical(idpkg.PrefixSandbox, id)
 	if err != nil || !isResolvableShortID(id) {
 		return id, err
 	}
@@ -140,18 +143,30 @@ func (a *App) resolveSandboxReference(ctx context.Context, client *apiclientgen.
 	if ok {
 		return sandboxID, nil
 	}
-	if !isResolvableShortID(reference) {
-		return "", fmt.Errorf("no discobox named %q was started from this directory; run `discobox ls` to see them, `discobox ls --all` to see the ones started elsewhere, or write the discobox ID", reference)
+	if !isResolvableShortID(idpkg.Canonical(idpkg.PrefixSandbox, reference)) {
+		return "", unmatchedSandboxName(reference)
 	}
 	sandboxID, err = a.resolveSandboxID(ctx, client, projectID, reference)
 	if err != nil {
-		// The reference is shaped like a short ID, so it was tried as one —
-		// but a name is what someone writing `mybox` most likely meant, and
-		// matchSandboxArg already ruled that out. Reporting only the ID
-		// reading sends them looking for an ID problem they do not have.
-		return "", fmt.Errorf("no discobox for %q: it names none started from this directory, and %w", reference, err)
+		return "", unmatchedSandboxReference(reference, err)
 	}
 	return sandboxID, nil
+}
+
+// unmatchedSandboxName is a reference that is no ID and names none of the
+// candidates. It is an error rather than a project-wide lookup for the reason
+// resolveSandboxReference gives.
+func unmatchedSandboxName(reference string) error {
+	return fmt.Errorf("no discobox named %q was started from this directory; run `discobox ls` to see them, `discobox ls --all` to see the ones started elsewhere, or write the discobox ID", reference)
+}
+
+// unmatchedSandboxReference is a reference shaped like a short ID that named
+// none of the candidates and failed project-wide as an ID with err. A name is
+// what someone writing `mybox` most likely meant, and the candidates already
+// ruled that out, so both readings are reported: only the ID one sends them
+// looking for an ID problem they do not have.
+func unmatchedSandboxReference(reference string, err error) error {
+	return fmt.Errorf("no discobox for %q: it names none started from this directory, and %w", reference, err)
 }
 
 func (a *App) resolveHarnessConfigID(ctx context.Context, client *apiclientgen.Client, projectID, value string) (string, error) {

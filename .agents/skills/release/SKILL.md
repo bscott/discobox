@@ -109,15 +109,18 @@ Where both exist, `upstream` is GitHub (`ibuildthecloud/discobox`, which
 redirects to `discobox-ai/discobox`) and `origin` is a Depot mirror. Releases,
 tags, CI, and the `gh` CLI all mean **upstream**. Push there.
 
-**Inside a discobox there may be no GitHub remote at all** — `origin` is
-`/.discobox/origins/primary`, the sandbox's own mirror, and `gh` is not logged
-in. Add the remote. `discobox-ai/discobox` is public, so `git fetch` and
+**Inside a discobox `origin` is not GitHub** — it is
+`/.discobox/origins/primary`, the sandbox's own mirror — and `gh` is not logged
+in. There may be an `upstream`: the remote the host's branch tracks, which is
+the Depot mirror as readily as GitHub. Point it at GitHub whether or not it
+exists. `discobox-ai/discobox` is public, so `git fetch` and
 `git ls-remote` need no credential; every push and every `gh` call runs under
 the token asked for once, up front (below). A push needs the token named
 explicitly and the URL spelled out, or the access judge will refuse it:
 
 ```bash
-git remote add upstream https://github.com/discobox-ai/discobox.git
+git remote add upstream https://github.com/discobox-ai/discobox.git 2>/dev/null ||
+  git remote set-url upstream https://github.com/discobox-ai/discobox.git
 discobox-access run --use <id> -- git -c credential.helper= \
   -c 'credential.helper=!f() { if test "$1" = get; then echo username=x-access-token; echo "password=$GH_TOKEN"; fi; }; f' \
   push https://github.com/discobox-ai/discobox.git HEAD:main
@@ -150,7 +153,7 @@ discobox-access request --json <<'EOF'
 {
   "name": "github",
   "envVar": "GH_TOKEN",
-  "host": "github.com",
+  "hosts": ["github.com"],
   "justification": "Cutting discobox release vX.Y.Z with the /release skill: push main, watch CI until it is green, tag the green commit, then check the release and the dev Homebrew formula. git uses the token over https to github.com and gh uses it against api.github.com. Needed for about two hours, since CI can take several rounds.",
   "uses": [
     {"description": "git push the local main branch to https://github.com/discobox-ai/discobox.git main"},

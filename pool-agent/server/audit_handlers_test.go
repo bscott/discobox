@@ -141,9 +141,11 @@ func TestPoolListHTTPAuditNarrowsToTheTokensSandbox(t *testing.T) {
 
 func TestPoolListHTTPAuditPassesFiltersAndMapsRows(t *testing.T) {
 	createdAt := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	//nolint:gosec // G101: secret IDs, which name a credential and are not one.
 	reader := &recordingAuditReader{rows: []proxy.AuditHTTPExchange{{
 		ID: 7, CreatedAt: createdAt, ClientID: "sandbox-1", Method: "GET", URL: "https://api.github.com/user",
 		Host: "api.github.com", Status: 200, DurationMillis: 42, SwappedUseIDs: "use_a,use_b",
+		SwappedSecretIDs: "sec_a,sec_b",
 	}}}
 	router, sign := newAuditRouter(t, reader)
 	resp := auditRequest(router, "?host=api.github.com&useId=use_a&since=2026-09-17T09:00:00%2B09:00&limit=5&order=asc&minStatus=400&maxStatus=499&blocked=true",
@@ -158,11 +160,12 @@ func TestPoolListHTTPAuditPassesFiltersAndMapsRows(t *testing.T) {
 	}
 	var body struct {
 		Exchanges []struct {
-			ID            string    `json:"id"`
-			CreatedAt     time.Time `json:"createdAt"`
-			SandboxID     string    `json:"sandboxId"`
-			Status        int       `json:"status"`
-			SwappedUseIDs []string  `json:"swappedUseIds"`
+			ID               string    `json:"id"`
+			CreatedAt        time.Time `json:"createdAt"`
+			SandboxID        string    `json:"sandboxId"`
+			Status           int       `json:"status"`
+			SwappedUseIDs    []string  `json:"swappedUseIds"`
+			SwappedSecretIDs []string  `json:"swappedSecretIds"`
 		} `json:"exchanges"`
 	}
 	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
@@ -173,8 +176,9 @@ func TestPoolListHTTPAuditPassesFiltersAndMapsRows(t *testing.T) {
 	}
 	got := body.Exchanges[0]
 	if got.ID != "http_7" || got.SandboxID != "sandbox-1" || got.Status != 200 || !got.CreatedAt.Equal(createdAt) ||
-		!reflect.DeepEqual(got.SwappedUseIDs, []string{"use_a", "use_b"}) {
-		t.Fatalf("exchange = %+v, want the row with its uses split", got)
+		!reflect.DeepEqual(got.SwappedUseIDs, []string{"use_a", "use_b"}) ||
+		!reflect.DeepEqual(got.SwappedSecretIDs, []string{"sec_a", "sec_b"}) {
+		t.Fatalf("exchange = %+v, want the row with its uses and secrets split", got)
 	}
 }
 
@@ -341,6 +345,7 @@ func TestPoolGetHTTPAuditRelaysTheWholeRow(t *testing.T) {
 		RequestHeaders:   `{"Authorization":["[REDACTED]"],"Accept":["application/json"]}`,
 		ResponseHeaders:  `{"Content-Type":["application/json"]}`,
 		SwappedUseIDs:    "use_a",
+		SwappedSecretIDs: "sec_a",
 		AppliedHeaders:   "Authorization",
 		AppliedRuleID:    "rule-1",
 		CacheKey:         "key-1",
@@ -368,6 +373,7 @@ func TestPoolGetHTTPAuditRelaysTheWholeRow(t *testing.T) {
 		CacheKey             string              `json:"cacheKey"`
 		ResponseBodyRecorded bool                `json:"responseBodyRecorded"`
 		StreamRecorded       bool                `json:"streamRecorded"`
+		SwappedSecretIDs     []string            `json:"swappedSecretIds"`
 	}
 	if err := json.Unmarshal(resp.Body.Bytes(), &detail); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -380,7 +386,8 @@ func TestPoolGetHTTPAuditRelaysTheWholeRow(t *testing.T) {
 		t.Fatalf("request headers = %v, want the redacted value the recorder wrote", detail.RequestHeaders)
 	}
 	if len(detail.ResponseHeaders) != 1 || !reflect.DeepEqual(detail.AppliedHeaders, []string{"Authorization"}) ||
-		detail.AppliedRuleID != "rule-1" || detail.CacheKey != "key-1" {
+		detail.AppliedRuleID != "rule-1" || detail.CacheKey != "key-1" ||
+		!reflect.DeepEqual(detail.SwappedSecretIDs, []string{"sec_a"}) {
 		t.Fatalf("detail lost a field a list does not carry: %+v", detail)
 	}
 	// What can be read beside the row, rather than the pool's file names.

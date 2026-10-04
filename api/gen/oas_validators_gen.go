@@ -1216,24 +1216,6 @@ func (s *CredentialVerdict) Validate() error {
 		})
 	}
 	if err := func() error {
-		if value, ok := s.Need.Get(); ok {
-			if err := func() error {
-				if err := value.Validate(); err != nil {
-					return err
-				}
-				return nil
-			}(); err != nil {
-				return err
-			}
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "need",
-			Error: err,
-		})
-	}
-	if err := func() error {
 		if value, ok := s.Origin.Get(); ok {
 			if err := func() error {
 				if err := value.Validate(); err != nil {
@@ -1248,6 +1230,24 @@ func (s *CredentialVerdict) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "origin",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.Probabilities.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "probabilities",
 			Error: err,
 		})
 	}
@@ -1281,6 +1281,8 @@ func (s CredentialVerdictKind) Validate() error {
 		return nil
 	case "request":
 		return nil
+	case "delegation":
+		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}
@@ -1295,6 +1297,28 @@ func (s CredentialVerdictOrigin) Validate() error {
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}
+}
+
+func (s CredentialVerdictProbabilities) Validate() error {
+	var failures []validate.FieldError
+	for key, elem := range s {
+		if err := func() error {
+			if err := (validate.Float{}).Validate(float64(elem)); err != nil {
+				return errors.Wrap(err, "float")
+			}
+			return nil
+		}(); err != nil {
+			failures = append(failures, validate.FieldError{
+				Name:  key,
+				Error: err,
+			})
+		}
+	}
+
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
 }
 
 func (s *DNSAuditQuery) Validate() error {
@@ -2293,36 +2317,6 @@ func (s JobStatus) Validate() error {
 	}
 }
 
-func (s *JudgeAnswer) Validate() error {
-	if s == nil {
-		return validate.ErrNilPointer
-	}
-
-	var failures []validate.FieldError
-	if err := func() error {
-		if value, ok := s.Need.Get(); ok {
-			if err := func() error {
-				if err := value.Validate(); err != nil {
-					return err
-				}
-				return nil
-			}(); err != nil {
-				return err
-			}
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "need",
-			Error: err,
-		})
-	}
-	if len(failures) > 0 {
-		return &validate.Error{Fields: failures}
-	}
-	return nil
-}
-
 func (s *JudgeJob) Validate() error {
 	if s == nil {
 		return validate.ErrNilPointer
@@ -2370,80 +2364,7 @@ func (s JudgeJobKind) Validate() error {
 		return nil
 	case "request":
 		return nil
-	default:
-		return errors.Errorf("invalid value: %v", s)
-	}
-}
-
-func (s *JudgeNeed) Validate() error {
-	if s == nil {
-		return validate.ErrNilPointer
-	}
-
-	var failures []validate.FieldError
-	if err := func() error {
-		if err := s.Body.Validate(); err != nil {
-			return err
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "body",
-			Error: err,
-		})
-	}
-	if len(failures) > 0 {
-		return &validate.Error{Fields: failures}
-	}
-	return nil
-}
-
-func (s JudgeNeedBody) Validate() error {
-	switch s {
-	case "text":
-		return nil
-	case "json":
-		return nil
-	default:
-		return errors.Errorf("invalid value: %v", s)
-	}
-}
-
-func (s *JudgeRequestBody) Validate() error {
-	if s == nil {
-		return validate.ErrNilPointer
-	}
-
-	var failures []validate.FieldError
-	if err := func() error {
-		if value, ok := s.Form.Get(); ok {
-			if err := func() error {
-				if err := value.Validate(); err != nil {
-					return err
-				}
-				return nil
-			}(); err != nil {
-				return err
-			}
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "form",
-			Error: err,
-		})
-	}
-	if len(failures) > 0 {
-		return &validate.Error{Fields: failures}
-	}
-	return nil
-}
-
-func (s JudgeRequestBodyForm) Validate() error {
-	switch s {
-	case "text":
-		return nil
-	case "json":
+	case "delegation":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
@@ -2456,24 +2377,6 @@ func (s *JudgeRequestEvidence) Validate() error {
 	}
 
 	var failures []validate.FieldError
-	if err := func() error {
-		if value, ok := s.Body.Get(); ok {
-			if err := func() error {
-				if err := value.Validate(); err != nil {
-					return err
-				}
-				return nil
-			}(); err != nil {
-				return err
-			}
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "body",
-			Error: err,
-		})
-	}
 	if err := func() error {
 		if value, ok := s.Headers.Get(); ok {
 			if err := func() error {
@@ -2618,6 +2521,8 @@ func (s ListCredentialVerdictsKind) Validate() error {
 	case "command":
 		return nil
 	case "request":
+		return nil
+	case "delegation":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
@@ -3762,6 +3667,29 @@ func (s *PoolCPUUsage) Validate() error {
 	return nil
 }
 
+func (s *PoolCommandAsk) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if s.Command == nil {
+			return errors.New("nil is invalid value")
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "command",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
 func (s PoolDesiredState) Validate() error {
 	switch s {
 	case "present":
@@ -3786,6 +3714,29 @@ func (s PoolHealth) Validate() error {
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}
+}
+
+func (s *PoolHeldSandboxesBody) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if s.SandboxIds == nil {
+			return errors.New("nil is invalid value")
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "sandboxIds",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
 }
 
 func (s *PoolJudgeAsk) Validate() error {
@@ -5263,6 +5214,17 @@ func (s *SandboxCredential) Validate() error {
 	}
 
 	var failures []validate.FieldError
+	if err := func() error {
+		if s.Hosts == nil {
+			return errors.New("nil is invalid value")
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "hosts",
+			Error: err,
+		})
+	}
 	if err := func() error {
 		if value, ok := s.Uses.Get(); ok {
 			if err := func() error {

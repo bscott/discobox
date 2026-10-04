@@ -25,7 +25,6 @@ type CreateSecretRequestBody = apimodel.CreateSecretRequestBody
 type CreateSandboxCredentialRequestBody = apimodel.CreateSandboxCredentialRequestBody
 type CreateSandboxTrustRequestBody = apimodel.CreateSandboxTrustRequestBody
 type ApproveTrustRequestBody = apimodel.ApproveTrustRequestBody
-type RecordCredentialVerdictBody = apimodel.RecordCredentialVerdictBody
 type CreateSecretGrantBody = apimodel.CreateSecretGrantBody
 type CreateSSHKeyBody = apimodel.CreateSSHKeyBody
 type CreatePeerBody = apimodel.CreatePeerBody
@@ -361,6 +360,10 @@ type PoolService interface {
 	MintSandboxAgentStatusTokens(ctx context.Context, poolID string, input MintSandboxAgentStatusTokensBody) (*MintSandboxAgentStatusTokensResponseBody, error)
 	ReportSandboxAgentStatus(ctx context.Context, poolID string, input ReportSandboxAgentStatusBody) error
 	ReportPoolResources(ctx context.Context, poolID string, input ReportPoolResourcesBody) error
+	// ListPoolHeldSandboxes returns the ID of every sandbox row on the pool, in
+	// any state: the set whose trees the pool agent may not reap
+	// (ADR 26-10-01-876).
+	ListPoolHeldSandboxes(ctx context.Context, poolID string) ([]string, error)
 }
 
 // JobService exposes a project's pending reconcile work as jobs: each is a
@@ -405,9 +408,6 @@ type SecretService interface {
 	ListSandboxCredentials(ctx context.Context, poolID, sandboxID string) ([]store.AgentCredential, error)
 	CreateSandboxCredentialRequest(ctx context.Context, poolID string, input CreateSandboxCredentialRequestBody) (*model.SecretRequest, error)
 	GetSandboxCredentialRequest(ctx context.Context, poolID, sandboxID, requestID string) (*model.SecretRequest, *model.SecretGrant, error)
-	// RecordCredentialVerdict persists one judge decision, so a credential
-	// cannot be issued without a record of why (ADR 0091).
-	RecordCredentialVerdict(ctx context.Context, poolID string, input RecordCredentialVerdictBody) error
 	// ListCredentialVerdicts reads that record back for a project's members.
 	// Unlike the broker calls above it is a user read, scoped by project, and
 	// does not require the sandbox a verdict names to still exist.
@@ -558,9 +558,39 @@ type Services struct {
 	Judges JudgeService
 }
 
-// JudgeService puts a pool's ask to the judge of the project that owns it.
+// JudgeService puts a question to the judge of a project: a pool's ask about
+// one of its discoboxes' requests or commands, or the server's own about a
+// discobox handing a credential on.
 type JudgeService interface {
 	Judge(ctx context.Context, poolID string, ask JudgeAsk) (judge.Answer, error)
+	JudgeCommand(ctx context.Context, poolID string, ask CommandAsk) (judge.Answer, error)
+	JudgeDelegation(ctx context.Context, projectID string, ask DelegationAsk) (judge.Answer, error)
+}
+
+// DelegationAsk is a discobox about to hand a credential on by approving
+// another discobox's request: whether the uses it would grant fall within the
+// uses of the delegation grant it approves under (ADR 26-09-30-782 §3). It is
+// the server's own question, composed from the grant and the request it read,
+// so everything in it is what the server holds rather than what a discobox
+// said.
+type DelegationAsk struct {
+	// ApproverID is the discobox handing the credential on, and ForSandboxID
+	// the discobox it hands it to. RequestID is the request it is approving,
+	// and empty when it gives the uses on a create.
+	ApproverID   string
+	ForSandboxID string
+	RequestID    string
+	// DelegationGrantID is the delegation grant it approves under, which the
+	// verdict is recorded against.
+	DelegationGrantID string
+	// Delegated are the delegation grant's uses: what it may hand on for.
+	Delegated []string
+	// Uses are the uses it would grant: the request's, or the ones it
+	// narrowed them to.
+	Uses []string
+	// Credential and Hosts are what is handed on and where it may go.
+	Credential string
+	Hosts      []string
 }
 
 // JudgeAsk is a pool asking about one of its discoboxes' requests: which
@@ -584,6 +614,18 @@ type JudgeAsk struct {
 	// did not say. The rounds of one request share one deadline, so a later
 	// round arrives with less than the first had.
 	Timeout time.Duration
+}
+
+// CommandAsk is a pool asking about a command one of its discoboxes is about
+// to run under an approved use, before it mints anything for it
+// (ADR 26-09-22-838 §3). Everything in it is the discobox's: what the use
+// approves is read from the live grant, never taken from the ask.
+type CommandAsk struct {
+	SandboxID string
+	UseID     string
+	Command   []string
+	Stdin     *judge.Input
+	Reported  *judge.Reported
 }
 
 // ApprovedUse is what a request is judged against: the sentence a person

@@ -6,8 +6,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
-
-	"github.com/discobox-ai/discobox/pool-agent/sandboxruntime"
 )
 
 // Every sandbox-agent path this router forwards is named here, so a route the
@@ -96,7 +94,7 @@ func newServiceProxyRouter(t *testing.T, wantPath string) (http.Handler, func(st
 	publicKey, sign := testPoolTokenSigner(t)
 	router, err := NewRouter(Config{
 		Identity:              Identity{ProjectID: "project-1", PoolID: "pool-1"},
-		Runtime:               proxyTestRuntime{MemorySandboxRuntime: sandboxruntime.NewMemorySandboxRuntime(), baseURL: baseURL},
+		Runtime:               newProxyTestRuntime(t, baseURL),
 		ControlPlanePublicKey: publicKey,
 	})
 	if err != nil {

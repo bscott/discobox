@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/discobox-ai/discobox/agentcreds"
 	apiclientgen "github.com/discobox-ai/discobox/api/gen"
 	apimodel "github.com/discobox-ai/discobox/api/model"
 	"github.com/discobox-ai/discobox/cli/internal/lifetime"
@@ -469,6 +470,15 @@ func (a *App) writeSecret(cmd *cobra.Command, secret *apimodel.Secret) error {
 	fmt.Fprintf(tw, "TYPE\t%s\n", secret.Type)
 	fmt.Fprintf(tw, "HOST\t%s\n", secret.Host.Or(""))
 	fmt.Fprintf(tw, "MAX GRANT TTL\t%s\n", formatGrantLimit(secret.MaxGrantTTLSeconds))
+	// The sentinel shape, and whether somebody chose it: a set one is kept
+	// when the value changes, a read one is re-read.
+	if format := secret.Format.Or(""); format != "" {
+		source := "read from the value"
+		if secret.FormatSet.Or(false) {
+			source = "set"
+		}
+		fmt.Fprintf(tw, "FORMAT\t%s (%s)\n", format, source)
+	}
 	// What an OAuth credential is, which is the half of it that can be shown:
 	// where it renews, what it may do, and when the access token goes stale.
 	if oauth, ok := secret.OAuth.Get(); ok {
@@ -624,7 +634,7 @@ func (a *App) writeSecretGrant(cmd *cobra.Command, grant *apimodel.SecretGrant) 
 	fmt.Fprintf(tw, "SECRET\t%s\n", grant.SecretId)
 	fmt.Fprintf(tw, "SCOPE\t%s\n", grant.Scope)
 	fmt.Fprintf(tw, "SCOPE KEY\t%s\n", grant.ScopeKey)
-	fmt.Fprintf(tw, "HOST\t%s\n", grant.Host.Or("(any)"))
+	fmt.Fprintf(tw, "HOSTS\t%s\n", grantHostsText(grant.Hosts))
 	// A grant with uses came from an agent's request, and the uses are what an
 	// operator needs to see to decide whether it should still exist.
 	if uses, ok := grant.Uses.Get(); ok {
@@ -660,14 +670,14 @@ func (a *App) writeSecretGrants(cmd *cobra.Command, grants []apimodel.SecretGran
 		return writeJSON(cmd.OutOrStdout(), map[string]any{"secretGrants": grants})
 	}
 	tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tSECRET\tSCOPE\tSCOPE KEY\tHOST\tPURPOSE\tEXPIRES")
+	fmt.Fprintln(tw, "ID\tSECRET\tSCOPE\tSCOPE KEY\tHOSTS\tPURPOSE\tEXPIRES")
 	for _, grant := range grants {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			grant.ID,
 			grant.SecretId,
 			grant.Scope,
 			grant.ScopeKey,
-			grant.Host.Or("(any)"),
+			grantHostsText(grant.Hosts),
 			grant.Purpose,
 			formatGrantExpiry(&grant),
 		)
@@ -694,7 +704,7 @@ func (a *App) writeSecretRequest(cmd *cobra.Command, request *apimodel.SecretReq
 	fmt.Fprintf(tw, "ID\t%s\n", request.ID)
 	fmt.Fprintf(tw, "REQUESTED BY\t%s\n", request.RequestedBy)
 	fmt.Fprintf(tw, "TYPE\t%s\n", request.Type)
-	fmt.Fprintf(tw, "HOST\t%s\n", request.Host.Or(""))
+	fmt.Fprintf(tw, "HOSTS\t%s\n", strings.Join(request.Hosts, ", "))
 	fmt.Fprintf(tw, "STATUS\t%s\n", request.Status)
 	// What an agent asked for and why is the whole basis for approving it, so it
 	// belongs in the detail view rather than only in the JSON.
@@ -716,7 +726,7 @@ func (a *App) writeSecretRequest(cmd *cobra.Command, request *apimodel.SecretReq
 			fmt.Fprintf(tw, "%s\t%s\n", label, use.Description)
 		}
 	}
-	if asked := lifetime.FromRequest(request.GrantTTLSeconds.Or(0)); asked > 0 {
+	if asked := agentcreds.AskedGrantTTL(request.GrantTTLSeconds.Or(0)); asked > 0 {
 		fmt.Fprintf(tw, "WANTED FOR\t%s\n", lifetime.Label(asked))
 	}
 	if purpose, ok := request.Purpose.Get(); ok {
@@ -754,7 +764,7 @@ func (a *App) writeSecretRequests(cmd *cobra.Command, requests []apimodel.Secret
 		return writeJSON(cmd.OutOrStdout(), map[string]any{"secretRequests": requests})
 	}
 	tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tTYPE\tHOST\tPURPOSE\tSTATUS\tSECRET\tDISCOBOX\tREQUESTED BY\tUPDATED")
+	fmt.Fprintln(tw, "ID\tTYPE\tHOSTS\tPURPOSE\tSTATUS\tSECRET\tDISCOBOX\tREQUESTED BY\tUPDATED")
 	for _, request := range requests {
 		// A refresh request asks for a new value, not a grant: its purpose
 		// column says so, and why it was opened.
@@ -768,7 +778,7 @@ func (a *App) writeSecretRequests(cmd *cobra.Command, requests []apimodel.Secret
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			request.ID,
 			request.Type,
-			request.Host.Or(""),
+			strings.Join(request.Hosts, ","),
 			purpose,
 			request.Status,
 			request.SecretId.Or(""),
@@ -1243,4 +1253,13 @@ func optString(value string) apiclientgen.OptString {
 		return apiclientgen.OptString{}
 	}
 	return apiclientgen.NewOptString(value)
+}
+
+// grantHostsText is where a grant lets its credential go, as a table says it:
+// its hosts, or "(any)" for the wildcard.
+func grantHostsText(hosts []string) string {
+	if len(hosts) > 0 {
+		return strings.Join(hosts, ",")
+	}
+	return "(any)"
 }

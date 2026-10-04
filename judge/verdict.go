@@ -16,7 +16,7 @@ import (
 const Schema = `{"type":"object","properties":{` +
 	`"allow":{"type":"boolean"},` +
 	`"reason":{"type":"string"},` +
-	`"need":{"type":"object","properties":{"body":{"type":"string","enum":["text","json"]},"bytes":{"type":"integer"}},"required":["body"],"additionalProperties":false},` +
+	`"need":{"type":"object","properties":{"body":{"type":"boolean","enum":[true]},"bytes":{"type":"integer"}},"required":["body"],"additionalProperties":false},` +
 	`"standing":{"type":"object","properties":{"route":{"type":"string"},"seconds":{"type":"integer"}},"required":["route","seconds"],"additionalProperties":false}` +
 	`},"required":["reason"],"additionalProperties":false}`
 
@@ -42,11 +42,13 @@ type Answer struct {
 // Decided reports whether this answer settles the job.
 func (a Answer) Decided() bool { return a.Need == nil }
 
-// Need is the judge asking to be shown a request's body, in one form, with a
-// budget it may name and Discobox caps.
+// Need is the judge asking to be shown a request's body, with a budget it may
+// name and Discobox caps. It names no form: the body is always shown in one
+// shape, rendered the way its parser renders it (ADR 26-09-26-240 §2).
 type Need struct {
-	Body  string `json:"body"`
-	Bytes int    `json:"bytes,omitempty"`
+	// Body is always true in an ask; it is what the ask is for.
+	Body  bool `json:"body"`
+	Bytes int  `json:"bytes,omitempty"`
 }
 
 // Budget is how much of the body this ask is answered with: what was asked
@@ -95,7 +97,7 @@ func Decode(data []byte) (Answer, error) {
 		}
 		switch key {
 		case "allow":
-			value, err := readBool(decoder)
+			value, err := readBool(decoder, "allow")
 			if err != nil {
 				return Answer{}, err
 			}
@@ -150,8 +152,7 @@ func Decode(data []byte) (Answer, error) {
 	return answer, nil
 }
 
-// readNeed reads what the judge asked to be shown, which is a body in one of
-// the two forms it may be written in.
+// readNeed reads what the judge asked to be shown, which is the body.
 func readNeed(decoder *json.Decoder) (*Need, error) {
 	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
 		return nil, errors.New("an ask says what it needs to be shown")
@@ -165,14 +166,11 @@ func readNeed(decoder *json.Decoder) (*Need, error) {
 		}
 		switch key {
 		case "body":
-			form, err := readString(decoder, "body")
+			value, err := readBool(decoder, "body")
 			if err != nil {
 				return nil, err
 			}
-			if form != FormText && form != FormJSON {
-				return nil, fmt.Errorf("a body is shown as %s or %s, not %q", FormText, FormJSON, form)
-			}
-			need.Body = form
+			need.Body = value
 		case "bytes":
 			value, err := readInt(decoder, "bytes")
 			if err != nil {
@@ -186,7 +184,7 @@ func readNeed(decoder *json.Decoder) (*Need, error) {
 	if err := endObject(decoder); err != nil {
 		return nil, err
 	}
-	if need.Body == "" {
+	if !need.Body {
 		return nil, errors.New("an ask says what it needs to be shown")
 	}
 	return &need, nil
@@ -196,7 +194,13 @@ func readNeed(decoder *json.Decoder) (*Need, error) {
 // route must parse here: a standing route Discobox cannot read is a verdict
 // it cannot read, and whether a readable one stands is Job.Admits's to say.
 func readStanding(decoder *json.Decoder) (*Standing, error) {
-	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+	token, err := decoder.Token()
+	if err == nil && token == nil {
+		// "standing": null is a judge saying the allow does not stand, as
+		// leaving the key out is.
+		return nil, nil
+	}
+	if err != nil || token != json.Delim('{') {
 		return nil, errors.New("a standing allow names a route and how long")
 	}
 	var (
@@ -225,7 +229,7 @@ func readStanding(decoder *json.Decoder) (*Standing, error) {
 			if err != nil {
 				return nil, err
 			}
-			if value <= 0 {
+			if value < 0 {
 				return nil, errors.New("a standing allow stands for some seconds")
 			}
 			standing.Seconds, seconds = value, true
@@ -238,6 +242,11 @@ func readStanding(decoder *json.Decoder) (*Standing, error) {
 	}
 	if !route || !seconds {
 		return nil, errors.New("a standing allow names a route and how long")
+	}
+	if standing.Seconds == 0 {
+		// Standing for no time is not standing. The allow is read without
+		// it: dropping a standing allow only narrows what was allowed.
+		return nil, nil
 	}
 	return &standing, nil
 }
@@ -262,14 +271,14 @@ func readKey(decoder *json.Decoder, seen map[string]bool) (string, error) {
 	return key, nil
 }
 
-func readBool(decoder *json.Decoder) (bool, error) {
+func readBool(decoder *json.Decoder, field string) (bool, error) {
 	token, err := decoder.Token()
 	if err != nil {
 		return false, fmt.Errorf("the judge's answer is not a verdict: %w", err)
 	}
 	value, ok := token.(bool)
 	if !ok {
-		return false, errors.New("allow is true or false")
+		return false, fmt.Errorf("%s is true or false", field)
 	}
 	return value, nil
 }

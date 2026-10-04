@@ -11,17 +11,18 @@ import (
 
 	apiclientgen "github.com/discobox-ai/discobox/api/gen"
 	"github.com/discobox-ai/discobox/endpoint"
+	idpkg "github.com/discobox-ai/x/id"
 )
 
 // newCPCommand implements `discobox cp`: scp(1), pointed at the same SSH
-// ingress `discobox tools ssh` uses.
+// ingress `discobox tools ssh` uses, through the same ProxyCommand.
 //
 // Nothing here copies bytes. The server's sshd already answers the `sftp`
 // subsystem by running the sandbox's `sftp-server` as an exec
 // (`server/internal/sshd/session.go`), which is exactly what a modern scp
 // speaks, so the whole transfer — recursion, permissions, resumed directories —
 // is scp's and the sandbox's business. What this command owns is the one thing
-// scp cannot work out for itself: which loopback port, key and host key reach a
+// scp cannot work out for itself: which proxy, key and host key reach a
 // discobox, and which discobox a `NAME:PATH` argument means.
 func (a *App) newCPCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -46,15 +47,16 @@ local path.
 Both ends may name a discobox, and they need not be the same discobox — but
 they must be on the same server, since one copy runs over one connection. An
 address says which server that is, and a name or a bare :PATH beside one is
-looked up there rather than on the primary.
+looked up there rather than on the primary. Without an address, each one is
+looked for on every server "discobox ls" lists.
 
 Relative remote paths are resolved from the discobox user's home directory, not
 from a source working tree.
 
-The server needs no SSH port for this: the transfer is carried over the same
-endpoint the API uses, through a loopback port that exists only while the
-command runs. Key and host verification are supplied here, so nothing is written
-to your ssh_config; the key is enrolled in the project and reused on later runs.
+The server needs no SSH port for this: scp reaches it over the same endpoint
+the API uses, by running this CLI as its ProxyCommand. Key and host
+verification are supplied here, so nothing is written to your ssh_config; the
+key is enrolled in the project and reused on later runs.
 
 Every other argument is passed to scp untouched, so its own flags — -r, -p, -C,
 -o — mean what they always mean. That includes the ones this CLI otherwise
@@ -87,7 +89,7 @@ func (a *App) runCP(cmd *cobra.Command, args []string) error {
 	}
 	// The operands are read before anything is contacted, so a command that
 	// asks for a copy this cannot make — one with no discobox in it — says so
-	// without first starting a server or opening a bridge.
+	// without first starting a server or enrolling a key.
 	operands := parseCPOperands(paths)
 	if !slices.ContainsFunc(operands, func(operand cpOperand) bool { return operand.remote }) {
 		return fmt.Errorf("no discobox was named: write a path as DISCOBOX:PATH, or :PATH for this directory's discobox")
@@ -101,18 +103,18 @@ func (a *App) runCP(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	bridge, err := target.app.startSSHBridgeSession(cmd, target.client, target.projectID)
+	session, err := target.app.startSSHClientSession(cmd, target.client, target.projectID)
 	if err != nil {
 		return err
 	}
-	defer bridge.close()
+	defer session.close()
 
-	return runOverSSHBridge(cmd, "scp", scpArgs(scpInvocation{
-		bridge:   scpBridgeArgs(bridge.port(), bridge.identity, bridge.knownHosts),
+	return runSSHClient(cmd, "scp", scpArgs(scpInvocation{
+		session:  session.options,
 		options:  options,
 		operands: rewritten,
 		remote:   cpOperandsAreRemote(operands),
-	}))
+	}), session.env)
 }
 
 // cpTarget is the server a copy runs against and what it took to decide: the
@@ -120,8 +122,8 @@ func (a *App) runCP(cmd *cobra.Command, args []string) error {
 // on the way, since an address resolves as it is read.
 //
 // Every reference in one command resolves there, a name and a bare `:PATH`
-// included: one scp runs over one bridge, so the server an address names is
-// the only one this copy can reach.
+// included: one scp runs one ProxyCommand, aimed at one server, so the server
+// an address names is the only one this copy can reach.
 type cpTarget struct {
 	app       *App
 	client    *apiclientgen.Client
@@ -135,10 +137,12 @@ type cpTarget struct {
 //
 // An address names its server (ADR 0116 §6), so the first one decides it —
 // and registers it, since it resolves through selectSandbox like every other
-// address. One scp runs over one bridge, so a second address naming a
+// address. One scp is pointed at one server, so a second address naming a
 // different server is refused rather than half-copied; a name or an ID in the
 // same command then resolves on the server the address chose, which is the
-// only one this copy can reach.
+// only one this copy can reach. With no address, every reference is looked for
+// on every server (ADR 0116 §4) once there is more than one, and the server
+// they are on is the one the copy runs against.
 func (a *App) resolveCPTarget(cmd *cobra.Command, operands []cpOperand) (cpTarget, error) {
 	target := cpTarget{app: a, resolved: map[string]string{}}
 	// Everything decidable from the operands is decided first, so a copy this
@@ -192,6 +196,13 @@ func (a *App) resolveCPTarget(cmd *cobra.Command, operands []cpOperand) (cpTarge
 	if target.client != nil {
 		return target, nil
 	}
+	set, err := a.servers()
+	if err != nil {
+		return cpTarget{}, err
+	}
+	if len(set) > 1 {
+		return a.resolveCPTargetOnEveryServer(cmd, set, operands)
+	}
 	projectID, err := a.projectIDValue()
 	if err != nil {
 		return cpTarget{}, err
@@ -202,6 +213,56 @@ func (a *App) resolveCPTarget(cmd *cobra.Command, operands []cpOperand) (cpTarge
 	}
 	target.projectID, target.client = projectID, client
 	return target, nil
+}
+
+// resolveCPTargetOnEveryServer is resolveCPTarget for a copy that names no
+// address once more than one server is known (ADR 0116 §4). Each distinct
+// reference is resolved by resolveCPSandbox's rule across every server, and
+// the copy runs against the server they are on — which has to be one server,
+// for the reason an address has to be.
+func (a *App) resolveCPTargetOnEveryServer(cmd *cobra.Command, set []*server, operands []cpOperand) (cpTarget, error) {
+	var (
+		on          *server
+		firstID     string
+		candidates  []serverSandbox
+		unreachable []unansweredServer
+		listed      bool
+	)
+	resolved := map[string]string{}
+	for _, operand := range operands {
+		if !operand.remote {
+			continue
+		}
+		if _, seen := resolved[operand.reference]; seen {
+			continue
+		}
+		// Listed once, and only for a reference that needs it: a copy naming
+		// its discoboxes by full ID asks for them and nothing else.
+		if !listed && !idpkg.IsGenerated(idpkg.Canonical(idpkg.PrefixSandbox, operand.reference)) {
+			var err error
+			if candidates, unreachable, err = a.sandboxCandidates(cmd.Context(), false); err != nil {
+				return cpTarget{}, err
+			}
+			listed = true
+		}
+		s, sandboxID, err := a.resolveCPSandboxOnEveryServer(cmd, set, candidates, unreachable, operand.reference)
+		if err != nil {
+			return cpTarget{}, err
+		}
+		if on != nil && s != on {
+			return cpTarget{}, fmt.Errorf("one copy reaches one server, and these discoboxes are on two (%s on %s, %s on %s): copy through this machine in two commands",
+				firstID, on.name, sandboxID, s.name)
+		}
+		if on == nil {
+			on, firstID = s, sandboxID
+		}
+		resolved[operand.reference] = sandboxID
+	}
+	projectID, client, err := on.projectClient(cmd.Context())
+	if err != nil {
+		return cpTarget{}, err
+	}
+	return cpTarget{app: on.app, client: client, projectID: projectID, resolved: resolved}, nil
 }
 
 // cpOperand is one path to copy, as written: local, or inside the discobox a
@@ -254,10 +315,10 @@ func cpOperandsAreRemote(operands []cpOperand) []bool {
 }
 
 // scpInvocation is everything the argument list is assembled from: what points
-// scp at the bridge, the user's own options, the rewritten operands, and which
-// of those operands are inside a discobox.
+// scp at the server (sshClientSession.options), the user's own options, the
+// rewritten operands, and which of those operands are inside a discobox.
 type scpInvocation struct {
-	bridge   []string
+	session  []string
 	options  []string
 	operands []string
 	remote   []bool
@@ -266,26 +327,26 @@ type scpInvocation struct {
 // scpArgs assembles the argument list in the order `scp [options] source ...
 // target` requires.
 func scpArgs(invocation scpInvocation) []string {
-	// Cloned, not appended to in place: scpBridgeArgs leaves spare capacity
-	// behind, and appending into a caller's slice would write past what it
-	// thinks it owns.
-	args := slices.Clone(invocation.bridge)
+	// Cloned, not appended to in place: appending into a caller's slice
+	// would write past what it thinks it owns.
+	args := slices.Clone(invocation.session)
 	last := len(invocation.remote) - 1
 	if last >= 0 && invocation.remote[last] && slices.Contains(invocation.remote[:last], true) {
 		// Discobox to discobox, routed through this process — the only place
-		// both ends are reachable from, since each is a loopback port on this
-		// machine that means nothing inside a sandbox. Current OpenSSH already
-		// routes an sftp-mode copy this way and -3 changes nothing there; it is
-		// pinned because the direct path is one `-R`, one older client, or one
-		// ssh_config default away, and it cannot work here — the source dials
-		// 127.0.0.1:22 inside its own sandbox and is refused.
+		// both ends are reachable from, since each is a host alias whose
+		// ProxyCommand runs on this machine and means nothing inside a
+		// sandbox; each end runs its own. Current OpenSSH already routes an
+		// sftp-mode copy this way and -3 changes nothing there; it is pinned
+		// because the direct path is one `-R`, one older client, or one
+		// ssh_config default away, and it cannot work here — the source would
+		// look up the destination's alias inside its own sandbox and fail.
 		args = append(args, "-3")
 	}
 	args = append(args, invocation.options...)
 	// `--` ends scp's options for good: a rewritten remote operand is
-	// `sbx_…@127.0.0.1:…` and can never look like a flag, but a local one the
-	// user wrote as `-x` still would, and scp reads options after operands the
-	// way glibc's getopt permutes them.
+	// `sbx_…@sbx_….discobox.internal:…` and can never look like a flag, but a
+	// local one the user wrote as `-x` still would, and scp reads options after
+	// operands the way glibc's getopt permutes them.
 	args = append(args, "--")
 	return append(args, invocation.operands...)
 }
@@ -315,7 +376,7 @@ func (a *App) resolveCPOperands(cmd *cobra.Command, client *apiclientgen.Client,
 			}
 			resolved[operand.reference] = sandboxID
 		}
-		rewritten = append(rewritten, sandboxID+"@"+sshBridgeHost+":"+operand.path)
+		rewritten = append(rewritten, sandboxID+"@"+sshClientHost(sandboxID)+":"+operand.path)
 	}
 	return rewritten, nil
 }
@@ -341,8 +402,8 @@ func (a *App) resolveCPSandbox(cmd *cobra.Command, client *apiclientgen.Client, 
 	}
 	if reference == "" {
 		return pickOne(cmd, "Select a discobox", sandboxPickerItems(sandboxes, ""), pickerOptions{
-			empty:     "no discoboxes were started from this directory; start one with `discobox new`, or name one before the colon",
-			ambiguous: "more than one discobox was started from this directory; name one before the colon",
+			empty:     cpPickEmpty,
+			ambiguous: cpPickAmbiguous,
 			recentKey: "sandbox:" + projectID,
 			expand:    a.sandboxPickerExpansion(cmd.Context(), client, projectID),
 		})
@@ -350,6 +411,43 @@ func (a *App) resolveCPSandbox(cmd *cobra.Command, client *apiclientgen.Client, 
 	// configuredName: what cp accepts before a colon is `shell`'s rule, and
 	// widening it to the window title is a change to cp, not to this command.
 	return a.resolveSandboxReference(cmd.Context(), client, projectID, reference, sandboxes, configuredName)
+}
+
+// What cp's picker says when a bare :PATH has no discobox, or more than one,
+// to mean: the way out is a reference before the colon.
+const (
+	cpPickEmpty     = "no discoboxes were started from this directory; start one with `discobox new`, or name one before the colon"
+	cpPickAmbiguous = "more than one discobox was started from this directory; name one before the colon"
+)
+
+// resolveCPSandboxOnEveryServer is resolveCPSandbox across every server, and
+// the server the discobox is on. candidates is what `discobox ls` lists across
+// them, which a full generated ID does not need: that is asked of every server
+// directly, the primary first.
+//
+// The rest keeps resolveSandboxReference's asymmetry. A name or short ID is
+// matched among the candidates; a short ID that matches none is still looked
+// for project-wide, on every server; a name that matches none is an error.
+func (a *App) resolveCPSandboxOnEveryServer(cmd *cobra.Command, set []*server, candidates []serverSandbox, unreachable []unansweredServer, reference string) (*server, string, error) {
+	if reference == "" {
+		return a.pickServerSandbox(cmd, set, candidates, unreachable, cpPickEmpty, cpPickAmbiguous)
+	}
+	if id := idpkg.Canonical(idpkg.PrefixSandbox, reference); idpkg.IsGenerated(id) {
+		s, _, sandboxID, _, err := a.findOnEveryServer(cmd.Context(), set, id)
+		return s, sandboxID, err
+	}
+	// configuredName, as in resolveCPSandbox.
+	if s, sandboxID, ok, err := matchServerSandboxArg(reference, candidates, configuredName); err != nil || ok {
+		return s, sandboxID, err
+	}
+	if !isResolvableShortID(idpkg.Canonical(idpkg.PrefixSandbox, reference)) {
+		return nil, "", unmatchedSandboxName(reference)
+	}
+	s, _, sandboxID, _, err := a.findOnEveryServer(cmd.Context(), set, reference)
+	if err != nil {
+		return nil, "", unmatchedSandboxReference(reference, err)
+	}
+	return s, sandboxID, nil
 }
 
 // splitCPPath decides whether an operand names a discobox, and splits it if it

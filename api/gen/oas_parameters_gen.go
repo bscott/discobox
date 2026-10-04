@@ -6831,6 +6831,72 @@ func decodeGetTrustRequestParams(args [2]string, argsEscaped bool, r *http.Reque
 	return params, nil
 }
 
+// JudgeCommandForPoolParams is parameters of judge-command-for-pool operation.
+type JudgeCommandForPoolParams struct {
+	// Pool ID.
+	PoolId string
+}
+
+func unpackJudgeCommandForPoolParams(packed middleware.Parameters) (params JudgeCommandForPoolParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "poolId",
+			In:   "path",
+		}
+		params.PoolId = packed[key].(string)
+	}
+	return params
+}
+
+func decodeJudgeCommandForPoolParams(args [1]string, argsEscaped bool, r *http.Request) (params JudgeCommandForPoolParams, _ error) {
+	// Decode path: poolId.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "poolId",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.PoolId = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "poolId",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // JudgeForPoolParams is parameters of judge-for-pool operation.
 type JudgeForPoolParams struct {
 	// Pool ID.
@@ -10701,6 +10767,72 @@ func decodeListJobsParams(args [1]string, argsEscaped bool, r *http.Request) (pa
 	return params, nil
 }
 
+// ListPoolHeldSandboxesParams is parameters of list-pool-held-sandboxes operation.
+type ListPoolHeldSandboxesParams struct {
+	// Pool ID.
+	PoolId string
+}
+
+func unpackListPoolHeldSandboxesParams(packed middleware.Parameters) (params ListPoolHeldSandboxesParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "poolId",
+			In:   "path",
+		}
+		params.PoolId = packed[key].(string)
+	}
+	return params
+}
+
+func decodeListPoolHeldSandboxesParams(args [1]string, argsEscaped bool, r *http.Request) (params ListPoolHeldSandboxesParams, _ error) {
+	// Decode path: poolId.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "poolId",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.PoolId = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "poolId",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // ListPoolHostTrustsParams is parameters of list-pool-host-trusts operation.
 type ListPoolHostTrustsParams struct {
 	// Pool ID.
@@ -14182,72 +14314,6 @@ func decodeReconcileSandboxParams(args [2]string, argsEscaped bool, r *http.Requ
 	}(); err != nil {
 		return params, &ogenerrors.DecodeParamError{
 			Name: "sandboxId",
-			In:   "path",
-			Err:  err,
-		}
-	}
-	return params, nil
-}
-
-// RecordCredentialVerdictParams is parameters of record-credential-verdict operation.
-type RecordCredentialVerdictParams struct {
-	// Pool ID.
-	PoolId string
-}
-
-func unpackRecordCredentialVerdictParams(packed middleware.Parameters) (params RecordCredentialVerdictParams) {
-	{
-		key := middleware.ParameterKey{
-			Name: "poolId",
-			In:   "path",
-		}
-		params.PoolId = packed[key].(string)
-	}
-	return params
-}
-
-func decodeRecordCredentialVerdictParams(args [1]string, argsEscaped bool, r *http.Request) (params RecordCredentialVerdictParams, _ error) {
-	// Decode path: poolId.
-	if err := func() error {
-		param := args[0]
-		if argsEscaped {
-			unescaped, err := url.PathUnescape(args[0])
-			if err != nil {
-				return errors.Wrap(err, "unescape path")
-			}
-			param = unescaped
-		}
-		if len(param) > 0 {
-			d := uri.NewPathDecoder(uri.PathDecoderConfig{
-				Param:   "poolId",
-				Value:   param,
-				Style:   uri.PathStyleSimple,
-				Explode: false,
-			})
-
-			if err := func() error {
-				val, err := d.DecodeValue()
-				if err != nil {
-					return err
-				}
-
-				c, err := conv.ToString(val)
-				if err != nil {
-					return err
-				}
-
-				params.PoolId = c
-				return nil
-			}(); err != nil {
-				return err
-			}
-		} else {
-			return validate.ErrFieldRequired
-		}
-		return nil
-	}(); err != nil {
-		return params, &ogenerrors.DecodeParamError{
-			Name: "poolId",
 			In:   "path",
 			Err:  err,
 		}

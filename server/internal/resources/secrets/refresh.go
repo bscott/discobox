@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	apigen "github.com/discobox-ai/discobox/api/gen"
-	"github.com/discobox-ai/discobox/secretformat"
+	"github.com/discobox-ai/discobox/hostscope"
 	"github.com/discobox-ai/discobox/server/internal/apperrors"
 	"github.com/discobox-ai/discobox/server/internal/auth"
 	"github.com/discobox-ai/discobox/server/internal/model"
@@ -245,7 +245,7 @@ func (s *Service) openRefreshRequest(ctx context.Context, secret *model.Secret, 
 		RequestedBy:  "sandbox:" + sandboxID,
 		SandboxID:    sandboxID,
 		Type:         secret.Type,
-		Host:         secret.Host,
+		Hosts:        hostscope.List(secret.Host),
 		SecretID:     secret.ID,
 		Name:         secret.Name,
 		Status:       model.SecretRequestStatusPending,
@@ -354,7 +354,6 @@ func (s *Service) RefreshSecret(ctx context.Context, projectID, secretID string,
 			return apperrors.NewStatusError(http.StatusBadRequest, "invalid secret value")
 		}
 		sec.EncryptedValue = valueBytes
-		sec.Format = secretformat.Describe(value)
 		sec.ValueWritten(now, expiresAt)
 		return txStore.UpdateSecret(ctx, sec)
 	})

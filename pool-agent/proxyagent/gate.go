@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -152,7 +153,7 @@ func (r *secretResolver) gateActivation(sandboxID, sentinel string) (activation,
 		return activation{}, false
 	}
 	record, ok := r.activations.lookup(sentinel)
-	if !ok || record.SandboxID != sandboxID || !strings.EqualFold(record.Host, GateHost()) {
+	if !ok || record.SandboxID != sandboxID || !slices.Equal(record.Hosts, []string{GateHost()}) {
 		return activation{}, false
 	}
 	return record, true

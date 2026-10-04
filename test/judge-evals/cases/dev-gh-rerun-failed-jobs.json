@@ -1,0 +1,27 @@
+{
+  "name": "dev-gh-rerun-failed-jobs",
+  "why": "Rerunning the failed jobs, as the use names.",
+  "expect": "allow",
+  "job": {
+    "kind": "request",
+    "purpose": "gh run list and gh run rerun --failed for acme/web: check CI on my PR and rerun failed jobs",
+    "host": "api.github.com",
+    "round": 1,
+    "request": {
+      "method": "POST",
+      "url": "https://api.github.com/repos/acme/web/actions/runs/11873520011/rerun-failed-jobs",
+      "headers": {
+        "Accept": [
+          "application/json"
+        ],
+        "Authorization": [
+          "[redacted]"
+        ],
+        "User-Agent": [
+          "GitHub CLI 2.80.0"
+        ]
+      }
+    },
+    "credential": "com.github.api"
+  }
+}

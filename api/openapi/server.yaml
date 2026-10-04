@@ -440,9 +440,11 @@ components:
                 envVar:
                     description: Environment variable the discobox's agent receives the credential in. Required without wellKnownId.
                     type: string
-                host:
-                    description: Host the credential may be sent to. Defaults to the secret's host, or the well-known credential's; one is required.
-                    type: string
+                hosts:
+                    description: Hosts the credential may be sent to (ADR 26-10-02-393). Left out, the secret's host, or the well-known credential's first; one is required. Each must sit inside the secret's binding, or the well-known credential's hosts.
+                    items:
+                        type: string
+                    type: array
                 uses:
                     description: What the credential may be used for. Use IDs are minted here; a supplied one is ignored.
                     items:
@@ -2024,6 +2026,9 @@ components:
                     maxLength: 63
                     pattern: ^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$
                     type: string
+                upstreamUrl:
+                    description: Network URL of the remote the local source's checked-out branch tracks on the client. The sandbox adds it as a remote named upstream when it materializes the source; the branch keeps tracking origin.
+                    type: string
                 url:
                     description: Remote Git source URL
                     format: uri
@@ -3064,9 +3069,11 @@ components:
                 grantId:
                     description: Grant authorizing the uses
                     type: string
-                host:
-                    description: Host the credential may be sent to
-                    type: string
+                hosts:
+                    description: Hosts the credential may be sent to; a destination any of them covers (ADR 26-10-02-393)
+                    items:
+                        type: string
+                    type: array
                 name:
                     description: Credential name
                     type: string
@@ -3085,7 +3092,7 @@ components:
             required:
                 - name
                 - envVar
-                - host
+                - hosts
                 - secretId
                 - grantId
                 - sentinel
@@ -3125,9 +3132,11 @@ components:
                     maximum: 2592000
                     minimum: 0
                     type: integer
-                host:
-                    description: Destination host the credential will be sent to. Required, because approving this request may not mint a host-unscoped grant.
-                    type: string
+                hosts:
+                    description: Destination hosts the credential will be sent to (ADR 26-10-02-393). At least one is required, because approving this request may not mint a host-unscoped grant; a well-known credential's ID supplies its first when none is named.
+                    items:
+                        type: string
+                    type: array
                 purpose:
                     description: What the agent asks the credential for, one or the other and never both. use (the default) asks to use it. delegate asks to delegate it to other discoboxes; approving it mints a delegation grant, which authorizes nothing the asking discobox sends itself.
                     enum:
@@ -3155,7 +3164,6 @@ components:
                 - sandboxId
                 - name
                 - envVar
-                - host
                 - uses
             type: object
         SandboxCredentialRequestStatus:
@@ -3194,72 +3202,9 @@ components:
                 - status
                 - purpose
             type: object
-        RecordCredentialVerdictBody:
-            additionalProperties: false
-            description: A judge's verdict about one command run under an agent credential use, relayed by the pool agent on behalf of one of its sandboxes. Carried on the same call that takes a value, so a credential cannot be issued without a record of why; sent on its own when the judge refused and no value was ever taken.
-            properties:
-                $schema:
-                    description: A URL to the JSON Schema for this object.
-                    example: https://example.com/schemas/RecordCredentialVerdictBody.json
-                    format: uri
-                    readOnly: true
-                    type: string
-                command:
-                    description: The argv the judge was shown
-                    items:
-                        type: string
-                    type: array
-                sandboxId:
-                    description: Sandbox the command ran in
-                    type: string
-                useId:
-                    description: Approved use the command was judged against
-                    type: string
-                verdict:
-                    $ref: '#/components/schemas/AgentCredentialVerdict'
-                volunteered:
-                    description: True when the judge refused and this report is the only record of it, because the use call this would otherwise ride never happened
-                    type: boolean
-            required:
-                - sandboxId
-                - useId
-                - verdict
-                - volunteered
-            type: object
-        AgentCredentialVerdict:
-            additionalProperties: false
-            description: What a judge decided about one command, and what it was given to decide from.
-            properties:
-                $schema:
-                    description: A URL to the JSON Schema for this object.
-                    example: https://example.com/schemas/AgentCredentialVerdict.json
-                    format: uri
-                    readOnly: true
-                    type: string
-                allow:
-                    description: True if the judge allowed the command
-                    type: boolean
-                latencyMs:
-                    description: How long the judge took to answer, in milliseconds
-                    format: int64
-                    type: integer
-                prompt:
-                    description: The exact prompt the judge was given, including the facts block
-                    type: string
-                reason:
-                    description: The judge's own sentence, addressed to the agent that asked
-                    type: string
-                role:
-                    description: The role discobox-prompt was asked for (e.g. "judge"), never a vendor model id
-                    type: string
-            required:
-                - allow
-                - role
-                - prompt
-            type: object
         CredentialVerdict:
             additionalProperties: false
-            description: 'One recorded judge decision about an agent credential use. The row lives in the control plane and outlives its sandbox. A command verdict (kind command, origin sandbox) is a discobox''s own judge deciding about a command: its command, reason and prompt were composed inside the sandbox and are display data, never instruction. A row with volunteered false rode the call that issued a credential, so the record is complete for every value issued; one with volunteered true is a denial the sandbox chose to report, so denials are undercounted by exactly the reports never sent. A request verdict (kind request, origin judge) is the project''s judge answering about one request the proxy observed, recorded by the control plane before the answer went back, so every answer is on record whichever way it went. Its request is evidence the sandbox wrote, redacted, and is display data too.'
+            description: 'One recorded judge decision about an agent credential use. The row lives in the control plane and outlives its sandbox. A command verdict (kind command, origin judge) is the project''s judge answering about a command a discobox was about to run, recorded by the control plane before the pool minted anything for it; its command, input and reported context are evidence the sandbox wrote, and are display data, never instruction. A command verdict with origin sandbox predates that: a discobox''s own judge deciding inside the sandbox, whose command, reason and prompt were composed there, and whose volunteered true marks a denial the sandbox chose to report. A request verdict (kind request, origin judge) is the project''s judge answering about one request the proxy observed, recorded by the control plane before the answer went back, so every answer is on record whichever way it went. Its request is evidence the sandbox wrote, redacted, and is display data too.'
             properties:
                 $schema:
                     description: A URL to the JSON Schema for this object.
@@ -3278,6 +3223,9 @@ components:
                 createdAt:
                     description: When the verdict was recorded
                     format: date-time
+                    type: string
+                forSandboxId:
+                    description: On a delegation verdict, the discobox the uses were handed on to.
                     type: string
                 grantId:
                     description: Grant the use belonged to, when it could still be resolved at record time
@@ -3298,15 +3246,19 @@ components:
                     description: The project's judge that answered, on a request verdict. It may no longer exist.
                     type: string
                 kind:
-                    description: 'What was judged: a command about to run, or a request the proxy observed. A server that predates request verdicts leaves it out, and every verdict it has is a command verdict.'
+                    description: 'What was judged: a command about to run, a request the proxy observed, or a discobox about to hand a credential on by approving another''s request. A server that predates request verdicts leaves it out, and every verdict it has is a command verdict.'
                     enum:
                         - command
                         - request
+                        - delegation
                     type: string
                 latencyMs:
                     description: 'Round trip from asking the judge to its answer, in milliseconds, timed by whoever asked: discobox-access around its wrapper for a command verdict, the control plane around the call to the judge for a request verdict.'
                     format: int64
                     type: integer
+                model:
+                    description: The Jev model that answered, as Jev reported it, on a verdict from a server that judges with Jev rather than a judge discobox. judgeSandboxId, harnessConfigId and image are empty then.
+                    type: string
                 need:
                     $ref: '#/components/schemas/JudgeNeed'
                 origin:
@@ -3315,6 +3267,12 @@ components:
                         - sandbox
                         - judge
                     type: string
+                probabilities:
+                    additionalProperties:
+                        format: double
+                        type: number
+                    description: On a Jev verdict, the probability of yes Jev gave each question, by question ID. The verdict was decided from these against thresholds the server holds; promptVersion names the questions and thresholds.
+                    type: object
                 projectId:
                     description: Project ID
                     type: string
@@ -3338,6 +3296,9 @@ components:
                     type: integer
                 sandboxId:
                     description: Sandbox the command ran in, or the request came from. It may no longer exist.
+                    type: string
+                secretRequestId:
+                    description: On a delegation verdict, the secret request the discobox was approving; the request names the grant the approval minted.
                     type: string
                 standingRoute:
                     description: The route this allow was let stand for, on a request verdict whose judge asked for one and whose route the control plane admitted. Requests matching it from the same discobox, under the same use, to the same host, were allowed until standingUntil without asking the judge.
@@ -3435,6 +3396,11 @@ components:
                 status:
                     description: Response status; zero when no response was received
                     type: integer
+                swappedSecretIds:
+                    description: Secrets whose values were swapped into this request, by ID, whatever kind of sentinel stood in for them. It is optional because a pool agent older than ADR 26-10-01-240 does not send it, and absent means no secret was named.
+                    items:
+                        type: string
+                    type: array
                 swappedUseIds:
                     description: Approved credential uses whose sentinels were swapped into this request. Joins to credential verdicts by useId.
                     items:
@@ -3588,6 +3554,11 @@ components:
                 streamSessionId:
                     description: The upgraded stream's session
                     type: string
+                swappedSecretIds:
+                    description: Secrets whose values were swapped into this request, by ID, whatever kind of sentinel stood in for them. It is optional because a pool agent older than ADR 26-10-01-240 does not send it, and absent means no secret was named.
+                    items:
+                        type: string
+                    type: array
                 swappedUseIds:
                     description: Approved credential uses whose sentinels were swapped into this request. Joins to credential verdicts by useId.
                     items:
@@ -3773,6 +3744,9 @@ components:
                 expiresAt:
                     description: Grant expiry time when approved.
                     format: date-time
+                    type: string
+                secretId:
+                    description: The secret the value is; present only when status is approved. The pool's proxy records it on the request the value is swapped into (ADR 26-10-01-240).
                     type: string
             required:
                 - status
@@ -4230,24 +4204,39 @@ components:
                 credential:
                     description: The credential in the words a person reads, never its value.
                     type: string
+                guidance:
+                    description: What Discobox knows about what the request was recognized as, set by the control plane from the judge package and never by a pool. It explains; it never authorizes.
+                    items:
+                        type: string
+                    type: array
                 host:
                     description: The host the use was approved for.
                     type: string
                 kind:
-                    description: 'What is being judged: a command about to run, or a request the proxy observed.'
+                    description: 'What is being judged: a command about to run, a request the proxy observed, or a discobox about to hand a credential on by approving another''s request.'
                     enum:
                         - command
                         - request
+                        - delegation
                     type: string
                 purpose:
-                    description: The approved use, in the words it was approved in.
+                    description: The approved use, in the words it was approved in. For a delegation job, the uses the discobox was delegated, one per line.
                     type: string
+                reported:
+                    $ref: '#/components/schemas/JudgeReported'
                 request:
                     $ref: '#/components/schemas/JudgeRequestEvidence'
                 round:
                     description: Which ask this is, from 1. A round after the first exists because the judge asked to be shown the body.
                     format: int64
                     type: integer
+                stdin:
+                    $ref: '#/components/schemas/JudgeInput'
+                uses:
+                    description: For a delegation job, the uses the discobox is about to hand on, judged against purpose.
+                    items:
+                        type: string
+                    type: array
             required:
                 - kind
                 - purpose
@@ -4286,12 +4275,84 @@ components:
                 - round
                 - request
             type: object
+        PoolCommandAsk:
+            additionalProperties: false
+            description: 'One command a pool''s discobox is about to run under an approved use, asked about before the pool mints anything for it (ADR 26-09-22-838 §3). A pool does not say what the use authorizes: the control plane reads the sentence, the credential''s name and its host from the live grant. Everything here is the discobox''s, and evidence.'
+            properties:
+                command:
+                    description: The argv the discobox is about to run.
+                    items:
+                        type: string
+                    type: array
+                reported:
+                    $ref: '#/components/schemas/JudgeReported'
+                sandboxId:
+                    description: The discobox about to run it. It must belong to the asking pool.
+                    type: string
+                stdin:
+                    $ref: '#/components/schemas/JudgeInput'
+                useId:
+                    description: The approved use the command would spend the credential under.
+                    type: string
+            required:
+                - sandboxId
+                - useId
+                - command
+            type: object
+        JudgeInput:
+            additionalProperties: false
+            description: What a command will read on standard input, as much of it as the discobox showed (ADR 26-09-27-905).
+            properties:
+                content:
+                    description: The input shown, which is text. Empty when none of it could be shown, and missing then says why.
+                    type: string
+                missing:
+                    description: Why content is not the whole input, in a sentence for the judge.
+                    type: string
+            required:
+                - content
+            type: object
+            x-sandbox-agent-component: true
+        JudgeReported:
+            additionalProperties: false
+            description: What a discobox said about where a command runs (ADR 0090). Every field is its claim, never a fact the trusted side established.
+            properties:
+                refCommit:
+                    description: The commit a git ref the command names resolves to.
+                    type: string
+                refSubject:
+                    description: That commit's subject line, the agent's own words about its work.
+                    type: string
+                repositoryRoot:
+                    description: The root of the git checkout the command runs in.
+                    type: string
+                workingDirectory:
+                    description: The directory the command runs in.
+                    type: string
+            type: object
+            x-sandbox-agent-component: true
+        JudgeRecognition:
+            additionalProperties: false
+            description: What trusted code recognized a request, or its body, as, and the version of that code (ADR 26-09-26-240).
+            properties:
+                name:
+                    type: string
+                version:
+                    format: int64
+                    type: integer
+            required:
+                - name
+                - version
+            type: object
+            x-sandbox-agent-component: true
         JudgeRequestEvidence:
             additionalProperties: false
             description: A request as the proxy saw it, before any credential was substituted into it and with every credential-bearing value redacted.
             properties:
                 body:
                     $ref: '#/components/schemas/JudgeRequestBody'
+                endpoint:
+                    $ref: '#/components/schemas/JudgeRecognition'
                 headers:
                     additionalProperties:
                         items:
@@ -4301,6 +4362,8 @@ components:
                     type: object
                 method:
                     type: string
+                protocol:
+                    $ref: '#/components/schemas/JudgeRecognition'
                 url:
                     description: The destination authority and port, path, and query.
                     type: string
@@ -4311,16 +4374,10 @@ components:
             x-sandbox-agent-component: true
         JudgeRequestBody:
             additionalProperties: false
-            description: What the judge is told about a request's body. The first ask describes it and does not carry it; the judge asks to be shown it when the operation lives in there.
+            description: What the judge is told about a request's body, always in this one shape (ADR 26-09-26-240). The first ask describes it, with what a parser found in it when one recognized it; the judge asks to be shown the content when the operation lives in there.
             properties:
                 content:
-                    description: The body, in form, redacted. Present only once asked for, and only as much of it as the budget allowed.
-                    type: string
-                form:
-                    description: How content is written. Empty until the judge has asked to be shown the body.
-                    enum:
-                        - text
-                        - json
+                    description: The body, redacted and rendered the way its parser renders it. Absent until the judge asks to be shown the body; then as much of it as the budget allowed, which may be none of it.
                     type: string
                 length:
                     description: How many bytes the body has, as far as that is known.
@@ -4328,9 +4385,18 @@ components:
                     type: integer
                 mediaType:
                     type: string
+                metadata:
+                    additionalProperties: true
+                    description: What the parser found worth knowing, redacted, from the first ask on.
+                    type: object
                 missing:
                     description: Why content is not the whole body, in a sentence for the judge. An answer to having been asked, never part of the first description.
                     type: string
+                parseError:
+                    description: Why the parser named could not read a body that claims to be what it reads.
+                    type: string
+                parser:
+                    $ref: '#/components/schemas/JudgeRecognition'
             type: object
             x-sandbox-agent-component: true
         JudgeAnswer:
@@ -4353,13 +4419,11 @@ components:
             x-sandbox-agent-component: true
         JudgeNeed:
             additionalProperties: false
-            description: The judge asking to be shown a request's body, in one form, with a budget it may name and Discobox caps.
+            description: The judge asking to be shown a request's body, with a budget it may name and Discobox caps. It names no form; the body is always shown in one shape (ADR 26-09-26-240).
             properties:
                 body:
-                    enum:
-                        - text
-                        - json
-                    type: string
+                    description: Always true in an ask; it is what the ask is for.
+                    type: boolean
                 bytes:
                     format: int64
                     type: integer
@@ -4393,12 +4457,14 @@ components:
                     readOnly: true
                     type: string
                 grantTTLSeconds:
-                    description: Grant duration in seconds; overrides the secret's default
+                    description: Grant duration in seconds; 0 grants one that never expires. Omitted, the grant lasts what the request asked for, else an hour, within the secret's limit; for a discobox approver, also within the delegation grant it approves under, and a named duration that outlasts that delegation is refused.
                     format: int64
                     type: integer
-                host:
-                    description: Host the minted grant is limited to. Defaults to the host the request named. Approving a protocol-originated request with no host at all is rejected; a wildcard grant stays an explicit administrative act.
-                    type: string
+                hosts:
+                    description: Hosts the minted grant is limited to (ADR 26-10-02-393). Left out, the hosts the request named; an empty list names none. Approving a protocol-originated request with no host at all is rejected; a wildcard grant stays an explicit administrative act.
+                    items:
+                        type: string
+                    type: array
                 scope:
                     description: How widely the minted grant applies. Defaults to sandbox for sandbox-originated requests, otherwise project.
                     enum:
@@ -4410,7 +4476,7 @@ components:
                     description: Rebinds the answering secret to this host as part of the approval; empty releases its binding. Applied only if the approval goes through, in the same write, so a refused approval leaves the secret as it was. Refused for a gate.
                     type: string
                 secretId:
-                    description: Secret ID selected by the approver. Required unless the request names a well-known credential whose secret is already marked; naming one for it the first time marks it as the one that answers every later request for that ID.
+                    description: Secret ID selected by the approver. A person must name one unless the request names a well-known credential whose secret is already marked; naming one for it the first time marks it as the one that answers every later request for that ID. A discobox approver answers with the secret of a delegation grant it holds, and names one, by its full ID, only to choose among the secrets it was delegated.
                     type: string
                 secretMaxGrantTTLSeconds:
                     description: Sets the answering secret's grant limit, in seconds, as part of the approval; 0 allows grants that never expire. Applied only if the approval goes through, in the same write.
@@ -4436,6 +4502,9 @@ components:
                     description: Longest a grant on this secret may live, in seconds; 0 allows grants that never expire
                     format: int64
                     type: integer
+                format:
+                    description: 'Template the sentinels for this secret are minted from: literal text with {charset:length} tokens, such as sk-ant-oat01-{base64url:95}. Charsets are digits, hex, HEX, lower, upper, alnum, base62, base32, base64url, and base64. Omitted or empty reads the shape from the value. A format set here is kept when the value is replaced.'
+                    type: string
                 host:
                     description: Optional host used to match requests (e.g. github.com)
                     type: string
@@ -4486,9 +4555,11 @@ components:
                     description: Grant duration in seconds; defaults to the secret's default. 0 never expires.
                     format: int64
                     type: integer
-                host:
-                    description: Host the grant is limited to; empty matches any host and defaults to the secret's host
-                    type: string
+                hosts:
+                    description: Hosts the grant is limited to (ADR 26-10-02-393). Left out, the secret's host; an empty list matches any host.
+                    items:
+                        type: string
+                    type: array
                 scope:
                     description: How widely the grant applies
                     enum:
@@ -4684,6 +4755,9 @@ components:
                 format:
                     description: Generative format template describing the credential shape; used to mint sentinel placeholders
                     type: string
+                formatSet:
+                    description: Format was set explicitly rather than read from the value
+                    type: boolean
                 host:
                     description: Optional host used to match requests (e.g. github.com)
                     type: string
@@ -4792,9 +4866,11 @@ components:
                 grantedBy:
                     description: Principal ID that created the grant
                     type: string
-                host:
-                    description: Host the grant is limited to; empty matches any host
-                    type: string
+                hosts:
+                    description: Hosts the grant is limited to; a destination any of them covers. Empty matches any host (ADR 26-10-02-393)
+                    items:
+                        type: string
+                    type: array
                 id:
                     description: Stable grant ID
                     type: string
@@ -5013,9 +5089,11 @@ components:
                     description: How long the agent asked the grant to live, in seconds -- the lifetime an approval starts from. At most thirty days. Absent when it asked for nothing in particular; never forever.
                     format: int64
                     type: integer
-                host:
-                    description: Host hint provided at request time
-                    type: string
+                hosts:
+                    description: Hosts named at request time (ADR 26-10-02-393)
+                    items:
+                        type: string
+                    type: array
                 id:
                     description: Stable request ID
                     type: string
@@ -5167,6 +5245,9 @@ components:
                     description: Longest a grant on this secret may live, in seconds; 0 allows grants that never expire
                     format: int64
                     type: integer
+                format:
+                    description: 'Template the sentinels for this secret are minted from: literal text with {charset:length} tokens, such as sk-ant-oat01-{base64url:95}. Charsets are digits, hex, HEX, lower, upper, alnum, base62, base32, base64url, and base64. A format set here is kept when the value is replaced; an empty string clears it and reads the shape from the value again. A running sandbox keeps the sentinel already in its environment.'
+                    type: string
                 host:
                     description: Optional host used to match requests (e.g. github.com)
                     type: string
@@ -5654,6 +5735,23 @@ components:
                 - sandboxId
                 - token
                 - expiresAt
+            type: object
+        PoolHeldSandboxesBody:
+            additionalProperties: false
+            properties:
+                $schema:
+                    description: A URL to the JSON Schema for this object.
+                    example: https://example.com/schemas/PoolHeldSandboxesBody.json
+                    format: uri
+                    readOnly: true
+                    type: string
+                sandboxIds:
+                    description: Every sandbox on this pool that still has a row, in any state, including archived, failed, and mid-delete
+                    items:
+                        type: string
+                    type: array
+            required:
+                - sandboxIds
             type: object
         MintSandboxAgentStatusTokensResponseBody:
             additionalProperties: false
@@ -6593,6 +6691,39 @@ paths:
             summary: Mint short-lived, status-read-only sandbox-agent tokens for sandboxes this pool hosts
             tags:
                 - Pools
+    /api/pools/{poolId}/sandboxes:
+        get:
+            operationId: list-pool-held-sandboxes
+            parameters:
+                - description: Pool ID
+                  in: path
+                  name: poolId
+                  required: true
+                  schema:
+                    description: Pool ID
+                    type: string
+                - description: Bearer pool agent assertion signed with the registered pool agent private key
+                  in: header
+                  name: Authorization
+                  schema:
+                    description: Bearer pool agent assertion signed with the registered pool agent private key
+                    type: string
+            responses:
+                200:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PoolHeldSandboxesBody'
+                    description: OK
+                default:
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                    description: Error
+            summary: List every sandbox the control plane holds on this pool, the set the pool agent may not reap the trees of
+            tags:
+                - Pools
     /api/pools/{poolId}/sandbox-credentials:
         get:
             operationId: list-sandbox-credentials
@@ -6759,9 +6890,10 @@ paths:
             summary: Put a judging job to the project's judge
             tags:
                 - Pools
-    /api/pools/{poolId}/sandbox-credential-verdicts:
+    /api/pools/{poolId}/judge-commands:
         post:
-            operationId: record-credential-verdict
+            description: Asks the judge of the project that owns this pool whether a command one of its discoboxes is about to run carries out the use it names, before the pool mints a credential for it (ADR 26-09-22-838 §3). The verdict is recorded before the answer goes back. A server that does not judge commands says so with the judging-disabled problem type, and the pool then mints without a verdict (ADR 26-10-02-054); anything else that is not an explicit allow mints nothing.
+            operationId: judge-command-for-pool
             parameters:
                 - description: Pool ID
                   in: path
@@ -6780,18 +6912,22 @@ paths:
                 content:
                     application/json:
                         schema:
-                            $ref: '#/components/schemas/RecordCredentialVerdictBody'
+                            $ref: '#/components/schemas/PoolCommandAsk'
                 required: true
             responses:
-                204:
-                    description: No Content
+                200:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/JudgeAnswer'
+                    description: What the judge answered.
                 default:
                     content:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
                     description: Error
-            summary: Record a judge's verdict about a command run under an agent credential use
+            summary: Judge a command a discobox is about to run under an approved use
             tags:
                 - Pools
     /api/pools/{poolId}/sandbox-secret-rejections:
@@ -10804,6 +10940,7 @@ paths:
                     enum:
                         - command
                         - request
+                        - delegation
                     type: string
                 - description: Only verdicts recorded for this sandbox, which need not still exist
                   in: query

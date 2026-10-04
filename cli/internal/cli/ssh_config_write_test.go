@@ -84,7 +84,7 @@ func TestSSHConfigWriteProducesAUsableConfig(t *testing.T) {
 
 	config := readFile(t, configPath)
 	for _, want := range []string{
-		"Host devbox devbox.discobox.internal sbx_devbox00000001 sbx_devbox00000001.discobox.internal\n",
+		"Host devbox devbox.discobox.internal sbx_devbox00000001 sbx_devbox00000001.discobox.internal sbx-devbox00000001 sbx-devbox00000001.discobox.internal\n",
 		"    User sbx_devbox00000001\n",
 		"    HostKeyAlias " + resolvedTestProjectID + ".discobox.internal\n",
 		"    IdentitiesOnly yes\n",

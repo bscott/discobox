@@ -117,6 +117,21 @@ func (s *Store) CountSandboxesForPool(ctx context.Context, projectID, poolID str
 	return count, err
 }
 
+// ListSandboxIDsForPool returns the ID of every sandbox row on the pool. A row
+// is kept until the pool agent confirms its tree is gone (ADR 0022 §3), so this
+// is every sandbox whose tree the pool may still hold by intent.
+func (s *Store) ListSandboxIDsForPool(ctx context.Context, projectID, poolID string) ([]string, error) {
+	read, err := s.getRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	err = read.Model(&model.Sandbox{}).
+		Where("project_id = ? AND pool_id = ?", projectID, poolID).
+		Pluck("id", &ids).Error
+	return ids, err
+}
+
 type PoolGetOption func(*poolGetOptions)
 
 type poolGetOptions struct {

@@ -460,10 +460,16 @@ type GitSource struct {
 	// clone-delivered source's origin is exactly that directory (ADR 0093), so
 	// there is nothing a sandbox can be bound to. Its commits stay in the user's
 	// repository, as NoLocalCommits' do.
-	NoLocalGitDirectory bool                  `json:"noLocalGitDirectory,omitempty" doc:"Whether localDirectory has no Git directory of its own at localDirectory/.git — a linked worktree or submodule checkout, whose .git is a file naming a Git directory elsewhere — so there is nothing at that path a sandbox's origin can be bound to. The client can only deliver it by push, and can still deliver it later."`
-	Checkout            *GitSourceCheckout    `json:"checkout,omitempty" doc:"Immutable checkout target and optional user-facing ref identity"`
-	Workspace           *GitSourceWorkspace   `json:"workspace,omitempty" doc:"Workspace materialization mode for this source"`
-	Destination         *GitSourceDestination `json:"destination,omitempty" doc:"Sandbox destination paths for this source"`
+	NoLocalGitDirectory bool `json:"noLocalGitDirectory,omitempty" doc:"Whether localDirectory has no Git directory of its own at localDirectory/.git — a linked worktree or submodule checkout, whose .git is a file naming a Git directory elsewhere — so there is nothing at that path a sandbox's origin can be bound to. The client can only deliver it by push, and can still deliver it later."`
+	// UpstreamURL is where the client's own checkout of a local source pushes
+	// and pulls: the remote its checked-out branch tracks. The sandbox's origin
+	// is the client's repository, so without this the box would not know the
+	// project's real remote at all. It is configured as a remote named
+	// upstream and nothing tracks it.
+	UpstreamURL *string               `json:"upstreamUrl,omitempty" doc:"Network URL of the remote the local source's checked-out branch tracks on the client. The sandbox adds it as a remote named upstream when it materializes the source; the branch keeps tracking origin."`
+	Checkout    *GitSourceCheckout    `json:"checkout,omitempty" doc:"Immutable checkout target and optional user-facing ref identity"`
+	Workspace   *GitSourceWorkspace   `json:"workspace,omitempty" doc:"Workspace materialization mode for this source"`
+	Destination *GitSourceDestination `json:"destination,omitempty" doc:"Sandbox destination paths for this source"`
 }
 
 // Root returns the normalized identity of the source repository, independent of
@@ -1007,6 +1013,11 @@ type Secret struct {
 	UniqueKey string `gorm:"column:unique_key;not null;type:text;default:'';uniqueIndex:idx_secret_project_type_host,priority:5" json:"-"`
 	Anonymous bool   `gorm:"column:anonymous;not null;default:false;index" json:"anonymous,omitempty" doc:"Sandbox-managed secret created from an inline value; referenced only by ID"`
 	Format    string `gorm:"column:format;not null;type:text;default:''" json:"format,omitempty" doc:"Generative format template describing the credential shape; used to mint sentinel placeholders"`
+	// FormatSet says Format was written by a person rather than read from the
+	// value. A value write re-reads the shape only when it is false, so an
+	// override survives the value being replaced — by a person, a refresh, or
+	// a harness reconfigure.
+	FormatSet bool `gorm:"column:format_set;not null;default:false" json:"formatSet,omitempty" doc:"Format was set explicitly rather than read from the value"`
 	// OAuth is what an oauth credential is, without being it: where it renews,
 	// which client it belongs to, what it may do, and when the access token
 	// goes stale. Never the access token, never the refresh token.
@@ -1187,11 +1198,14 @@ type SecretRequest struct {
 	// ProjectID and SecretID are also the open-refresh index: one pending
 	// refresh request per secret (ADR 26-09-25-122 §4), held by the database
 	// so two resolves at once cannot both open one.
-	ProjectID     string      `gorm:"column:project_id;not null;type:text;index;uniqueIndex:idx_secret_request_open_refresh,priority:1" json:"projectId" doc:"Project ID"`
-	RequestedBy   string      `gorm:"column:requested_by;not null;type:text" json:"requestedBy" doc:"Principal ID of the requestor"`
-	SandboxID     string      `gorm:"column:sandbox_id;not null;type:text;default:'';index" json:"sandboxId,omitempty" doc:"Sandbox that owns the sentinel, for sandbox-originated requests"`
-	Type          string      `gorm:"column:type;not null;type:text" json:"type" doc:"Secret type requested" enum:"token,oauth"`
-	Host          string      `gorm:"column:host;not null;type:text;default:''" json:"host,omitempty" doc:"Host hint provided at request time"`
+	ProjectID   string `gorm:"column:project_id;not null;type:text;index;uniqueIndex:idx_secret_request_open_refresh,priority:1" json:"projectId" doc:"Project ID"`
+	RequestedBy string `gorm:"column:requested_by;not null;type:text" json:"requestedBy" doc:"Principal ID of the requestor"`
+	SandboxID   string `gorm:"column:sandbox_id;not null;type:text;default:'';index" json:"sandboxId,omitempty" doc:"Sandbox that owns the sentinel, for sandbox-originated requests"`
+	Type        string `gorm:"column:type;not null;type:text" json:"type" doc:"Secret type requested" enum:"token,oauth"`
+	// Hosts are where the credential is asked for (ADR 26-10-02-393 §1): the
+	// destination the proxy observed, for a reactive or refresh request, and
+	// every host an agent named, for one from the protocol.
+	Hosts         []string    `gorm:"column:hosts;type:text;serializer:json" json:"hosts,omitempty" doc:"Hosts named at request time"`
 	Name          string      `gorm:"column:name;not null;type:text;default:''" json:"name,omitempty" doc:"Credential name the agent asked for, for protocol-originated requests"`
 	EnvName       string      `gorm:"column:env_name;not null;type:text;default:''" json:"envName,omitempty" doc:"Environment variable the credential is wanted in, for protocol-originated requests"`
 	Justification string      `gorm:"column:justification;not null;type:text;default:''" json:"justification,omitempty" doc:"Why the agent says it needs the credential"`
@@ -1303,12 +1317,15 @@ func (r *SecretRequest) BeforeCreate(_ *gorm.DB) error {
 // unexpired grant whose scope key matches a resolving sandbox lets the proxy
 // return the decrypted value without a pending request.
 type SecretGrant struct {
-	ID        string     `gorm:"primaryKey;type:text" json:"id" doc:"Stable grant ID"`
-	ProjectID string     `gorm:"column:project_id;not null;type:text;index" json:"projectId" doc:"Project ID"`
-	SecretID  string     `gorm:"column:secret_id;not null;type:text;index" json:"secretId" doc:"Granted secret ID"`
-	Scope     string     `gorm:"column:scope;not null;type:text" json:"scope" doc:"How widely the grant applies" enum:"sandbox,harnessConfig,project"`
-	ScopeKey  string     `gorm:"column:scope_key;not null;type:text;index" json:"scopeKey" doc:"Identifier the scope resolves against: sandbox ID, harness config ID, or project ID"`
-	Host      string     `gorm:"column:host;not null;type:text;default:''" json:"host,omitempty" doc:"Host the grant is limited to; empty matches any host"`
+	ID        string `gorm:"primaryKey;type:text" json:"id" doc:"Stable grant ID"`
+	ProjectID string `gorm:"column:project_id;not null;type:text;index" json:"projectId" doc:"Project ID"`
+	SecretID  string `gorm:"column:secret_id;not null;type:text;index" json:"secretId" doc:"Granted secret ID"`
+	Scope     string `gorm:"column:scope;not null;type:text" json:"scope" doc:"How widely the grant applies" enum:"sandbox,harnessConfig,project"`
+	ScopeKey  string `gorm:"column:scope_key;not null;type:text;index" json:"scopeKey" doc:"Identifier the scope resolves against: sandbox ID, harness config ID, or project ID"`
+	// Hosts are where the grant lets the credential go: a destination any of
+	// them covers (hostscope.CoversAny). None at all is the wildcard, which
+	// only an explicit grant create mints (ADR 26-10-02-393 §1).
+	Hosts     []string   `gorm:"column:hosts;type:text;serializer:json" json:"hosts,omitempty" doc:"Hosts the grant is limited to; empty matches any host"`
 	GrantedBy string     `gorm:"column:granted_by;not null;type:text;default:''" json:"grantedBy,omitempty" doc:"Principal ID that created the grant"`
 	GrantedAt time.Time  `gorm:"column:granted_at;autoCreateTime" json:"grantedAt" doc:"Creation timestamp" format:"date-time"`
 	ExpiresAt *time.Time `gorm:"column:expires_at" json:"expiresAt,omitempty" doc:"Expiry time; empty never expires" format:"date-time"`
@@ -1369,6 +1386,9 @@ type SandboxSecretResolution struct {
 	Status    string
 	Value     *SecretValue
 	ExpiresAt *time.Time
+	// SecretID is the secret an approved value is, which the pool's proxy
+	// records on the request it swapped it into (ADR 26-10-01-240 §1).
+	SecretID string
 }
 
 // SandboxSecret binds a sandbox environment variable to a project secret via a
@@ -1439,15 +1459,30 @@ type CredentialVerdict struct {
 	ProjectID string `gorm:"column:project_id;not null;type:text;index" json:"projectId" doc:"Project ID"`
 	// Kind and Origin default to what every row written before request
 	// verdicts existed was, so adding the columns is the whole upgrade.
-	Kind      string `gorm:"column:kind;not null;type:text;default:'command';index" json:"kind" doc:"What was judged: command or request" enum:"command,request"`
+	Kind      string `gorm:"column:kind;not null;type:text;default:'command';index" json:"kind" doc:"What was judged: command, request, or delegation" enum:"command,request,delegation"`
 	Origin    string `gorm:"column:origin;not null;type:text;default:'sandbox'" json:"origin" doc:"Who judged: sandbox, for a discobox's own judge, or judge, for the project's" enum:"sandbox,judge"`
 	SandboxID string `gorm:"column:sandbox_id;not null;type:text;index" json:"sandboxId" doc:"Sandbox the command ran in, or the request came from"`
 	// GrantID is resolved from UseID against the sandbox's live grants at
 	// record time, best-effort: a grant revoked in the moment between judging
 	// and recording leaves this empty rather than failing the write, because
 	// the verdict is still complete evidence about the command without it.
-	GrantID string `gorm:"column:grant_id;not null;type:text;default:'';index" json:"grantId,omitempty" doc:"Grant the use belonged to, when it could still be resolved"`
+	//
+	// On a delegation verdict it is the delegation grant the approval was
+	// judged against — what the grant a discobox handed on is traced to
+	// (ADR 26-09-30-782 §3) — and UseID is empty: what was judged is the
+	// delegation's uses against the ones handed on, both in the prompt.
+	GrantID string `gorm:"column:grant_id;not null;type:text;default:'';index" json:"grantId,omitempty" doc:"Grant the use belonged to, when it could still be resolved; on a delegation verdict, the delegation grant judged against"`
 	UseID   string `gorm:"column:use_id;not null;type:text;index" json:"useId" doc:"Approved use the command was judged against"`
+	// SecretRequestID is, on a delegation verdict, the request the discobox
+	// was approving, whose GrantID is the grant the approval minted — so a
+	// handed-on grant is found from its request, and its verdict from either.
+	// Empty on every other verdict, which is what every row written before
+	// delegation verdicts existed already is.
+	SecretRequestID string `gorm:"column:secret_request_id;not null;type:text;default:'';index" json:"secretRequestId,omitempty" doc:"On a delegation verdict, the secret request the discobox was approving; the request names the grant the approval minted"`
+	// ForSandboxID is, on a delegation verdict, the discobox the uses were
+	// handed on to: the requester of an approval, or the discobox a create
+	// gave them to, which has no request to name it by.
+	ForSandboxID string `gorm:"column:for_sandbox_id;not null;type:text;default:'';index" json:"forSandboxId,omitempty" doc:"On a delegation verdict, the discobox the uses were handed on to"`
 	// Command is serialized JSON rather than a joined string: SecretGrant.Uses
 	// already sets the precedent for a slice column on this model, and keeping
 	// argv elements distinct is what let the judge — and lets a reader of this
@@ -1479,7 +1514,14 @@ type CredentialVerdict struct {
 	HarnessConfigID string `gorm:"column:harness_config_id;not null;type:text;default:''" json:"harnessConfigId,omitempty" doc:"Harness config the judge ran"`
 	Image           string `gorm:"column:image;not null;type:text;default:''" json:"image,omitempty" doc:"Image the judge ran"`
 	ImageDigest     string `gorm:"column:image_digest;not null;type:text;default:''" json:"imageDigest,omitempty" doc:"Digest of the image the judge ran"`
-	Volunteered     bool   `gorm:"column:volunteered;not null;default:false" json:"volunteered" doc:"True when the sandbox reported this after a denial the issuing call never saw"`
+	// Model and Probabilities are the judge that answered when it was Jev
+	// rather than a judge discobox (ADR 26-10-01-324 §6): the versioned
+	// model it reported, and the probability of yes it gave each question,
+	// which is what the verdict was decided from. Empty on every other
+	// verdict, which is what every row written before Jev already is.
+	Model         string             `gorm:"column:model;not null;type:text;default:''" json:"model,omitempty" doc:"The Jev model that answered, when the server judges with Jev rather than a judge discobox"`
+	Probabilities map[string]float64 `gorm:"column:probabilities;type:text;serializer:json" json:"probabilities,omitempty" doc:"The probability of yes Jev gave each question the verdict was decided from, by question ID"`
+	Volunteered   bool               `gorm:"column:volunteered;not null;default:false" json:"volunteered" doc:"True when the sandbox reported this after a denial the issuing call never saw"`
 	// StandingRoute and StandingUntil are an allow the judge let stand, as
 	// the control plane admitted it (ADR 26-09-25-428): until then, a request
 	// from the same discobox, under the same use, to the same host, whose
@@ -1501,8 +1543,9 @@ func (CredentialVerdict) TableName() string { return "credential_verdicts" }
 
 // The kinds and origins a CredentialVerdict records.
 const (
-	CredentialVerdictKindCommand = judge.KindCommand
-	CredentialVerdictKindRequest = judge.KindRequest
+	CredentialVerdictKindCommand    = judge.KindCommand
+	CredentialVerdictKindRequest    = judge.KindRequest
+	CredentialVerdictKindDelegation = judge.KindDelegation
 
 	CredentialVerdictOriginSandbox = "sandbox"
 	CredentialVerdictOriginJudge   = "judge"

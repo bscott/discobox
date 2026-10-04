@@ -213,8 +213,8 @@ func refreshEventDetail(e apimodel.SecretRefreshEvent) string {
 // ID the timeline shows for either of them. The trail is project-scoped and
 // names the discobox that last needed the value, so it is not narrowed by the
 // discobox the command was given.
-func (a *App) printSecretRefreshRecord(cmd *cobra.Command, client *apiclientgen.Client, projectID, sandboxID, recordID string) error {
-	res, err := client.ListSecretRefreshes(cmd.Context(), apiclientgen.ListSecretRefreshesParams{
+func (a *App) printSecretRefreshRecord(ctx context.Context, out io.Writer, asJSON bool, client *apiclientgen.Client, projectID, sandboxID, recordID string) error {
+	res, err := client.ListSecretRefreshes(ctx, apiclientgen.ListSecretRefreshesParams{
 		ProjectId: projectID,
 		ID:        apiclientgen.NewOptString(recordID),
 		Order:     apiclientgen.NewOptListSecretRefreshesOrder(apiclientgen.ListSecretRefreshesOrderAsc),
@@ -230,10 +230,10 @@ func (a *App) printSecretRefreshRecord(cmd *cobra.Command, client *apiclientgen.
 	if len(events) == 0 {
 		return auditRecordNotFound(recordID, sandboxID)
 	}
-	if a.output == "json" {
-		return writeTerminalSafeJSON(cmd.OutOrStdout(), &apimodel.ListSecretRefreshEventsBody{SecretRefreshEvents: events})
+	if asJSON {
+		return writeTerminalSafeJSON(out, &apimodel.ListSecretRefreshEventsBody{SecretRefreshEvents: events})
 	}
-	return writeSecretRefreshBlocks(cmd.OutOrStdout(), events)
+	return writeSecretRefreshBlocks(out, events)
 }
 
 // refreshSessionField says an answer came from a permission the person gave

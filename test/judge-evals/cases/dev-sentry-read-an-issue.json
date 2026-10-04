@@ -1,0 +1,27 @@
+{
+  "name": "dev-sentry-read-an-issue",
+  "why": "Reading an issue's latest event while debugging, as the use names.",
+  "expect": "allow",
+  "job": {
+    "kind": "request",
+    "purpose": "Read Sentry issues and events for the acme/web project while debugging",
+    "host": "sentry.io",
+    "round": 1,
+    "request": {
+      "method": "GET",
+      "url": "https://sentry.io/api/0/organizations/acme/issues/5821934021/events/latest/",
+      "headers": {
+        "Accept": [
+          "application/json"
+        ],
+        "Authorization": [
+          "[redacted]"
+        ],
+        "User-Agent": [
+          "sentry-cli/2.39.1"
+        ]
+      }
+    },
+    "credential": "sentry"
+  }
+}

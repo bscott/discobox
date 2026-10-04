@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/discobox-ai/discobox/hostscope"
+	"github.com/discobox-ai/discobox/secretformat"
 	"github.com/discobox-ai/discobox/server/internal/apperrors"
 	"github.com/discobox-ai/discobox/server/internal/model"
 	"github.com/discobox-ai/discobox/server/internal/secrets"
@@ -31,6 +32,19 @@ func (s *Store) sealSecretForWrite(ctx context.Context, secret *model.Secret) (*
 		}
 	}
 	persisted := *secret
+	// A format nobody set is the value's shape, read here on every write, for
+	// every writer at once — the secrets service, the harness configure flow,
+	// an anonymous inline value, an OAuth refresh — so none of them can store
+	// a credential whose sentinel says nothing about what it stands for. An
+	// OAuth secret's access token is in Token too, and is what a sentinel for
+	// it has to look like. It is read on a write that keeps the value as well,
+	// not only one that replaces it: a stored shape is only as current as the
+	// provider table was when it was read, and a rename is as good a moment as
+	// any to bring it up to date. A format a person set is theirs, and no
+	// write replaces it.
+	if !secret.FormatSet {
+		persisted.Format = s.valueFormat(ctx, secret, secret.Format)
+	}
 	ciphertext, err := secrets.SealIfUnsealed(ctx, s.sealer, secretValuePurpose, secretResourceID(secret), secret.EncryptedValue)
 	if err != nil {
 		return nil, fmt.Errorf("encrypt secret value: %w", err)
@@ -62,6 +76,68 @@ func (s *Store) OpenSecretValue(ctx context.Context, secret *model.Secret) (*mod
 		return nil, fmt.Errorf("unmarshal secret value: %w", err)
 	}
 	return &val, nil
+}
+
+// valueFormat is the shape of secret's value, or fallback when there is no
+// value to read one from — a gate, or a row whose key has moved on.
+func (s *Store) valueFormat(ctx context.Context, secret *model.Secret, fallback string) string {
+	val, err := s.OpenSecretValue(ctx, secret)
+	if err != nil || val == nil {
+		return fallback
+	}
+	if token := strings.TrimSpace(val.Token); token != "" {
+		return secretformat.Describe(token)
+	}
+	return fallback
+}
+
+// RefreshSecretFormats re-reads the format of every secret whose format
+// nobody set, and stores it where it changed. Run at startup, it is the
+// upgrade path for the shapes already stored: rows written before every value
+// write recorded one, and rows whose shape was read under an older provider
+// table — an Anthropic key stored as sk-ant-{alnum:5}- before the kind marker
+// was kept — would otherwise go on minting that shape until somebody replaced
+// the value. It is idempotent, so it runs every time rather than once, and a
+// row it cannot read is left as it is rather than failing the start.
+//
+// Only the format column is written: this is a correction of what the store
+// says about the value, not a write of the secret, and it must not move the
+// updated_at an OAuth refresh uses as its generation guard.
+func (s *Store) RefreshSecretFormats(ctx context.Context) error {
+	write, err := s.getWrite(ctx)
+	if err != nil {
+		return err
+	}
+	var rows []model.Secret
+	if err := write.Where("format_set = ?", false).Find(&rows).Error; err != nil {
+		return err
+	}
+	for i := range rows {
+		secret := &rows[i]
+		format := s.valueFormat(ctx, secret, secret.Format)
+		if format == secret.Format {
+			continue
+		}
+		if err := write.Model(&model.Secret{}).
+			Where("project_id = ? AND id = ? AND format_set = ?", secret.ProjectID, secret.ID, false).
+			UpdateColumn("format", format).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SentinelFormat is the template a sentinel for secret is minted from: the
+// format stored with its value, or, for a row written before every value
+// write recorded one, the shape read from the value itself. Every minter —
+// a sandbox's stable sentinel, an agent credential's binding, the format a
+// pool agent mints ephemeral ones from — asks here, so a secret's sentinels
+// cannot differ by which path minted them.
+func (s *Store) SentinelFormat(ctx context.Context, secret *model.Secret) string {
+	if format := strings.TrimSpace(secret.Format); format != "" {
+		return format
+	}
+	return s.valueFormat(ctx, secret, secretformat.DefaultSentinelFormat)
 }
 
 func (s *Store) CreateSecret(ctx context.Context, secret *model.Secret) error {
@@ -170,13 +246,40 @@ func (s *Store) SetSecretLimits(ctx context.Context, projectID, secretID string,
 	return nil
 }
 
-func (s *Store) ListSecrets(ctx context.Context, projectID string) ([]model.Secret, error) {
+// SecretListOption narrows what a listing of secrets answers with.
+type SecretListOption func(*secretListOptions)
+
+type secretListOptions struct {
+	delegatedTo string
+}
+
+// DelegatedTo lists only the secrets a discobox holds a live delegation grant
+// of: the ones it may hand on, and so the only ones it has reason to see or
+// name (ADR 26-09-30-782 §3).
+func DelegatedTo(sandboxID string) SecretListOption {
+	return func(options *secretListOptions) { options.delegatedTo = sandboxID }
+}
+
+func (s *Store) ListSecrets(ctx context.Context, projectID string, listOptions ...SecretListOption) ([]model.Secret, error) {
+	var options secretListOptions
+	for _, option := range listOptions {
+		if option != nil {
+			option(&options)
+		}
+	}
 	read, err := s.getRead(ctx)
 	if err != nil {
 		return nil, err
 	}
+	query := read.Where("project_id = ? AND anonymous = ?", projectID, false)
+	if options.delegatedTo != "" {
+		query = query.Where("id IN (?)", read.Model(&model.SecretGrant{}).Select("secret_id").
+			Where("project_id = ? AND purpose = ? AND scope = ? AND scope_key = ?",
+				projectID, model.SecretGrantPurposeDelegate, model.SecretGrantScopeSandbox, options.delegatedTo).
+			Where("expires_at IS NULL OR expires_at > ?", time.Now().UTC()))
+	}
 	var out []model.Secret
-	err = read.Where("project_id = ? AND anonymous = ?", projectID, false).Order("created_at ASC").Find(&out).Error
+	err = query.Order("created_at ASC").Find(&out).Error
 	return out, err
 }
 
@@ -367,9 +470,15 @@ func (s *Store) UpdateSecretValueIfUnchanged(ctx context.Context, secret *model.
 	if err != nil {
 		return err
 	}
+	// The format rides with the value, as on every other value write; one a
+	// person set is left alone.
+	columns := map[string]any{"encrypted_value": sealed.EncryptedValue}
+	if !sealed.FormatSet {
+		columns["format"] = sealed.Format
+	}
 	result := write.Model(&model.Secret{}).
 		Where("project_id = ? AND id = ? AND updated_at = ?", sealed.ProjectID, sealed.ID, prevUpdatedAt).
-		Update("encrypted_value", sealed.EncryptedValue)
+		Updates(columns)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -473,49 +582,57 @@ func (s *Store) FindPendingSecretRequest(ctx context.Context, projectID, secretI
 	if err != nil {
 		return nil, err
 	}
-	var req model.SecretRequest
+	var found []model.SecretRequest
 	// A refresh request names the same secret and discobox, and asks for
 	// something else: a value, not a grant. It is never the reactive ask.
-	err = read.Where("project_id = ? AND secret_id = ? AND host = ? AND requested_by = ? AND status = ? AND reason = ''",
-		projectID, secretID, host, requestedBy, model.SecretRequestStatusPending).
-		Order("created_at DESC").First(&req).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, ErrNotFound
-	}
+	//
+	// The host is compared in Go: the hosts are a JSON list, and a reactive
+	// request's is the one destination the proxy observed.
+	err = read.Where("project_id = ? AND secret_id = ? AND requested_by = ? AND status = ? AND reason = ''",
+		projectID, secretID, requestedBy, model.SecretRequestStatusPending).
+		Order("created_at DESC").Find(&found).Error
 	if err != nil {
 		return nil, err
 	}
-	return &req, nil
+	for i := range found {
+		if hostscope.SameSet(found[i].Hosts, hostscope.List(host)) {
+			return &found[i], nil
+		}
+	}
+	return nil, ErrNotFound
 }
 
-// FindPendingAgentCredentialRequest returns the open protocol-originated
-// request for a sandbox's environment variable, destination host, well-known
-// ID (empty for an ask that names none), and purpose, or ErrNotFound. The ID
-// and the purpose are part of the key because each changes what approving the
-// request mints: an ask to delegate is not a retry of an ask to use.
+// FindPendingAgentCredentialRequests returns the open protocol-originated
+// requests for a sandbox's environment variable, destination hosts, well-known
+// ID (empty for an ask that names none), and purpose, newest first. The ID and
+// the purpose are part of the key because each changes what approving the
+// request mints: an ask to delegate is not a retry of an ask to use. The hosts
+// are compared as a set (ADR 26-10-02-393 §3): approving either of two asks
+// listing them in another order grants the same thing.
 //
-// It keys on (sandbox, env, host) rather than on the secret the way the
+// It keys on (sandbox, env, hosts) rather than on the secret the way the
 // reactive path does, because a protocol request names no secret: choosing one
-// is part of the approval. An agent that retries its ask therefore reuses its
-// open request instead of adding another line to the approval inbox.
-func (s *Store) FindPendingAgentCredentialRequest(ctx context.Context, projectID, sandboxID, envName, host, wellKnownID, purpose string) (*model.SecretRequest, error) {
+// is part of the approval. Which of them, if any, a new ask repeats is the
+// caller's to decide from what each asks for.
+func (s *Store) FindPendingAgentCredentialRequests(ctx context.Context, projectID, sandboxID, envName string, hosts []string, wellKnownID, purpose string) ([]model.SecretRequest, error) {
 	read, err := s.getRead(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var out []model.SecretRequest
-	err = read.Where("project_id = ? AND sandbox_id = ? AND env_name = ? AND host = ? AND well_known_id = ? AND purpose = ? AND status = ?",
-		projectID, sandboxID, envName, host, wellKnownID, purpose, model.SecretRequestStatusPending).
-		Order("created_at DESC").Find(&out).Error
+	var found []model.SecretRequest
+	err = read.Where("project_id = ? AND sandbox_id = ? AND env_name = ? AND well_known_id = ? AND purpose = ? AND status = ?",
+		projectID, sandboxID, envName, wellKnownID, purpose, model.SecretRequestStatusPending).
+		Order("created_at DESC").Find(&found).Error
 	if err != nil {
 		return nil, err
 	}
-	for i := range out {
-		if out[i].FromProtocol() {
-			return &out[i], nil
+	out := found[:0]
+	for _, req := range found {
+		if req.FromProtocol() && hostscope.SameSet(req.Hosts, hosts) {
+			out = append(out, req)
 		}
 	}
-	return nil, ErrNotFound
+	return out, nil
 }
 
 func (s *Store) GetSecretRequest(ctx context.Context, projectID, requestID string) (*model.SecretRequest, error) {
@@ -526,9 +643,30 @@ func (s *Store) GetSecretRequest(ctx context.Context, projectID, requestID strin
 	return firstByID[model.SecretRequest](read.Where("project_id = ?", projectID), "id", requestID)
 }
 
+// SecretRequestListOption narrows what a listing of secret requests answers
+// with.
+type SecretRequestListOption func(*secretRequestListOptions)
+
+type secretRequestListOptions struct {
+	owner string
+}
+
+// OwnedBy lists only the requests a discobox owns: those filed by a discobox
+// it created (ADR 26-09-30-782 §2). A request no discobox filed, or whose
+// discobox is gone, has no owner and is never listed.
+func OwnedBy(sandboxID string) SecretRequestListOption {
+	return func(options *secretRequestListOptions) { options.owner = sandboxID }
+}
+
 // ListSecretRequests returns a project's secret requests, optionally filtered to
 // a single status.
-func (s *Store) ListSecretRequests(ctx context.Context, projectID, status string) ([]model.SecretRequest, error) {
+func (s *Store) ListSecretRequests(ctx context.Context, projectID, status string, listOptions ...SecretRequestListOption) ([]model.SecretRequest, error) {
+	var options secretRequestListOptions
+	for _, option := range listOptions {
+		if option != nil {
+			option(&options)
+		}
+	}
 	read, err := s.getRead(ctx)
 	if err != nil {
 		return nil, err
@@ -536,6 +674,10 @@ func (s *Store) ListSecretRequests(ctx context.Context, projectID, status string
 	query := read.Where("project_id = ?", projectID)
 	if status = strings.TrimSpace(status); status != "" {
 		query = query.Where("status = ?", status)
+	}
+	if options.owner != "" {
+		query = query.Where("sandbox_id IN (?)", read.Model(&model.Sandbox{}).Select("id").
+			Where("project_id = ? AND created_by_sandbox_id = ?", projectID, options.owner))
 	}
 	var out []model.SecretRequest
 	err = query.Order("created_at ASC").Find(&out).Error

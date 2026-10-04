@@ -57,8 +57,10 @@ func TestResolverApproved(t *testing.T) {
 		gotAuth = r.Header.Get("Authorization")
 		gotPath = r.URL.Path
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		exp := time.Now().Add(time.Hour)
-		_ = json.NewEncoder(w).Encode(resolveResponseBody{Status: "approved", Value: "real-secret", ExpiresAt: &exp})
+		// Spelled as the server's resolve-sandbox-secret answer spells it, not
+		// with this package's own struct, so a wrong field name shows here.
+		exp := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+		_, _ = w.Write([]byte(`{"status":"approved","value":"real-secret","expiresAt":"` + exp + `","secretId":"sec_1"}`))
 	}))
 	defer srv.Close()
 
@@ -72,6 +74,11 @@ func TestResolverApproved(t *testing.T) {
 	}
 	if res.Value != "real-secret" {
 		t.Fatalf("value = %q", res.Value)
+	}
+	// The secret the value is, which the proxy records on the request
+	// (ADR 26-10-01-240) — for an ordinary sentinel, which has no use.
+	if res.SecretID != "sec_1" || res.UseID != "" {
+		t.Fatalf("secretId = %q useId = %q, want sec_1 and no use", res.SecretID, res.UseID)
 	}
 	if gotAuth != "Bearer tok-123" {
 		t.Fatalf("auth = %q", gotAuth)
@@ -118,7 +125,7 @@ func TestActivationHostCoversSubdomainsAndNothingAbove(t *testing.T) {
 	live := newActivations()
 	resolver := newSecretResolver(testProjectID, testPoolID, live)
 
-	record, err := live.mint("sb-1", "STABLE", "use-1", "github.com", "ghp_{base62:36}", nil)
+	record, err := live.mint("sb-1", "STABLE", "use-1", []string{"github.com"}, "ghp_{base62:36}", nil)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -128,7 +135,7 @@ func TestActivationHostCoversSubdomainsAndNothingAbove(t *testing.T) {
 		t.Fatal("a use approved for the site does not cover its API")
 	}
 
-	narrow, err := live.mint("sb-1", "STABLE", "use-2", "api.github.com", "ghp_{base62:36}", nil)
+	narrow, err := live.mint("sb-1", "STABLE", "use-2", []string{"api.github.com"}, "ghp_{base62:36}", nil)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -160,7 +167,7 @@ func TestReportTranslatesAnEphemeralSentinel(t *testing.T) {
 	_ = WriteResolveContext(testProjectID, testPoolID, srv.URL, "tok")
 
 	live := newActivations()
-	record, err := live.mint("sb-1", "STABLE-SENTINEL", "use-1", "api.example.com", "", []string{"curl"})
+	record, err := live.mint("sb-1", "STABLE-SENTINEL", "use-1", []string{"api.example.com"}, "", []string{"curl"})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -199,7 +206,7 @@ func TestReportTranslatesALapsedActivation(t *testing.T) {
 	now := time.Now()
 	live := newActivations()
 	live.now = func() time.Time { return now }
-	record, err := live.mint("sb-1", "STABLE-SENTINEL", "use-1", "api.example.com", "", nil)
+	record, err := live.mint("sb-1", "STABLE-SENTINEL", "use-1", []string{"api.example.com"}, "", nil)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -242,7 +249,7 @@ func TestReportRefusesAnotherSandboxesSentinel(t *testing.T) {
 	_ = WriteResolveContext(testProjectID, testPoolID, srv.URL, "tok")
 
 	live := newActivations()
-	record, err := live.mint("sb-1", "STABLE-SENTINEL", "use-1", "api.example.com", "", nil)
+	record, err := live.mint("sb-1", "STABLE-SENTINEL", "use-1", []string{"api.example.com"}, "", nil)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}

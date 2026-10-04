@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,6 +25,45 @@ type ensureRecorder struct {
 func (r *ensureRecorder) EnsureSandboxRunning(_ context.Context, _ string, awaitContainer bool) error {
 	r.awaited = append(r.awaited, awaitContainer)
 	return r.err
+}
+
+func TestAutoStartPreservesStartupFailure(t *testing.T) {
+	bindMount := errors.New("invalid mount config: bind source path does not exist")
+	for _, tc := range []struct {
+		name    string
+		need    sandboxNeed
+		err     error
+		status  int
+		proxied bool
+	}{
+		{"missing bind mount", needsSandbox, bindMount, http.StatusInternalServerError, false},
+		{"unknown sandbox", needsSandbox, sandboxruntime.ErrNotFound, http.StatusNotFound, false},
+		{"archived sandbox", needsSandbox, sandboxruntime.ErrArchived, http.StatusConflict, false},
+		{"missing container", needsSandbox, sandboxruntime.ErrNoContainer, http.StatusConflict, false},
+		{"running sandbox", needsSandbox, nil, http.StatusNoContent, true},
+		// The pool serves git from the sandbox's files, so its commits can be
+		// fetched out of a sandbox that cannot start.
+		{"git from a sandbox that cannot start", servedByPool, bindMount, http.StatusNoContent, true},
+		{"git from an archived sandbox", servedByPool, sandboxruntime.ErrArchived, http.StatusConflict, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service := &sandboxService{runtime: &ensureRecorder{err: tc.err}}
+			proxied := false
+			router := chi.NewRouter()
+			router.Get("/sandboxes/{sandboxId}/attach", service.autoStart(awaitContainer, tc.need, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				proxied = true
+				w.WriteHeader(http.StatusNoContent)
+			})).ServeHTTP)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/sandboxes/sbx_1/attach", nil))
+			if rec.Code != tc.status || proxied != tc.proxied {
+				t.Fatalf("status %d, proxied %v, body %q", rec.Code, proxied, rec.Body.String())
+			}
+			if !tc.proxied && !strings.Contains(rec.Body.String(), tc.err.Error()) {
+				t.Fatalf("startup failure lost: %q", rec.Body.String())
+			}
+		})
+	}
 }
 
 // Only exec attach waits for a container to be rebuilt, because it is the only

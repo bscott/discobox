@@ -32,6 +32,10 @@ func TestResolveUsername(t *testing.T) {
 	}{
 		{name: "exact sbx_ id", username: sandbox.ID, wantProjectID: acme, wantSandboxID: sandbox.ID},
 		{name: "sbx_ id prefix", username: sandbox.ID[:len(sandbox.ID)-4], wantProjectID: acme, wantSandboxID: sandbox.ID},
+		// The hyphenated spelling is the discobox's hostname (id.Hostname).
+		{name: "exact sbx- id", username: idpkg.Hostname(sandbox.ID), wantProjectID: acme, wantSandboxID: sandbox.ID},
+		{name: "sbx- id prefix", username: idpkg.Hostname(sandbox.ID)[:len(sandbox.ID)-4], wantProjectID: acme, wantSandboxID: sandbox.ID},
+		{name: "sbx- id . project name", username: idpkg.Hostname(sandbox.ID) + "." + "Acme", wantProjectID: acme, wantSandboxID: sandbox.ID},
 		// Slugs are gone: a project is addressed by ID, and by name as the
 		// convenience the name's per-owner uniqueness makes safe.
 		{name: "sandbox short id . project name", username: sandboxShort + "." + "Acme", wantProjectID: acme, wantSandboxID: sandbox.ID},

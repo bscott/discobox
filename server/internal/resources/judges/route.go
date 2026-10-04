@@ -12,9 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-faster/jx"
+
 	sandboxapi "github.com/discobox-ai/discobox/api/sandboxgen"
 	"github.com/discobox-ai/discobox/hostscope"
 	"github.com/discobox-ai/discobox/judge"
+	"github.com/discobox-ai/discobox/judge/jev"
 	"github.com/discobox-ai/discobox/server/internal/apperrors"
 	poolagentauth "github.com/discobox-ai/discobox/server/internal/auth/poolagent"
 	"github.com/discobox-ai/discobox/server/internal/model"
@@ -40,10 +43,11 @@ type Leases interface {
 func (s *Service) SetLeases(leases Leases) { s.leases = leases }
 
 // Uses is the secrets service's half of saying what an approved use allows.
-// It is named here for the same reason Leases is: this package makes one call,
-// twice.
+// It is named here for the same reason Leases is: this package asks it what a
+// request's use allows, and what a command's does.
 type Uses interface {
 	ApprovedUse(ctx context.Context, poolID, sandboxID, useID, host string) (services.ApprovedUse, error)
+	ApprovedCredentialUse(ctx context.Context, poolID, sandboxID, useID string) (services.ApprovedUse, error)
 }
 
 // SetUses installs it. A judge with no question to put has nothing to answer,
@@ -60,14 +64,14 @@ func (s *Service) Judge(ctx context.Context, poolID string, ask services.JudgeAs
 	// A pool that asks a server which does not judge is answered before
 	// anything is looked up. Nothing should be asking — the pool is told
 	// whether to — so this is the backstop, not the path.
-	if !s.enabled {
+	if !s.judging.Requests {
 		// Said in a way a program can recognize, because a pool has to tell it
 		// apart from a judge that failed: one means stop asking, the other
 		// means no credential goes out (ADR 26-09-22-838 §4).
 		return judge.Answer{}, apperrors.NewStatusErrorOfKind(http.StatusServiceUnavailable,
-			apperrors.KindJudgingDisabled, "this server does not judge credential use")
+			apperrors.KindJudgingDisabled, "this server does not judge credential-bearing requests")
 	}
-	if s.leases == nil || s.uses == nil {
+	if s.uses == nil || (s.jev == nil && s.leases == nil) {
 		return judge.Answer{}, apperrors.NewStatusError(http.StatusServiceUnavailable, "this server cannot reach a judge")
 	}
 	pool, err := s.store.GetPoolByID(ctx, poolID)
@@ -78,39 +82,12 @@ func (s *Service) Judge(ctx context.Context, poolID string, ask services.JudgeAs
 	if err != nil {
 		return judge.Answer{}, apperrors.NotFound(err, "project not found")
 	}
-	judgeSandbox, err := s.judge(ctx, project)
-	if err != nil {
-		return judge.Answer{}, err
-	}
-	if judgeSandbox == nil {
-		// Read-only: this is a pool asking, not the convergence deciding.
-		_, why, err := s.wanted(ctx, project, false)
-		if err != nil {
+	// Jev is always there to ask, so only a judge discobox is looked for.
+	var judgeSandbox *model.Sandbox
+	if s.jev == nil {
+		if judgeSandbox, err = s.readyJudge(ctx, project); err != nil {
 			return judge.Answer{}, err
 		}
-		if why == "" {
-			why = "the project's judge is not ready yet"
-		}
-		return judge.Answer{}, apperrors.NewStatusError(http.StatusServiceUnavailable, "this project has no judge: "+why)
-	}
-	// A judge that could not be brought up is a refusal with a stable sentence,
-	// and the reason goes to the log rather than back down the wire.
-	//
-	// The judge is in no listing, so this is the only place its failure is
-	// mentioned at all — but it travels to the pool, and from there to the
-	// discobox that asked (ADR 26-09-22-838 §4: the reason is what a discobox learns).
-	// A sandbox's own reconcile error is written for whoever runs the server:
-	// it carries pool host paths, image references and whatever a provider's
-	// API said. That is an operator's to read, in the operator's log.
-	if judgeSandbox.State == model.SandboxStateFailed {
-		detail := ""
-		if judgeSandbox.ErrorMessage != nil {
-			detail = strings.TrimSpace(*judgeSandbox.ErrorMessage)
-		}
-		s.logger.WarnContext(ctx, "the project's judge could not be brought up, so a verdict was refused",
-			"projectId", project.ID, "sandboxId", judgeSandbox.ID, "poolId", judgeSandbox.PoolID, "error", detail)
-		return judge.Answer{}, apperrors.NewStatusError(http.StatusServiceUnavailable,
-			"this project's judge could not be brought up; the server's log says why")
 	}
 
 	// The question is composed once there is something that could answer it:
@@ -139,7 +116,7 @@ func (s *Service) Judge(ctx context.Context, poolID string, ask services.JudgeAs
 	// share one deadline, so a later round comes with less time than this
 	// hop's own; answered inside what the pool has left, the refusal arrives
 	// with its sentence rather than as the pool giving up on a silence.
-	bound := judge.ReachWait + judge.Timeout + judgeRoutingGrace
+	bound := s.judgeBound()
 	if ask.Timeout > 0 {
 		left := ask.Timeout - judgeReplyMargin
 		if left <= 0 {
@@ -151,61 +128,10 @@ func (s *Service) Judge(ctx context.Context, poolID string, ask services.JudgeAs
 	ctx, cancel := context.WithTimeout(ctx, bound)
 	defer cancel()
 
-	// The round trip starts here, before the judge is reached: bringing up a
-	// stopped judge is part of how long it took to answer.
-	start := time.Now()
-	// A judge that is about to be reachable — its pool not yet heard from
-	// since this server started, or its host still coming back — is waited on
-	// rather than refused, for a bound of its own. Every deadline on the
-	// exchange allows for it on top of the judge's own time, so a first round
-	// that waits the whole of it still leaves the judge all of judge.Timeout.
-	reachCtx, cancelReach := context.WithTimeout(ctx, judge.ReachWait)
-	lease, sandboxModel, err := s.leases.AwaitSandboxHTTPClientForServer(reachCtx, project.ID, judgeSandbox.ID, []string{poolagentauth.ScopeJudgeRun})
-	cancelReach()
+	decided, err := s.put(ctx, project, judgeSandbox, job, bound)
 	if err != nil {
 		return judge.Answer{}, err
 	}
-	defer lease.Release()
-
-	target, err := sandboxagentclient.TargetURL(lease.BaseURL, sandboxModel.ProjectID, sandboxModel.PoolID, sandboxModel.ID, "/judge")
-	if err != nil {
-		return judge.Answer{}, err
-	}
-	// Marshaled through the pointer, which is what reaches the generated
-	// MarshalJSON. By value, encoding/json walks the struct itself and asks
-	// each unset optional field to marshal — and an unset one writes nothing,
-	// which fails the whole encode. The generated encoder is the only one that
-	// knows to leave an unset field out.
-	jobBody := judgeJobBody(job)
-	body, err := json.Marshal(&jobBody)
-	if err != nil {
-		return judge.Answer{}, err
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))
-	if err != nil {
-		return judge.Answer{}, err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err := sandboxagentclient.HTTPClient(lease).Do(request)
-	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return judge.Answer{}, apperrors.NewStatusError(http.StatusGatewayTimeout,
-				fmt.Sprintf("the project's judge did not answer inside the %s the request had", bound.Round(time.Second)))
-		}
-		return judge.Answer{}, apperrors.NewStatusError(http.StatusBadGateway,
-			fmt.Sprintf("the project's judge could not be reached: %v", err))
-	}
-	defer response.Body.Close()
-	if response.StatusCode/100 != 2 {
-		return judge.Answer{}, judgeError(response)
-	}
-	var answered sandboxapi.JudgeAnswer
-	if err := json.NewDecoder(io.LimitReader(response.Body, int64(judge.MaxOutput))).Decode(&answered); err != nil {
-		return judge.Answer{}, apperrors.NewStatusError(http.StatusBadGateway,
-			fmt.Sprintf("the project's judge answered with something unreadable: %v", err))
-	}
-	latency := time.Since(start)
-	decided := answer(answered)
 	// Asked again after the verdict, because a verdict takes a while and a
 	// grant can be revoked inside it (ADR 26-09-22-838 §4). The check is the same one
 	// the question was built from, so what it rules out is a use that stopped
@@ -218,17 +144,235 @@ func (s *Service) Judge(ctx context.Context, poolID string, ask services.JudgeAs
 	if _, err := s.uses.ApprovedUse(ctx, poolID, ask.SandboxID, ask.UseID, judgedHost(ask.Request)); err != nil {
 		return judge.Answer{}, err
 	}
-	standingUntil := s.admit(ctx, job, &decided, time.Now())
+	standingUntil := s.admit(ctx, job, &decided.Answer, time.Now())
 	// Recorded before the answer goes back, and gating it: an answer with no
 	// record of it is no verdict (ADR 26-09-22-838 §§4, 8). The write gets a
 	// deadline of its own, so an answer that arrived just inside the ask's is
 	// not lost to it — the model has already been paid to give it.
 	recordCtx, cancelRecord := context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
 	defer cancelRecord()
-	if err := s.record(recordCtx, project.ID, judgeSandbox, ask, use, job, decided, standingUntil, latency); err != nil {
+	if err := s.record(recordCtx, project.ID, ask, use, job, decided, standingUntil); err != nil {
 		return judge.Answer{}, err
 	}
+	return decided.Answer, nil
+}
+
+// judgeBound is how long one ask may take on this hop, before a pool's own
+// deadline is applied. A judge discobox may first have to be reached; Jev is
+// an HTTP call away and gets the judge's own time alone, unless what it is
+// unsure of goes on to a judge discobox, which may have to be reached too.
+func (s *Service) judgeBound() time.Duration {
+	if s.jev != nil && !s.jevFallback {
+		return judge.Timeout
+	}
+	return judge.ReachWait + judge.Timeout + judgeRoutingGrace
+}
+
+// answered is one judge's answer to one job, and which judge gave it: what a
+// verdict records about who decided.
+type answered struct {
+	judge.Answer
+	latency time.Duration
+	// sandbox is the judge discobox that answered, when one did.
+	sandbox *model.Sandbox
+	// model and probabilities are Jev's, when Jev was asked: what it decided,
+	// or what it was unsure of before a judge discobox decided.
+	model         string
+	probabilities map[string]float64
+	// unsure is a Jev refusal because Jev could not tell (jev.Verdict.Unsure).
+	unsure bool
+}
+
+// stamp writes who answered, and how long it took, onto the verdict that
+// records the answer. A verdict a judge discobox decided after Jev was unsure
+// names both, and its prompt version is the discobox's: it is whose words
+// decided.
+func (a answered) stamp(row *model.CredentialVerdict) {
+	row.LatencyMS = a.latency.Milliseconds()
+	if a.model != "" {
+		// Jev, asked no role and given no system prompt: its questions and
+		// thresholds are what the version names (ADR 26-10-01-324 §6).
+		row.Model = a.model
+		row.Probabilities = a.probabilities
+		row.PromptVersion = jev.QuestionsVersion
+	}
+	if a.sandbox == nil {
+		return
+	}
+	row.Role = judge.Role
+	row.PromptVersion = judge.PromptVersion
+	row.JudgeSandboxID = a.sandbox.ID
+	row.Image = a.sandbox.Image
+	row.ImageDigest = a.sandbox.ImageDigest
+	if a.sandbox.HarnessConfigID != nil {
+		row.HarnessConfigID = *a.sandbox.HarnessConfigID
+	}
+}
+
+// put asks the server's judge one job: Jev, when the server judges with it,
+// and otherwise the project's judge discobox. ctx bounds the whole exchange;
+// bound is what it was bounded by, for the refusal that says so.
+//
+// A server that sends what Jev is unsure of on (jevUnsure: harness) asks the
+// project's judge discobox about exactly those jobs, and takes its answer.
+// Jev was going to refuse them, so a judge discobox that cannot be had leaves
+// Jev's refusal standing rather than no verdict at all.
+func (s *Service) put(ctx context.Context, project *model.Project, judgeSandbox *model.Sandbox, job judge.Job, bound time.Duration) (answered, error) {
+	if s.jev == nil {
+		return s.putSandbox(ctx, project, judgeSandbox, job, bound)
+	}
+	jevAnswer, err := s.putJev(ctx, job, bound)
+	if err != nil || !jevAnswer.unsure || !s.jevFallback {
+		return jevAnswer, err
+	}
+	if s.leases == nil {
+		return jevAnswer, nil
+	}
+	judgeSandbox, err = s.readyJudge(ctx, project)
+	if err != nil {
+		s.logger.WarnContext(ctx, "Jev was unsure and the project's judge discobox could not be asked, so Jev's refusal stands",
+			"projectId", project.ID, "error", err)
+		return jevAnswer, nil
+	}
+	decided, err := s.putSandbox(ctx, project, judgeSandbox, job, bound)
+	if err != nil {
+		s.logger.WarnContext(ctx, "Jev was unsure and the project's judge discobox did not answer, so Jev's refusal stands",
+			"projectId", project.ID, "sandboxId", judgeSandbox.ID, "error", err)
+		return jevAnswer, nil
+	}
+	decided.latency += jevAnswer.latency
+	decided.model, decided.probabilities, decided.unsure = jevAnswer.model, jevAnswer.probabilities, true
 	return decided, nil
+}
+
+// putJev asks Jev. Every way it fails to answer is no verdict, said in a
+// sentence that is safe to give the discobox that asked; what Jev itself said
+// goes to the operator's log, since it can quote the request it was sent.
+func (s *Service) putJev(ctx context.Context, job judge.Job, bound time.Duration) (answered, error) {
+	start := time.Now()
+	verdict, err := s.jev.Judge(ctx, job)
+	if err == nil {
+		return answered{Answer: verdict.Answer, latency: time.Since(start), model: verdict.Model,
+			probabilities: verdict.Probabilities, unsure: verdict.Unsure}, nil
+	}
+	var status *jev.StatusError
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return answered{}, apperrors.NewStatusError(http.StatusGatewayTimeout,
+			fmt.Sprintf("Jev did not answer inside the %s the request had", bound.Round(time.Second)))
+	case errors.As(err, &status) && status.Unauthorized():
+		s.logger.ErrorContext(ctx, "Jev refused this server's API key, so a verdict was refused", "error", err)
+		return answered{}, apperrors.NewStatusError(http.StatusServiceUnavailable,
+			"this server's judge could not be asked; the server's log says why")
+	case errors.As(err, &status) && status.Busy():
+		s.logger.WarnContext(ctx, "Jev was too busy to answer, so a verdict was refused", "error", err)
+		return answered{}, apperrors.NewStatusError(http.StatusTooManyRequests, "Jev was too busy to judge the request")
+	default:
+		s.logger.WarnContext(ctx, "Jev did not answer, so a verdict was refused", "error", err)
+		return answered{}, apperrors.NewStatusError(http.StatusBadGateway, "Jev could not judge the request; the server's log says why")
+	}
+}
+
+// readyJudge is the project's judge when it can answer, and otherwise the
+// refusal that says why: none yet, or one that could not be brought up.
+func (s *Service) readyJudge(ctx context.Context, project *model.Project) (*model.Sandbox, error) {
+	judgeSandbox, err := s.judge(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	if judgeSandbox == nil {
+		// Read-only: this is a verdict being asked for, not the convergence
+		// deciding.
+		_, why, err := s.wanted(ctx, project, false)
+		if err != nil {
+			return nil, err
+		}
+		if why == "" {
+			why = "the project's judge is not ready yet"
+		}
+		return nil, apperrors.NewStatusError(http.StatusServiceUnavailable, "this project has no judge: "+why)
+	}
+	// A judge that could not be brought up is a refusal with a stable sentence,
+	// and the reason goes to the log rather than back down the wire.
+	//
+	// The judge is in no listing, so this is the only place its failure is
+	// mentioned at all — but it travels to the pool, and from there to the
+	// discobox that asked (ADR 26-09-22-838 §4: the reason is what a discobox learns).
+	// A sandbox's own reconcile error is written for whoever runs the server:
+	// it carries pool host paths, image references and whatever a provider's
+	// API said. That is an operator's to read, in the operator's log.
+	if judgeSandbox.State == model.SandboxStateFailed {
+		detail := ""
+		if judgeSandbox.ErrorMessage != nil {
+			detail = strings.TrimSpace(*judgeSandbox.ErrorMessage)
+		}
+		s.logger.WarnContext(ctx, "the project's judge could not be brought up, so a verdict was refused",
+			"projectId", project.ID, "sandboxId", judgeSandbox.ID, "poolId", judgeSandbox.PoolID, "error", detail)
+		return nil, apperrors.NewStatusError(http.StatusServiceUnavailable,
+			"this project's judge could not be brought up; the server's log says why")
+	}
+
+	return judgeSandbox, nil
+}
+
+// putSandbox asks the project's judge discobox one job and returns its answer
+// and how long the round trip took, bringing up a judge that is about to be
+// reachable first.
+func (s *Service) putSandbox(ctx context.Context, project *model.Project, judgeSandbox *model.Sandbox, job judge.Job, bound time.Duration) (answered, error) {
+	// The round trip starts here, before the judge is reached: bringing up a
+	// stopped judge is part of how long it took to answer.
+	start := time.Now()
+	// A judge that is about to be reachable — its pool not yet heard from
+	// since this server started, or its host still coming back — is waited on
+	// rather than refused, for a bound of its own. Every deadline on the
+	// exchange allows for it on top of the judge's own time, so a first round
+	// that waits the whole of it still leaves the judge all of judge.Timeout.
+	reachCtx, cancelReach := context.WithTimeout(ctx, judge.ReachWait)
+	lease, sandboxModel, err := s.leases.AwaitSandboxHTTPClientForServer(reachCtx, project.ID, judgeSandbox.ID, []string{poolagentauth.ScopeJudgeRun})
+	cancelReach()
+	if err != nil {
+		return answered{}, err
+	}
+	defer lease.Release()
+
+	target, err := sandboxagentclient.TargetURL(lease.BaseURL, sandboxModel.ProjectID, sandboxModel.PoolID, sandboxModel.ID, "/judge")
+	if err != nil {
+		return answered{}, err
+	}
+	// Marshaled through the pointer, which is what reaches the generated
+	// MarshalJSON. By value, encoding/json walks the struct itself and asks
+	// each unset optional field to marshal — and an unset one writes nothing,
+	// which fails the whole encode. The generated encoder is the only one that
+	// knows to leave an unset field out.
+	jobBody := judgeJobBody(job)
+	body, err := json.Marshal(&jobBody)
+	if err != nil {
+		return answered{}, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))
+	if err != nil {
+		return answered{}, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := sandboxagentclient.HTTPClient(lease).Do(request)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return answered{}, apperrors.NewStatusError(http.StatusGatewayTimeout,
+				fmt.Sprintf("the project's judge did not answer inside the %s the request had", bound.Round(time.Second)))
+		}
+		return answered{}, apperrors.NewStatusError(http.StatusBadGateway,
+			fmt.Sprintf("the project's judge could not be reached: %v", err))
+	}
+	defer response.Body.Close()
+	if response.StatusCode/100 != 2 {
+		return answered{}, judgeError(response)
+	}
+	var reply sandboxapi.JudgeAnswer
+	if err := json.NewDecoder(io.LimitReader(response.Body, int64(judge.MaxOutput))).Decode(&reply); err != nil {
+		return answered{}, apperrors.NewStatusError(http.StatusBadGateway,
+			fmt.Sprintf("the project's judge answered with something unreadable: %v", err))
+	}
+	return answered{Answer: answer(reply), latency: time.Since(start), sandbox: judgeSandbox}, nil
 }
 
 // recordTimeout bounds writing one verdict once the judge has answered.
@@ -237,39 +381,32 @@ const recordTimeout = 10 * time.Second
 // record persists one answer as a request verdict. The row is written whatever
 // the answer — an allow, a refusal, or an ask to be shown the body — because
 // each is the judge's decision about a request that was held while it was
-// made. The judge is read off the discobox that answered, so a verdict names
-// the harness and the image that produced it even after the project's judge
-// is replaced. An allow admitted to stand carries its route and when it
-// lapses, which is what makes the row the standing allow.
-func (s *Service) record(ctx context.Context, projectID string, judgeSandbox *model.Sandbox, ask services.JudgeAsk, use services.ApprovedUse, job judge.Job, decided judge.Answer, standingUntil *time.Time, latency time.Duration) error {
+// made. The judge is read off whatever answered: the discobox, so a verdict
+// names the harness and the image that produced it even after the project's
+// judge is replaced, or Jev's model and what it said. An allow admitted to
+// stand carries its route and when it lapses, which is what makes the row the
+// standing allow.
+func (s *Service) record(ctx context.Context, projectID string, ask services.JudgeAsk, use services.ApprovedUse, job judge.Job, decided answered, standingUntil *time.Time) error {
 	prompt, err := judge.Prompt(job)
 	if err != nil {
 		return err
 	}
 	row := &model.CredentialVerdict{
-		ProjectID:      projectID,
-		Kind:           model.CredentialVerdictKindRequest,
-		Origin:         model.CredentialVerdictOriginJudge,
-		SandboxID:      ask.SandboxID,
-		UseID:          ask.UseID,
-		GrantID:        use.GrantID,
-		Command:        job.Command,
-		Request:        job.Request,
-		Round:          job.Round,
-		Allow:          decided.Allow,
-		Need:           decided.Need,
-		Reason:         decided.Reason,
-		Role:           judge.Role,
-		Prompt:         prompt,
-		PromptVersion:  judge.PromptVersion,
-		LatencyMS:      latency.Milliseconds(),
-		JudgeSandboxID: judgeSandbox.ID,
-		Image:          judgeSandbox.Image,
-		ImageDigest:    judgeSandbox.ImageDigest,
+		ProjectID: projectID,
+		Kind:      model.CredentialVerdictKindRequest,
+		Origin:    model.CredentialVerdictOriginJudge,
+		SandboxID: ask.SandboxID,
+		UseID:     ask.UseID,
+		GrantID:   use.GrantID,
+		Command:   job.Command,
+		Request:   job.Request,
+		Round:     job.Round,
+		Allow:     decided.Allow,
+		Need:      decided.Need,
+		Reason:    decided.Reason,
+		Prompt:    prompt,
 	}
-	if judgeSandbox.HarnessConfigID != nil {
-		row.HarnessConfigID = *judgeSandbox.HarnessConfigID
-	}
+	decided.stamp(row)
 	if decided.Standing != nil && standingUntil != nil {
 		row.StandingRoute = decided.Standing.Route
 		row.StandingUntil = standingUntil
@@ -318,6 +455,13 @@ func (s *Service) standing(ctx context.Context, projectID string, ask services.J
 		// allow that stands never needed one.
 		return judge.Answer{}, false, nil
 	}
+	if job.Request.OperationInBody() != "" {
+		// A route matches a method and a path, and says nothing about a
+		// body. A request whose operation is in its body — a push, whatever
+		// route an earlier allow named — is read every time, or nothing read
+		// it (ADR 26-09-26-240 §2).
+		return judge.Answer{}, false, nil
+	}
 	start := time.Now()
 	rows, err := s.store.StandingVerdicts(ctx, projectID, ask.SandboxID, ask.UseID, start)
 	if err != nil {
@@ -347,6 +491,7 @@ func (s *Service) standing(ctx context.Context, projectID string, ask services.J
 			HarnessConfigID:   granted.HarnessConfigID,
 			Image:             granted.Image,
 			ImageDigest:       granted.ImageDigest,
+			Model:             granted.Model,
 			StandingVerdictID: granted.ID,
 		}
 		recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
@@ -403,6 +548,10 @@ func (s *Service) job(ctx context.Context, poolID string, ask services.JudgeAsk)
 		Round:      ask.Round,
 		Command:    ask.Command,
 		Request:    ask.Request,
+		// Read here, from what the pool says it recognized, and never taken
+		// from the pool: the words about a protocol or an API are the trusted
+		// side's (ADR 26-09-26-240 §4).
+		Guidance: judge.GuidanceFor(ask.Request),
 	}
 	if err := job.Validate(); err != nil {
 		return judge.Job{}, services.ApprovedUse{}, apperrors.NewStatusError(http.StatusBadRequest, err.Error())
@@ -453,17 +602,42 @@ const judgeRoutingGrace = 30 * time.Second
 // answer to travel back in, so the pool reads it rather than timing out first.
 const judgeReplyMargin = 5 * time.Second
 
+// optString is a field the wire leaves out when it says nothing.
+func optString(value string) sandboxapi.OptString {
+	if value == "" {
+		return sandboxapi.OptString{}
+	}
+	return sandboxapi.NewOptString(value)
+}
+
 // judgeJobBody is the job on the wire to the judge's agent.
 func judgeJobBody(job judge.Job) sandboxapi.JudgeJob {
 	body := sandboxapi.JudgeJob{
-		Kind:    sandboxapi.JudgeJobKind(job.Kind),
-		Purpose: job.Purpose,
-		Host:    job.Host,
-		Round:   int64(job.Round),
-		Command: job.Command,
+		Kind:     sandboxapi.JudgeJobKind(job.Kind),
+		Purpose:  job.Purpose,
+		Host:     job.Host,
+		Round:    int64(job.Round),
+		Command:  job.Command,
+		Guidance: job.Guidance,
+		Uses:     job.Uses,
 	}
 	if job.Credential != "" {
 		body.Credential = sandboxapi.NewOptString(job.Credential)
+	}
+	if in := job.Stdin; in != nil {
+		stdin := sandboxapi.JudgeInput{Content: in.Content}
+		if in.Missing != "" {
+			stdin.Missing = sandboxapi.NewOptString(in.Missing)
+		}
+		body.Stdin = sandboxapi.NewOptJudgeInput(stdin)
+	}
+	if r := job.Reported; r != nil {
+		body.Reported = sandboxapi.NewOptJudgeReported(sandboxapi.JudgeReported{
+			WorkingDirectory: optString(r.WorkingDirectory),
+			RepositoryRoot:   optString(r.RepositoryRoot),
+			RefCommit:        optString(r.RefCommit),
+			RefSubject:       optString(r.RefSubject),
+		})
 	}
 	if job.Request == nil {
 		return body
@@ -472,19 +646,35 @@ func judgeJobBody(job judge.Job) sandboxapi.JudgeJob {
 	if len(job.Request.Headers) > 0 {
 		evidence.Headers = sandboxapi.NewOptJudgeRequestEvidenceHeaders(job.Request.Headers)
 	}
-	if job.Request.Body != nil {
-		requestBody := sandboxapi.JudgeRequestBody{Length: sandboxapi.NewOptInt64(job.Request.Body.Length)}
-		if job.Request.Body.MediaType != "" {
-			requestBody.MediaType = sandboxapi.NewOptString(job.Request.Body.MediaType)
+	evidence.Protocol = recognitionBody(job.Request.Protocol)
+	evidence.Endpoint = recognitionBody(job.Request.Endpoint)
+	if body := job.Request.Body; body != nil {
+		requestBody := sandboxapi.JudgeRequestBody{Length: sandboxapi.NewOptInt64(body.Length)}
+		if body.MediaType != "" {
+			requestBody.MediaType = sandboxapi.NewOptString(body.MediaType)
 		}
-		if job.Request.Body.Form != "" {
-			requestBody.Form = sandboxapi.NewOptJudgeRequestBodyForm(sandboxapi.JudgeRequestBodyForm(job.Request.Body.Form))
+		requestBody.Parser = recognitionBody(body.Parser)
+		if len(body.Metadata) > 0 {
+			var fields map[string]json.RawMessage
+			// Validate has already held it to one JSON object.
+			if err := json.Unmarshal(body.Metadata, &fields); err == nil {
+				metadata := make(sandboxapi.JudgeRequestBodyMetadata, len(fields))
+				for key, value := range fields {
+					metadata[key] = jx.Raw(value)
+				}
+				requestBody.Metadata = sandboxapi.NewOptJudgeRequestBodyMetadata(metadata)
+			}
 		}
-		if job.Request.Body.Content != "" {
-			requestBody.Content = sandboxapi.NewOptString(job.Request.Body.Content)
+		if body.ParseError != "" {
+			requestBody.ParseError = sandboxapi.NewOptString(body.ParseError)
 		}
-		if job.Request.Body.Missing != "" {
-			requestBody.Missing = sandboxapi.NewOptString(job.Request.Body.Missing)
+		// Present, even empty, once the judge asked: an empty body shown is
+		// not the same as a body not yet shown.
+		if body.Content != nil {
+			requestBody.Content = sandboxapi.NewOptString(*body.Content)
+		}
+		if body.Missing != "" {
+			requestBody.Missing = sandboxapi.NewOptString(body.Missing)
 		}
 		evidence.Body = sandboxapi.NewOptJudgeRequestBody(requestBody)
 	}
@@ -492,12 +682,22 @@ func judgeJobBody(job judge.Job) sandboxapi.JudgeJob {
 	return body
 }
 
+// recognitionBody is a recognition on the wire to the judge's agent.
+func recognitionBody(recognized *judge.Recognition) sandboxapi.OptJudgeRecognition {
+	if recognized == nil {
+		return sandboxapi.OptJudgeRecognition{}
+	}
+	return sandboxapi.NewOptJudgeRecognition(sandboxapi.JudgeRecognition{
+		Name: recognized.Name, Version: int64(recognized.Version),
+	})
+}
+
 // answer is what the judge said, in the words this server passes on.
 func answer(answered sandboxapi.JudgeAnswer) judge.Answer {
 	out := judge.Answer{Reason: answered.Reason, Allow: answered.Allow.Or(false)}
 	if need, ok := answered.Need.Get(); ok {
 		out.Allow = false
-		out.Need = &judge.Need{Body: string(need.Body), Bytes: int(need.Bytes.Or(0))}
+		out.Need = &judge.Need{Body: need.Body, Bytes: int(need.Bytes.Or(0))}
 		return out
 	}
 	if standing, ok := answered.Standing.Get(); ok && out.Allow {

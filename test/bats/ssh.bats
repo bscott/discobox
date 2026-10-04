@@ -267,10 +267,10 @@ ssh_client() {
   diff "$src" "$dst"
 }
 
-# `discobox cp` is the same transfer without the ssh_config: the CLI opens a
-# loopback bridge onto GET /ssh/connect for the life of the command, enrolls its
+# `discobox cp` is the same transfer without the ssh_config: the CLI hands scp
+# the same ProxyCommand onto GET /ssh/connect on its command line, enrolls its
 # own key, and rewrites DISCOBOX:PATH into what scp takes.
-@test "discobox cp round-trips a file over the CLI's own bridge" {
+@test "discobox cp round-trips a file through the CLI's own ProxyCommand" {
   local src="$DISCOBOX_BATS_TMP/cp-upload.txt" remote="/tmp/bats-cp-upload.txt" dst="$DISCOBOX_BATS_TMP/cp-download.txt"
   echo "discobox cp round trip $$" >"$src"
 

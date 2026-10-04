@@ -207,6 +207,7 @@ func (h *Handler) ResolveSandboxSecret(ctx context.Context, req *apimodel.Resolv
 		if resolution.ExpiresAt != nil {
 			resp.SetExpiresAt(serverapi.NewOptDateTime(*resolution.ExpiresAt))
 		}
+		resp.SetSecretId(serverapi.NewOptString(resolution.SecretID))
 	}
 	return &resp, nil
 }
@@ -230,7 +231,7 @@ func (h *Handler) ListSandboxCredentials(ctx context.Context, params serverapi.L
 		item := apimodel.SandboxCredential{
 			Name:     credential.Name,
 			EnvVar:   credential.Assignment.EnvName,
-			Host:     credential.Grant.Host,
+			Hosts:    credential.Grant.Hosts,
 			SecretId: credential.Assignment.SecretID,
 			GrantId:  credential.Grant.ID,
 			Sentinel: credential.Assignment.Sentinel,
@@ -269,17 +270,6 @@ func (h *Handler) GetSandboxCredentialRequest(ctx context.Context, params server
 		return apiError(err), nil
 	}
 	return agentCredentialRequestStatus(result, grant), nil
-}
-
-func (h *Handler) RecordCredentialVerdict(ctx context.Context, req *apimodel.RecordCredentialVerdictBody, _ serverapi.RecordCredentialVerdictParams) (serverapi.RecordCredentialVerdictRes, error) {
-	principal, err := credentialBrokerPrincipal(ctx)
-	if err != nil {
-		return apiError(err), nil
-	}
-	if err := h.services.Secrets.RecordCredentialVerdict(ctx, principal.PoolID, *req); err != nil {
-		return apiError(err), nil
-	}
-	return &serverapi.RecordCredentialVerdictNoContent{}, nil
 }
 
 // credentialBrokerPrincipal authorizes an agent credentials broker call. The

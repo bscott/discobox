@@ -832,6 +832,90 @@ func TestMaterializeGitSourceLeavesLiveCloneDeliveredWorkspaceAlone(t *testing.T
 	}
 }
 
+// The remote the client's checkout tracks arrives as upstream, beside an origin
+// that is still the client's repository, and the branch keeps tracking origin.
+func TestMaterializeGitSourceAddsTheClientsUpstreamRemote(t *testing.T) {
+	requirePOSIXHost(t)
+	ctx := context.Background()
+	sourceRepo := t.TempDir()
+	git(t, sourceRepo, "init", "-b", "main")
+	git(t, sourceRepo, "-c", "user.Name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "base")
+	baseCommit := gitOutput(t, sourceRepo, "rev-parse", "HEAD")
+
+	const upstreamURL = "https://github.com/example/project.git"
+	source := workerapimodel.GitSource{
+		Kind:           workerclient.GitSourceKindGit,
+		LocalDirectory: workerclient.NewOptString(sourceRepo),
+		UpstreamUrl:    workerclient.NewOptString(upstreamURL),
+		Checkout: workerclient.NewOptGitSourceCheckout(workerapimodel.GitSourceCheckout{
+			Commit:  workerclient.NewOptString(baseCommit),
+			RefName: workerclient.NewOptString("main"),
+			RefType: workerclient.NewOptString("branch"),
+		}),
+	}
+	target := filepath.Join(t.TempDir(), "target")
+	runtime := &DockerSandboxRuntime{}
+	if err := runtime.materializeGitSource(ctx, source, target, "", currentUser()); err != nil {
+		t.Fatalf("materialize git source: %v", err)
+	}
+	if err := runtime.ensureOriginRemote(ctx, target, source, "primary", currentUser()); err != nil {
+		t.Fatalf("ensure origin remote: %v", err)
+	}
+	if got := gitOutput(t, target, "config", "remote.upstream.url"); got != upstreamURL {
+		t.Fatalf("upstream remote = %q, want %q", got, upstreamURL)
+	}
+	if got, want := gitOutput(t, target, "config", "--get-all", "remote.upstream.fetch"), "+refs/heads/*:refs/remotes/upstream/*"; got != want {
+		t.Fatalf("upstream fetch refspec = %q, want %q", got, want)
+	}
+	if got, want := gitOutput(t, target, "remote", "get-url", "origin"), "/.discobox/origins/primary"; got != want {
+		t.Fatalf("origin remote = %q, want %q", got, want)
+	}
+	if got := gitOutput(t, target, "config", "branch.main.remote"); got != "origin" {
+		t.Fatalf("branch main tracks %q, want origin", got)
+	}
+
+	// The remote is the sandbox's once it exists: a later create leaves a URL
+	// changed inside the sandbox alone.
+	const changed = "https://github.com/someone-else/project.git"
+	git(t, target, "remote", "set-url", "upstream", changed)
+	if err := runtime.materializeGitSource(ctx, source, target, "", currentUser()); err != nil {
+		t.Fatalf("materialize git source again: %v", err)
+	}
+	if err := runtime.ensureOriginRemote(ctx, target, source, "primary", currentUser()); err != nil {
+		t.Fatalf("ensure origin remote again: %v", err)
+	}
+	if got := gitOutput(t, target, "config", "remote.upstream.url"); got != changed {
+		t.Fatalf("upstream remote after a later create = %q, want the sandbox's own %q", got, changed)
+	}
+}
+
+// A push-delivered source gets the same upstream: the URL travels on the
+// create request, not through the repository the client pushed.
+func TestMaterializeGitSourceAddsUpstreamToAPushedSource(t *testing.T) {
+	requirePOSIXHost(t)
+	ctx := context.Background()
+	const upstreamURL = "git@github.com:example/project.git"
+	source := pushDeliveredSource("main")
+	source.UpstreamUrl = workerclient.NewOptString(upstreamURL)
+	runtime := &DockerSandboxRuntime{}
+	origin := filepath.Join(t.TempDir(), "primary.git")
+	if err := runtime.initGitOrigin(ctx, origin, currentUser()); err != nil {
+		t.Fatalf("init git origin: %v", err)
+	}
+	pushCommitToOrigin(t, origin, "main")
+
+	target := filepath.Join(t.TempDir(), "target")
+	if err := runtime.materializeGitSource(ctx, source, target, origin, currentUser()); err != nil {
+		t.Fatalf("materialize push source: %v", err)
+	}
+	if got := gitOutput(t, target, "config", "remote.upstream.url"); got != upstreamURL {
+		t.Fatalf("upstream remote = %q, want %q", got, upstreamURL)
+	}
+	if got := gitOutput(t, target, "config", "branch.main.remote"); got != "origin" {
+		t.Fatalf("branch main tracks %q, want origin", got)
+	}
+}
+
 // A remote-URL source has no on-disk origin the pool host can bind, so its
 // "origin" stays exactly as git clone set it: the real remote the sandbox
 // fetches from itself.
@@ -1934,17 +2018,17 @@ func TestValidateCreateRequestRefusesAnUnresolvedRequest(t *testing.T) {
 	}
 }
 
-func TestSandboxHostnameDropsThePrefixAndStaysALegalLabel(t *testing.T) {
+func TestSandboxHostnameIsTheHyphenatedIDAsALegalLabel(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		sandboxID string
 		want      string
 	}{
-		{name: "generated id", sandboxID: "sbx_dfzx0123456789ab", want: "dfzx0123456789ab"},
+		{name: "generated id", sandboxID: "sbx_dfzx0123456789ab", want: "sbx-dfzx0123456789ab"},
 		{name: "no prefix", sandboxID: "bare0123456789ab", want: "bare0123456789ab"},
-		{name: "illegal characters", sandboxID: "sbx_A b/c", want: "a-b-c"},
-		{name: "trims edge hyphens", sandboxID: "sbx_-abc-", want: "abc"},
-		{name: "nothing usable", sandboxID: "sbx_", want: ""},
+		{name: "illegal characters", sandboxID: "sbx_A b/c", want: "sbx-a-b-c"},
+		{name: "trims edge hyphens", sandboxID: "-abc_", want: "abc"},
+		{name: "nothing usable", sandboxID: "_", want: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := sandboxHostname(tc.sandboxID); got != tc.want {

@@ -2,6 +2,7 @@ package secrets_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestAgentCredentialRequestIsPendingAndRecordsWhatWasAsked(t *testing.T) {
 	if !req.FromProtocol() {
 		t.Fatal("request does not read as protocol-originated; declared uses are what separate it from the proxy's reactive path")
 	}
-	if req.EnvName != "GITHUB_TOKEN" || req.Host != "api.github.com" || req.Justification == "" {
+	if req.EnvName != "GITHUB_TOKEN" || !slices.Equal(req.Hosts, []string{"api.github.com"}) || req.Justification == "" {
 		t.Fatalf("request = %#v, want the ask recorded verbatim", req)
 	}
 	if len(req.Uses) != 1 || req.Uses[0].UseID != "" {
@@ -55,6 +56,47 @@ func TestAgentCredentialRequestReusesAnOpenAsk(t *testing.T) {
 	}
 }
 
+// An ask for other uses of the same credential is its own request. Folding it
+// into the open one would answer it with that request's ID while dropping the
+// uses it asked for: the agent believes it asked, and the person approving
+// never sees it.
+func TestAgentCredentialRequestForOtherUsesIsItsOwn(t *testing.T) {
+	ctx := testPrincipalContext()
+	svc, _ := newAgentCredentialService(t)
+	ask := func(ttl int64, uses ...string) *model.SecretRequest {
+		t.Helper()
+		body := services.CreateSandboxCredentialRequestBody{
+			SandboxId: testSandboxID, Name: "github", EnvVar: "GITHUB_TOKEN", Hosts: []string{"api.github.com"},
+		}
+		for _, use := range uses {
+			body.Uses = append(body.Uses, apimodel.SecretUse{Description: use})
+		}
+		if ttl > 0 {
+			body.GrantTTLSeconds = serverapi.NewOptInt64(ttl)
+		}
+		created, err := svc.CreateSandboxCredentialRequest(ctx, testPoolID, body)
+		if err != nil {
+			t.Fatalf("create credential request: %v", err)
+		}
+		return created
+	}
+
+	first := ask(0, "push the branch issue-43")
+	other := ask(0, "fetch main", "mark the pull request ready")
+	if other.ID == first.ID {
+		t.Fatalf("an ask for other uses was answered with the open request %s", first.ID)
+	}
+	if len(other.Uses) != 2 || other.Uses[1].Description != "mark the pull request ready" {
+		t.Fatalf("uses = %#v, want the ones this ask named", other.Uses)
+	}
+	if longer := ask(3600, "push the branch issue-43"); longer.ID == first.ID {
+		t.Fatal("an ask for a different lifetime was answered with the open request")
+	}
+	if again := ask(0, "fetch main", "mark the pull request ready"); again.ID != other.ID {
+		t.Fatalf("a retry created %s, want the open request %s it repeats", again.ID, other.ID)
+	}
+}
+
 // How long the agent asks to keep the credential is kept with the ask, for the
 // approval to open on. It is not held against any secret's limit here — which
 // secret answers is the approval's choice — but a negative one is refused.
@@ -66,7 +108,7 @@ func TestAgentCredentialRequestRecordsTheLifetimeAskedFor(t *testing.T) {
 		SandboxId:       testSandboxID,
 		Name:            "github",
 		EnvVar:          "GITHUB_TOKEN",
-		Host:            "api.github.com",
+		Hosts:           []string{"api.github.com"},
 		Uses:            []apimodel.SecretUse{{Description: "open a pull request"}},
 		GrantTTLSeconds: serverapi.NewOptInt64(4 * 3600),
 	})
@@ -91,7 +133,7 @@ func TestAgentCredentialRequestRecordsTheLifetimeAskedFor(t *testing.T) {
 			SandboxId:       testSandboxID,
 			Name:            "npm",
 			EnvVar:          "NPM_TOKEN",
-			Host:            "registry.npmjs.org",
+			Hosts:           []string{"registry.npmjs.org"},
 			Uses:            []apimodel.SecretUse{{Description: "publish the package"}},
 			GrantTTLSeconds: serverapi.NewOptInt64(ask),
 		})
@@ -136,8 +178,8 @@ func TestApprovingAnAgentRequestMintsUsesAndAnUninjectedBinding(t *testing.T) {
 	if grant.Scope != model.SecretGrantScopeSandbox || grant.ScopeKey != testSandboxID {
 		t.Fatalf("grant scope = %s/%s, want the asking sandbox", grant.Scope, grant.ScopeKey)
 	}
-	if grant.Host != "api.github.com" {
-		t.Fatalf("grant host = %q, want the requested host; this flow never mints a wildcard", grant.Host)
+	if !slices.Equal(grant.Hosts, []string{"api.github.com"}) {
+		t.Fatalf("grant host = %q, want the requested host; this flow never mints a wildcard", grant.Hosts)
 	}
 	if len(grant.Uses) != 1 || !strings.HasPrefix(grant.Uses[0].UseID, "use_") {
 		t.Fatalf("grant uses = %#v, want one use carrying a minted ID", grant.Uses)
@@ -173,7 +215,7 @@ func TestApprovingAnAskToDelegateMintsADelegationGrant(t *testing.T) {
 		SandboxId: testSandboxID,
 		Name:      "github",
 		EnvVar:    "GITHUB_TOKEN",
-		Host:      "api.github.com",
+		Hosts:     []string{"api.github.com"},
 		Uses:      []apimodel.SecretUse{{Description: "triage issues on discobox-ai/discobox"}},
 		Purpose:   serverapi.NewOptCreateSandboxCredentialRequestBodyPurpose(serverapi.CreateSandboxCredentialRequestBodyPurposeDelegate),
 	})
@@ -224,7 +266,7 @@ func TestAnAskToDelegateIsNotAnAskToUse(t *testing.T) {
 		SandboxId: testSandboxID,
 		Name:      "github",
 		EnvVar:    "GITHUB_TOKEN",
-		Host:      "api.github.com",
+		Hosts:     []string{"api.github.com"},
 		Uses:      []apimodel.SecretUse{{Description: "open a pull request"}},
 		Purpose:   serverapi.NewOptCreateSandboxCredentialRequestBodyPurpose(serverapi.CreateSandboxCredentialRequestBodyPurposeDelegate),
 	})
@@ -239,10 +281,10 @@ func TestAnAskToDelegateIsNotAnAskToUse(t *testing.T) {
 	}
 }
 
-// The row a credential's own use call writes must resolve back to the grant
-// it belongs to, so "every use of one grant" is an ordinary query and not a
-// join nobody can make (ADR 0091 §2).
-func TestRecordCredentialVerdictResolvesTheGrantFromTheUseID(t *testing.T) {
+// A command is judged against the use it names as the live grant says it
+// now, with the grant's hosts and credential, so the verdict joins back to the
+// grant (ADR 26-09-22-838 §3).
+func TestACommandsUseIsReadFromTheLiveGrant(t *testing.T) {
 	ctx := testPrincipalContext()
 	svc, st := newAgentCredentialService(t)
 	secret := createBearerSecret(ctx, t, svc)
@@ -255,93 +297,26 @@ func TestRecordCredentialVerdictResolvesTheGrantFromTheUseID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get grant: %v", err)
 	}
-	useID := grant.Uses[0].UseID
 
-	err = svc.RecordCredentialVerdict(ctx, testPoolID, services.RecordCredentialVerdictBody{
-		SandboxId: testSandboxID,
-		UseId:     useID,
-		Command:   []string{"gh", "pr", "create", "--fill"},
-		Verdict: apimodel.AgentCredentialVerdict{
-			Allow:     true,
-			Reason:    serverapi.NewOptString("opens a PR against the approved repo"),
-			Role:      "judge",
-			Prompt:    "Approved use: open a pull request\n...",
-			LatencyMs: serverapi.NewOptInt64(842),
-		},
-		Volunteered: false,
-	})
+	use, err := svc.ApprovedCredentialUse(ctx, testPoolID, testSandboxID, grant.Uses[0].UseID)
 	if err != nil {
-		t.Fatalf("record verdict: %v", err)
+		t.Fatalf("ApprovedCredentialUse() error = %v", err)
 	}
-
-	rows, err := st.ListCredentialVerdicts(ctx, "project-1", store.CredentialVerdictFilter{SandboxID: testSandboxID})
-	if err != nil {
-		t.Fatalf("list verdicts: %v", err)
+	if use.GrantID != grant.ID || use.Purpose != grant.Uses[0].Description || use.Host != strings.Join(grant.Hosts, ", ") {
+		t.Fatalf("use = %#v, want the grant's use, host and ID", use)
 	}
-	if len(rows) != 1 {
-		t.Fatalf("verdicts = %#v, want exactly one", rows)
-	}
-	row := rows[0]
-	if row.GrantID != grant.ID {
-		t.Fatalf("grantId = %q, want it resolved to %q from the use ID", row.GrantID, grant.ID)
-	}
-	if !row.Allow || row.Reason == "" || row.Role != "judge" || row.LatencyMS != 842 {
-		t.Fatalf("row = %#v, want the verdict recorded verbatim", row)
-	}
-	if len(row.Command) != 4 || row.Command[0] != "gh" {
-		t.Fatalf("command = %#v, want the declared argv kept in order", row.Command)
-	}
-	if row.Volunteered {
-		t.Fatal("volunteered = true, want false: this verdict rode an issued credential's own use call")
+	if _, err := svc.ApprovedCredentialUse(ctx, testPoolID, testSandboxID, "use_gone"); err == nil {
+		t.Fatal("a use no live grant has was approved")
 	}
 }
 
-// A revoked or unknown use ID must not turn a verdict write into a failure:
-// the row is still complete evidence about the command without a grant to
-// join it to (ADR 0091 §2's best-effort resolution).
-func TestRecordCredentialVerdictSurvivesAnUnresolvableUseID(t *testing.T) {
-	ctx := testPrincipalContext()
-	svc, st := newAgentCredentialService(t)
-
-	err := svc.RecordCredentialVerdict(ctx, testPoolID, services.RecordCredentialVerdictBody{
-		SandboxId: testSandboxID,
-		UseId:     "use_gone",
-		Verdict: apimodel.AgentCredentialVerdict{
-			Allow:  false,
-			Role:   "judge",
-			Prompt: "...",
-		},
-		Volunteered: true,
-	})
-	if err != nil {
-		t.Fatalf("record verdict: %v", err)
-	}
-	rows, err := st.ListCredentialVerdicts(ctx, "project-1", store.CredentialVerdictFilter{SandboxID: testSandboxID})
-	if err != nil {
-		t.Fatalf("list verdicts: %v", err)
-	}
-	if len(rows) != 1 || rows[0].GrantID != "" {
-		t.Fatalf("rows = %#v, want one row with no grant resolved", rows)
-	}
-	if !rows[0].Volunteered {
-		t.Fatal("volunteered = false, want true: the judge refused before any use call, so this is the only record of it")
-	}
-}
-
-// A verdict is scoped to the sandbox it was recorded for, same as every other
-// broker call — a pool may not write a row for a sandbox it does not host.
-func TestRecordCredentialVerdictRefusesASandboxTheCallingPoolDoesNotHost(t *testing.T) {
+// Like every broker call, a pool may only ask about a sandbox it hosts.
+func TestACommandsUseIsNotReadForASandboxTheCallingPoolDoesNotHost(t *testing.T) {
 	ctx := testPrincipalContext()
 	svc, _ := newAgentCredentialService(t)
 
-	err := svc.RecordCredentialVerdict(ctx, "some-other-pool", services.RecordCredentialVerdictBody{
-		SandboxId:   testSandboxID,
-		UseId:       "use_1",
-		Verdict:     apimodel.AgentCredentialVerdict{Allow: true, Role: "judge", Prompt: "..."},
-		Volunteered: false,
-	})
-	if err == nil {
-		t.Fatal("a pool recorded a verdict for a sandbox it does not host")
+	if _, err := svc.ApprovedCredentialUse(ctx, "some-other-pool", testSandboxID, "use_1"); err == nil {
+		t.Fatal("a pool read a use for a sandbox it does not host")
 	}
 }
 
@@ -421,7 +396,7 @@ func TestAgentCredentialCallsRefuseAnotherPoolsSandbox(t *testing.T) {
 		SandboxId: testSandboxID,
 		Name:      "github",
 		EnvVar:    "GITHUB_TOKEN",
-		Host:      "api.github.com",
+		Hosts:     []string{"api.github.com"},
 		Uses:      []apimodel.SecretUse{{Description: "open a PR"}},
 	})
 	if err == nil {
@@ -495,7 +470,7 @@ func createAgentRequest(ctx context.Context, t *testing.T, svc *resourcesecrets.
 		SandboxId:     testSandboxID,
 		Name:          "github",
 		EnvVar:        "GITHUB_TOKEN",
-		Host:          "api.github.com",
+		Hosts:         []string{"api.github.com"},
 		Justification: serverapi.NewOptString("the task asks me to open a PR"),
 		Uses:          []apimodel.SecretUse{{Description: "open a pull request"}},
 	})
@@ -575,7 +550,7 @@ func TestApprovedHostIsNormalizedToWhatTheProxyReports(t *testing.T) {
 
 			approved, err := svc.ApproveSecretRequest(ctx, "project-1", req.ID, services.ApproveSecretRequestBody{
 				SecretId: serverapi.NewOptString(secret.ID),
-				Host:     serverapi.NewOptString(tc.approved),
+				Hosts:    []string{tc.approved},
 			})
 			if err != nil {
 				t.Fatalf("approve: %v", err)
@@ -584,8 +559,8 @@ func TestApprovedHostIsNormalizedToWhatTheProxyReports(t *testing.T) {
 			if err != nil {
 				t.Fatalf("get grant: %v", err)
 			}
-			if grant.Host != "api.github.com" {
-				t.Fatalf("grant host = %q, want the host as the proxy reports it", grant.Host)
+			if !slices.Equal(grant.Hosts, []string{"api.github.com"}) {
+				t.Fatalf("grant host = %q, want the host as the proxy reports it", grant.Hosts)
 			}
 			// The point of normalizing: the grant this mints actually resolves.
 			if _, err := st.FindLiveGrant(ctx, "project-1", secret.ID, "api.github.com",
@@ -650,7 +625,7 @@ func TestARefusedApprovalLeavesTheSecretAsItWas(t *testing.T) {
 		SecretHost:               serverapi.NewOptString("github.com"),
 		SecretMaxGrantTTLSeconds: serverapi.NewOptInt64(7200),
 	})
-	if err == nil || !strings.Contains(err.Error(), "different secret") {
+	if err == nil || !strings.Contains(err.Error(), "another secret") {
 		t.Fatalf("approve = %v, want the binding conflict", err)
 	}
 	stored, err := st.GetSecret(ctx, "project-1", secret.ID)
@@ -683,9 +658,13 @@ func TestADiscoboxCannotChangeASecretByApproving(t *testing.T) {
 	svc, st := newAgentCredentialService(t)
 	secret := createBoundSecret(ctx, t, svc, "github", "www.github.com", 0)
 	req := createAgentRequest(ctx, t, svc)
+	// It holds a delegation of the secret, so the refusal is about changing
+	// it and not about what it may hand on.
+	delegate(t, st, secret, "api.github.com", time.Hour)
+	svc.SetJudge(&delegationJudge{allow: true})
 
 	asSandbox := auth.WithPrincipal(context.Background(), auth.Principal{
-		Type: auth.PrincipalTypeSandbox, SandboxID: "sbx-lead", UserID: "user-1",
+		Type: auth.PrincipalTypeSandbox, SandboxID: "sbx-lead", ProjectID: "project-1", UserID: "user-1",
 	})
 	_, err := svc.ApproveSecretRequest(asSandbox, "project-1", req.ID, services.ApproveSecretRequestBody{
 		SecretId:   serverapi.NewOptString(secret.ID),
@@ -920,5 +899,75 @@ func TestATrustNamesNoUseOfAnotherDiscoboxOrOnceItLapses(t *testing.T) {
 	}
 	if _, err := svc.ApprovedUse(ctx, testPoolID, testSandboxID, "use_lapsed", "old.internal"); err == nil {
 		t.Fatal("ApprovedUse() named a use of a trust that has lapsed")
+	}
+}
+
+// A discobox listing requests sees only those filed by discoboxes it created;
+// a person sees every one (ADR 26-09-30-782 §2).
+func TestADiscoboxListsOnlyItsOwnDiscoboxesRequests(t *testing.T) {
+	ctx := testPrincipalContext()
+	svc, st := newAgentCredentialService(t)
+	lead := "sbx-lead"
+	if err := st.CreateSandbox(ctx, &model.Sandbox{ID: "sbx-worker", ProjectID: "project-1", Name: "worker", PoolID: testPoolID, CreatedBySandboxID: &lead}); err != nil {
+		t.Fatalf("create worker: %v", err)
+	}
+	for id, sandbox := range map[string]string{"sreq-worker": "sbx-worker", "sreq-other": testSandboxID} {
+		if err := st.CreateSecretRequest(ctx, &model.SecretRequest{
+			ID: id, ProjectID: "project-1", SandboxID: sandbox, RequestedBy: "agent:" + sandbox,
+			Type: "token", Status: model.SecretRequestStatusPending,
+		}); err != nil {
+			t.Fatalf("create request %s: %v", id, err)
+		}
+	}
+	asLead := auth.WithPrincipal(context.Background(), auth.Principal{
+		Type: auth.PrincipalTypeSandbox, SandboxID: lead, ProjectID: "project-1", UserID: "user-1",
+	})
+	owned, err := svc.ListSecretRequests(asLead, "project-1", "")
+	if err != nil || len(owned) != 1 || owned[0].ID != "sreq-worker" {
+		t.Fatalf("listed as the lead = %+v, %v; want only its worker's request", owned, err)
+	}
+	all, err := svc.ListSecretRequests(ctx, "project-1", "")
+	if err != nil || len(all) != 2 {
+		t.Fatalf("listed as a person = %d, %v; want both", len(all), err)
+	}
+}
+
+// An approval that names no lifetime grants what the agent asked for, else an
+// hour — what the window opens on — and never past the secret's limit, so
+// approving needs nothing read first (ADR 26-09-30-782 §4).
+func TestAnApprovalNamingNoLifetimeGrantsWhatWasAsked(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		asked, limit int64
+		want         time.Duration
+	}{
+		{"what was asked", 7200, 86400, 2 * time.Hour},
+		{"an hour when nothing was asked", 0, 86400, time.Hour},
+		{"within the secret's limit", 7200, 600, 10 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := testPrincipalContext()
+			svc, st := newAgentCredentialService(t)
+			secret := createBoundSecret(ctx, t, svc, "github", "", tc.limit)
+			req, err := svc.CreateSandboxCredentialRequest(ctx, testPoolID, services.CreateSandboxCredentialRequestBody{
+				SandboxId: testSandboxID, Name: "github", EnvVar: "GITHUB_TOKEN", Hosts: []string{"api.github.com"},
+				Uses:            []apimodel.SecretUse{{Description: "open a pull request"}},
+				GrantTTLSeconds: serverapi.NewOptInt64(tc.asked),
+			})
+			if err != nil {
+				t.Fatalf("create request: %v", err)
+			}
+			approved, err := svc.ApproveSecretRequest(ctx, "project-1", req.ID, services.ApproveSecretRequestBody{SecretId: serverapi.NewOptString(secret.ID)})
+			if err != nil {
+				t.Fatalf("approve: %v", err)
+			}
+			grant, err := st.GetSecretGrant(ctx, "project-1", approved.GrantID)
+			if err != nil || grant.ExpiresAt == nil {
+				t.Fatalf("grant = %+v, %v; want one that expires", grant, err)
+			}
+			if got := time.Until(*grant.ExpiresAt); got > tc.want || got < tc.want-time.Minute {
+				t.Fatalf("expires in %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

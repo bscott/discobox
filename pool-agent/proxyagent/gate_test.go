@@ -47,7 +47,7 @@ func TestTheGateForwardsALiveUseAsThePoolsWord(t *testing.T) {
 	}
 	live := newActivations()
 	resolver := newSecretResolver(testProjectID, testPoolID, live)
-	use, err := live.mint("sb-1", "STABLE", "use-1", GateHost(), "", nil)
+	use, err := live.mint("sb-1", "STABLE", "use-1", []string{GateHost()}, "", nil)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestTheGateForwardsALiveUseAsThePoolsWord(t *testing.T) {
 
 	// Anything but a live use of the discobox credential for this sandbox is
 	// refused, and never reaches the control plane.
-	github, err := live.mint("sb-1", "STABLE-GH", "use-2", "github.com", "ghp_{base62:36}", nil)
+	github, err := live.mint("sb-1", "STABLE-GH", "use-2", []string{"github.com"}, "ghp_{base62:36}", nil)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestAGateCallThatFailsKeepsItsUse(t *testing.T) {
 	// verdict allows the call rather than refusing it, and the test would pass
 	// for a reason that has nothing to do with what it is checking.
 	resolver.judge = nil
-	use, err := live.mint("sb-1", "STABLE", "use-1", GateHost(), "", nil)
+	use, err := live.mint("sb-1", "STABLE", "use-1", []string{GateHost()}, "", nil)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -197,10 +197,12 @@ func TestTheGateShowsTheJudgeTheBodyItAsksFor(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&ask)
 			w.Header().Set("Content-Type", "application/json")
 			if ask.Round == 1 {
-				_, _ = io.WriteString(w, `{"reason":"which discobox, granted what, is in the body","need":{"body":"json"}}`)
+				_, _ = io.WriteString(w, `{"reason":"which discobox, granted what, is in the body","need":{"body":true}}`)
 				return
 			}
-			shown.Store(ask.Request.Body.Content)
+			if content := ask.Request.Body.Content; content != nil {
+				shown.Store(*content)
+			}
 			_, _ = io.WriteString(w, `{"allow":true,"reason":"one discobox for issue 43, granted a push to its branch"}`)
 			return
 		}
@@ -214,7 +216,7 @@ func TestTheGateShowsTheJudgeTheBodyItAsksFor(t *testing.T) {
 	}
 	live := newActivations()
 	resolver := newSecretResolver(testProjectID, testPoolID, live)
-	use, err := live.mint("sb-1", "STABLE", "use-1", GateHost(), "", nil)
+	use, err := live.mint("sb-1", "STABLE", "use-1", []string{GateHost()}, "", nil)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -259,7 +261,7 @@ func TestTheGateRefusesACallTheJudgeDoesNot(t *testing.T) {
 	}
 	live := newActivations()
 	resolver := newSecretResolver(testProjectID, testPoolID, live)
-	use, err := live.mint("sb-1", "STABLE", "use-1", GateHost(), "", nil)
+	use, err := live.mint("sb-1", "STABLE", "use-1", []string{GateHost()}, "", nil)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}

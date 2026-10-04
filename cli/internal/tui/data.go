@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -248,8 +249,8 @@ type Sandbox struct {
 
 	// OriginKey is where the discobox is filed on the client that created it
 	// (ADR 0111): that host and where its source came from, or the host alone
-	// when it has none. It is not a column on the row — it is what the header's
-	// folder filter matches, so every row on screen already shares it.
+	// when it has none. It is not a column on the row — it is what the header
+	// filter's folder matches, so every row on screen already shares it.
 	OriginKey string
 
 	// OriginHostID identifies the machine the sandbox was created on, and
@@ -365,11 +366,50 @@ type Session struct {
 	// DataSource.SaveDraft.
 	Draft string
 
+	// View is how the header's filters were left in Directory when a window
+	// was last open on it, and is what the window opens on. The zero value is
+	// every server, every folder and every tag. See DataSource.SaveView.
+	View ListView
+
+	// ServerChosen and SourceChosen are whether the command line named the
+	// server (--server, which makes it the primary) and the source (-C, which
+	// makes it the window's own folder). A folder with no saved View opens
+	// narrowed to what was named rather than on everything: naming one is
+	// saying which you mean.
+	ServerChosen bool
+	SourceChosen bool
+
 	// Servers are the servers a discobox can be created on, by the names the
 	// window lists them under, the primary first (ADR 0116 §5). Nil when there
 	// is only the primary, and then the run options offer no choice.
 	Servers []string
 }
+
+// ListView is the header's three filters as a window leaves them: the server,
+// the folder and the tags the list is narrowed to, each empty for every one.
+// The tags are in order, so two views holding the same ones are Equal.
+//
+// The folder is carried whole rather than by key alone, because the window
+// opens on it before a listing has landed to name it from: its label is what
+// the header draws and its source is what a create cuts from.
+type ListView struct {
+	Server       string
+	FolderKey    string
+	FolderLabel  string
+	FolderSource string
+	FolderLocal  bool
+	Tags         []string
+}
+
+// Equal reports whether two views narrow the list the same way.
+func (v ListView) Equal(o ListView) bool {
+	return v.Server == o.Server && v.FolderKey == o.FolderKey && v.FolderLabel == o.FolderLabel &&
+		v.FolderSource == o.FolderSource && v.FolderLocal == o.FolderLocal && slices.Equal(v.Tags, o.Tags)
+}
+
+// IsZero reports whether the view narrows nothing: every server, folder and
+// tag, which is the default and so nothing to remember.
+func (v ListView) IsZero() bool { return v.Equal(ListView{}) }
 
 // HarnessState is what a harness is set to, and so whether a discobox can be
 // run on it. It is the one thing the harnesses screen is really about: a
@@ -1184,6 +1224,55 @@ type Forward interface {
 	io.Closer
 }
 
+// AuditRecord is one record of a discobox's audit timeline, as `discobox admin
+// audit list` prints it: when, which trail, and what it says. Everything else
+// about it is AuditDetail's to say.
+type AuditRecord struct {
+	// ID is what AuditDetail is asked for, and the ID `audit get` takes.
+	ID   string
+	Time time.Time
+	// Source is the trail the record is in — http, creds, refresh, hooks or
+	// execs — which is also what says who vouches for it (ADR 0130 §2).
+	Source string
+	// Summary is the record in one line, already safe to put on a terminal.
+	Summary string
+	// Group is what a run of records has in common when the timeline may fold
+	// it into one row — an http exchange's method, status and origin — and
+	// GroupSummary is that row's line. Consecutive records with the same Group
+	// fold; an empty Group never does.
+	Group        string
+	GroupSummary string
+}
+
+// AuditRecordDetail is one record in full: the text `discobox admin audit get`
+// prints, and what of it that text leaves out.
+type AuditRecordDetail struct {
+	Text string
+	// Recordings are the parts of an http record the pool kept the bytes of
+	// — AuditRequestBody, AuditResponseBody, AuditStream — which are unbounded
+	// and so read on their own, with AuditBody.
+	Recordings []string
+}
+
+// The recordings an http record can have, as AuditBody names them.
+const (
+	AuditRequestBody  = "request"
+	AuditResponseBody = "response"
+	AuditStream       = "stream"
+)
+
+// AuditUpdate is one delivery from a followed timeline.
+type AuditUpdate struct {
+	// Records are the records read since the last update, oldest first.
+	Records []AuditRecord
+	// Polled marks the end of one read of every trail, and Missing is then
+	// what that read could not reach, a sentence each: empty says every trail
+	// answered. A follower that has gone quiet because a trail stopped
+	// answering has to be able to say so with no records to say it beside.
+	Polled  bool
+	Missing []string
+}
+
 // DataSource is everything the window needs from the outside. It is implemented
 // once, in the cli package, over the same API client and code paths the
 // non-interactive commands use: the launcher runs `discobox`'s commands rather
@@ -1204,9 +1293,12 @@ type CredentialRequest struct {
 	Server string
 	// Name is the credential the agent asked for ("github"), which is not a
 	// secret ID: choosing which secret answers it is the approval.
-	Name          string
-	EnvVar        string
+	Name   string
+	EnvVar string
+	// Hosts are every host a credential request asks the credential to be
+	// sent to (ADR 26-10-02-393); Host is a trust's endpoint.
 	Host          string
+	Hosts         []string
 	Type          string
 	Justification string
 	Uses          []string
@@ -1342,6 +1434,12 @@ type Secret struct {
 	RefreshCommand []string
 	ValueTTL       time.Duration
 	StaleAt        time.Time
+
+	// Format is the template the sentinels standing in for it are minted
+	// from, and FormatSet whether a person chose it rather than it being read
+	// from the value. A chosen one outlives the value it was set against.
+	Format    string
+	FormatSet bool
 }
 
 // SecretOAuth is the half of an OAuth credential that can be shown: where it
@@ -1437,6 +1535,10 @@ type NewSecret struct {
 	// start, so the first request for the ID binds it without asking.
 	WellKnownID string
 
+	// Format is the template its sentinels are minted from; empty reads it
+	// from the value.
+	Format string
+
 	Value SecretValue
 }
 
@@ -1476,6 +1578,9 @@ type SecretUpdate struct {
 	RefreshCommand *[]string
 	// ValueTTLSeconds replaces how long a value lasts; zero never goes stale.
 	ValueTTLSeconds *int64
+	// Format sets the template its sentinels are minted from; empty goes back
+	// to reading it from the value.
+	Format *string
 }
 
 // Approval is what a person decided about a request: which secret answers it,
@@ -1539,6 +1644,12 @@ type DataSource interface {
 	// come back to — and a folder is required, since a draft nothing can be
 	// keyed by is one nothing can return.
 	SaveDraft(ctx context.Context, folder, prompt string) error
+
+	// SaveView records the header's filters against the folder the window is
+	// open in, so the next window there opens on them: Session hands them back
+	// as Session.View. The zero view is the default, and saving it drops what
+	// was kept. A folder is required, the way it is for a draft.
+	SaveView(ctx context.Context, folder string, view ListView) error
 
 	// MarkWelcomed records that the project has shown its introduction, so no
 	// window on it opens on the welcome again. It is the project that
@@ -1726,6 +1837,25 @@ type DataSource interface {
 	// is read when the menu is opened rather than polled.
 	Services(ctx context.Context, sandboxID string) ([]Service, error)
 
+	// FollowAudit reads one discobox's audit trails as one timeline, the way
+	// `discobox admin audit list --follow` reads them: the newest records,
+	// delivered oldest first, and then each record as it is recorded, until
+	// ctx ends. It blocks, and report is called from the goroutine running it.
+	// A trail that cannot be read is named in an update rather than failing
+	// the rest; an error is the whole read failing.
+	FollowAudit(ctx context.Context, sandboxID string, report func(AuditUpdate)) error
+
+	// AuditDetail is one record of that timeline in full, as `discobox admin
+	// audit get` prints it. It is a call of its own because the timeline
+	// carries a line per record and a record can be a page of headers.
+	AuditDetail(ctx context.Context, sandboxID, recordID string) (AuditRecordDetail, error)
+
+	// AuditBody is one recording of an http record — a body, or an upgraded
+	// stream — as `discobox admin audit http --body` prints it, escaped for
+	// the terminal. A body is unbounded, so a long one comes back cut, saying
+	// so and how to read the rest.
+	AuditBody(ctx context.Context, sandboxID, recordID, part string) (string, error)
+
 	// ServiceLogs is the transcript of a service's current or last run, as the
 	// bytes it wrote. It is read for a service that is not running, whose pane
 	// has no stream to attach to and whose output is the point of looking at
@@ -1849,4 +1979,42 @@ type DataSource interface {
 
 	// DenyTrustRequest answers a trust request no.
 	DenyTrustRequest(ctx context.Context, server, requestID string) error
+}
+
+// where is where a request asks to reach, as a person reads it: every host a
+// credential request names, or a trust's endpoint.
+func (r CredentialRequest) where() string {
+	if len(r.Hosts) > 0 {
+		return strings.Join(r.Hosts, ", ")
+	}
+	return r.Host
+}
+
+// hosts are the hosts a credential request names, or a trust's endpoint.
+func (r CredentialRequest) hosts() []string {
+	if len(r.Hosts) > 0 {
+		return r.Hosts
+	}
+	if r.Host != "" {
+		return []string{r.Host}
+	}
+	return nil
+}
+
+// binding is the one host a secret stored to answer the request is bound to:
+// its host, or the site its hosts share, or none when they share no site — a
+// credential sent to unrelated sites is bound to nothing, and its grant says
+// where it goes (ADR 26-10-02-393 §2).
+func (r CredentialRequest) binding() string {
+	hosts := r.hosts()
+	if len(hosts) == 0 {
+		return ""
+	}
+	bound := hosts[0]
+	for _, host := range hosts[1:] {
+		if bound = commonParent(bound, host); bound == "" {
+			return ""
+		}
+	}
+	return bound
 }

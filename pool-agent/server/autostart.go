@@ -3,7 +3,6 @@ package server
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -38,26 +37,33 @@ import (
 // — the sandbox-agent API, the tcp/udp tunnels, the git and port proxies — is
 // failed fast upstream, and waiting here would only turn that prompt refusal
 // into a long silence for a sandbox nothing is rebuilding.
-func (s *sandboxService) autoStart(wait containerWait, next http.Handler) http.Handler {
+//
+// need is whether the route reaches into the sandbox at all. Archived and
+// containerless sandboxes refuse every route. Otherwise a route that does
+// answers a failed start with that failure: proxying anyway would hide it
+// behind a missing IP or connection error, losing what the caller can act on,
+// such as a missing bind mount. The git routes do not — the pool host serves
+// them from the sandbox's files — so a sandbox that cannot start still hands
+// over its commits, which is how its work is recovered.
+func (s *sandboxService) autoStart(wait containerWait, need sandboxNeed, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sandboxID := chi.URLParam(r, "sandboxId")
 		if sandboxID != "" {
 			if err := s.runtime.EnsureSandboxRunning(r.Context(), sandboxID, wait == awaitContainer); err != nil {
-				// Archived and containerless are the failures worth reporting
-				// here. Falling through would produce an unrelated error from
-				// the proxy ("no inspectable IP address", "sandbox not found")
-				// about a fact the caller cannot act on — where "unarchive it"
-				// (ADR 0022 §5) and "repair it" are things they can.
+				// These conflicts tell the caller to unarchive or repair the
+				// sandbox before trying again.
 				if errors.Is(err, sandboxruntime.ErrArchived) || errors.Is(err, sandboxruntime.ErrNoContainer) {
 					http.Error(w, err.Error(), http.StatusConflict)
 					return
 				}
-				// Otherwise the sandbox may be mid-create, gone, or genuinely
-				// unable to start. Let the proxy attempt fail on its own terms
-				// rather than inventing a status here: its error names what the
-				// caller was actually trying to do.
-				slog.DebugContext(r.Context(), "on-demand sandbox start failed; proxying anyway",
-					"sandboxId", sandboxID, "error", err)
+				if need == needsSandbox {
+					status := http.StatusInternalServerError
+					if errors.Is(err, sandboxruntime.ErrNotFound) {
+						status = http.StatusNotFound
+					}
+					http.Error(w, fmt.Sprintf("start sandbox %q: %v", sandboxID, err), status)
+					return
+				}
 			}
 		}
 		next.ServeHTTP(w, r)
@@ -101,4 +107,13 @@ type containerWait bool
 const (
 	awaitContainer containerWait = true
 	failFast       containerWait = false
+)
+
+// sandboxNeed is whether a route reaches into the sandbox, so a failed start
+// refuses it. See autoStart.
+type sandboxNeed bool
+
+const (
+	needsSandbox sandboxNeed = true
+	servedByPool sandboxNeed = false
 )

@@ -11,7 +11,6 @@ import (
 	"github.com/discobox-ai/discobox/agentcreds"
 	apimodel "github.com/discobox-ai/discobox/api/model"
 	"github.com/discobox-ai/discobox/hostscope"
-	"github.com/discobox-ai/discobox/secretformat"
 	"github.com/discobox-ai/discobox/server/internal/apperrors"
 	"github.com/discobox-ai/discobox/server/internal/model"
 	"github.com/discobox-ai/discobox/server/internal/services"
@@ -38,20 +37,7 @@ func (s *Service) ListSandboxCredentials(ctx context.Context, poolID, sandboxID 
 	}
 	// The same scopes a resolve is matched against: what this discobox is, what
 	// harness it runs, and the project it belongs to.
-	return s.store.ListLiveAgentCredentials(ctx, sandbox.ProjectID, sandbox.ID, agentGrantScopes(sandbox))
-}
-
-// agentGrantScopes is what a discobox's agent may be granted through: itself,
-// the harness config it runs, and its project.
-func agentGrantScopes(sandbox *model.Sandbox) []store.GrantScope {
-	scopes := []store.GrantScope{{Scope: model.SecretGrantScopeSandbox, ScopeKey: sandbox.ID}}
-	if sandbox.HarnessConfigID != nil && strings.TrimSpace(*sandbox.HarnessConfigID) != "" {
-		scopes = append(scopes, store.GrantScope{
-			Scope:    model.SecretGrantScopeHarnessConfig,
-			ScopeKey: strings.TrimSpace(*sandbox.HarnessConfigID),
-		})
-	}
-	return append(scopes, store.GrantScope{Scope: model.SecretGrantScopeProject, ScopeKey: sandbox.ProjectID})
+	return s.store.ListLiveAgentCredentials(ctx, sandbox.ProjectID, sandbox.ID, store.SandboxGrantScopes(sandbox))
 }
 
 // CreateSandboxCredentialRequest records an agent's ask as a pending
@@ -61,7 +47,10 @@ func agentGrantScopes(sandbox *model.Sandbox) []store.GrantScope {
 //
 // An identical pending ask is reused rather than duplicated, so an agent that
 // retries — or a wrapper that asks again on each attempt — produces one inbox
-// item instead of a pile.
+// item instead of a pile. Identical means approving either would grant the
+// same thing (asksTheSame): an ask for other uses of the same credential is a
+// new request, never folded into the open one, where its uses would be
+// dropped while the agent was told it had asked for them.
 func (s *Service) CreateSandboxCredentialRequest(ctx context.Context, poolID string, input services.CreateSandboxCredentialRequestBody) (*model.SecretRequest, error) {
 	sandbox, err := s.sandboxOwnedByPool(ctx, poolID, strings.TrimSpace(input.SandboxId))
 	if err != nil {
@@ -69,12 +58,12 @@ func (s *Service) CreateSandboxCredentialRequest(ctx context.Context, poolID str
 	}
 	name := strings.TrimSpace(input.Name)
 	envName := strings.TrimSpace(input.EnvVar)
-	host := normalizeHost(input.Host)
-	// A well-known credential names its own name, variable, and host, which an
+	hosts, _ := askedHosts(input.Hosts)
+	// A well-known credential names its own name, variable, and hosts, which an
 	// ask must agree with (see wellknown.go).
 	wellKnownID := strings.TrimSpace(input.ID.Or(""))
 	if wellKnownID != "" {
-		if name, envName, host, err = wellKnownAsk(wellKnownID, name, envName, host); err != nil {
+		if name, envName, hosts, err = wellKnownAsk(wellKnownID, name, envName, hosts); err != nil {
 			return nil, err
 		}
 	}
@@ -84,15 +73,17 @@ func (s *Service) CreateSandboxCredentialRequest(ctx context.Context, poolID str
 	if envName == "" || strings.ContainsAny(envName, "=\x00") {
 		return nil, apperrors.NewStatusError(http.StatusBadRequest, "credential request requires a valid environment variable name")
 	}
-	// The host is mandatory here and nowhere else: approving this request mints
+	// A host is mandatory here and nowhere else: approving this request mints
 	// a grant, and a grant minted by this flow may not be host-unscoped
 	// (ADR 0031 §5). Refusing at the ask is better than discovering it at the
 	// approval, where a human has already decided to say yes.
-	if host == "" {
+	if len(hosts) == 0 {
 		return nil, apperrors.NewStatusError(http.StatusBadRequest, "credential request requires a destination host")
 	}
-	if err := reservedHostAsk(wellKnownID, host); err != nil {
-		return nil, err
+	for _, host := range hosts {
+		if err := reservedHostAsk(wellKnownID, host); err != nil {
+			return nil, err
+		}
 	}
 	uses, err := requestedUses(input.Uses)
 	if err != nil {
@@ -122,12 +113,14 @@ func (s *Service) CreateSandboxCredentialRequest(ctx context.Context, poolID str
 	}
 
 	requestedBy := agentRequesterID(sandbox.ID)
-	existing, err := s.store.FindPendingAgentCredentialRequest(ctx, sandbox.ProjectID, sandbox.ID, envName, host, wellKnownID, purpose)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
+	pending, err := s.store.FindPendingAgentCredentialRequests(ctx, sandbox.ProjectID, sandbox.ID, envName, hosts, wellKnownID, purpose)
+	if err != nil {
 		return nil, err
 	}
-	if existing != nil {
-		return existing, nil
+	for i := range pending {
+		if asksTheSame(pending[i], uses, grantTTL) {
+			return &pending[i], nil
+		}
 	}
 
 	req := &model.SecretRequest{
@@ -138,7 +131,7 @@ func (s *Service) CreateSandboxCredentialRequest(ctx context.Context, poolID str
 		// ResolveSandboxSecret emits Value.Token, so nothing a request can name
 		// is a credential the proxy could not substitute.
 		Type:          model.SecretTypeToken,
-		Host:          host,
+		Hosts:         hosts,
 		Name:          name,
 		EnvName:       envName,
 		Justification: strings.TrimSpace(input.Justification.Or("")),
@@ -152,6 +145,22 @@ func (s *Service) CreateSandboxCredentialRequest(ctx context.Context, poolID str
 		return nil, err
 	}
 	return req, nil
+}
+
+// asksTheSame reports whether an open request asks for what a new ask does:
+// the same uses, in the same order, for the same lifetime. The justification
+// is left out; it argues for a grant and does not change which one approval
+// mints, so a retry reworded is still a retry.
+func asksTheSame(open model.SecretRequest, uses []model.SecretUse, grantTTL int64) bool {
+	if open.GrantTTL != grantTTL || len(open.Uses) != len(uses) {
+		return false
+	}
+	for i := range uses {
+		if open.Uses[i].Description != uses[i].Description {
+			return false
+		}
+	}
+	return true
 }
 
 // GetSandboxCredentialRequest reads one of a sandbox's own credential requests
@@ -186,124 +195,12 @@ func (s *Service) GetSandboxCredentialRequest(ctx context.Context, poolID, sandb
 	return req, grant, nil
 }
 
-// RecordCredentialVerdict persists one judge decision about an agent
-// credential use, called on the same code path that mints a value — before
-// the mint, in the issuing case, and gating it: a store failure here must
-// stop that path, so no credential is ever issued with no record of why
-// (ADR 0091).
-func (s *Service) RecordCredentialVerdict(ctx context.Context, poolID string, input services.RecordCredentialVerdictBody) error {
-	sandbox, err := s.sandboxOwnedByPool(ctx, poolID, strings.TrimSpace(input.SandboxId))
-	if err != nil {
-		return err
-	}
-	verdict := input.Verdict
-	row := &model.CredentialVerdict{
-		ProjectID:   sandbox.ProjectID,
-		Kind:        model.CredentialVerdictKindCommand,
-		Origin:      model.CredentialVerdictOriginSandbox,
-		SandboxID:   sandbox.ID,
-		UseID:       strings.TrimSpace(input.UseId),
-		Command:     input.Command,
-		Allow:       verdict.Allow,
-		Reason:      strings.TrimSpace(verdict.Reason.Or("")),
-		Role:        verdict.Role,
-		Prompt:      verdict.Prompt,
-		LatencyMS:   verdict.LatencyMs.Or(0),
-		Volunteered: input.Volunteered,
-	}
-	if grantID, ok := s.findGrantForUse(ctx, sandbox, row.UseID); ok {
-		row.GrantID = grantID
-	}
-	return s.store.CreateCredentialVerdict(ctx, row)
-}
-
 // ListCredentialVerdicts returns the project's recorded verdicts matching
 // filter, newest first. It deliberately does not look the sandbox up: a
 // verdict is kept past its sandbox's purge (ADR 0091), so requiring the
 // sandbox to exist would hide exactly the trails most worth reading.
 func (s *Service) ListCredentialVerdicts(ctx context.Context, projectID string, filter store.CredentialVerdictFilter) ([]model.CredentialVerdict, error) {
 	return s.store.ListCredentialVerdicts(ctx, projectID, filter)
-}
-
-// findGrantForUse resolves which of a sandbox's live grants a use ID belongs
-// to. Best-effort: a grant revoked in the moment between judging and
-// recording is not found here, and the verdict is recorded without it rather
-// than failing the write (ADR 0091 §2) — it is still complete evidence about
-// the command either way.
-func (s *Service) findGrantForUse(ctx context.Context, sandbox *model.Sandbox, useID string) (string, bool) {
-	if useID == "" {
-		return "", false
-	}
-	credentials, err := s.store.ListLiveAgentCredentials(ctx, sandbox.ProjectID, sandbox.ID, agentGrantScopes(sandbox))
-	if err != nil {
-		return "", false
-	}
-	for _, credential := range credentials {
-		for _, use := range credential.Grant.Uses {
-			if use.UseID == useID {
-				return credential.Grant.ID, true
-			}
-		}
-	}
-	return "", false
-}
-
-// bindAgentCredential gives the sandbox its stable binding for an approved
-// credential, creating it if the sandbox has none yet.
-//
-// The binding is deliberately not the harness-secret shape. It is marked
-// AgentRequested, so it is never written into the sandbox environment or
-// secrets.json and never registered with the proxy; the only value that reaches
-// the sandbox is an ephemeral sentinel the pool agent mints per use and
-// translates back to this one (ADR 0031 §4).
-//
-// A repeat approval for the same environment variable reuses the binding, so a
-// sentinel an earlier activation was minted from stays resolvable.
-func (s *Service) bindAgentCredential(ctx context.Context, req *model.SecretRequest, secret *model.Secret) error {
-	return s.bindAgentSecret(ctx, req.ProjectID, req.SandboxID, req.EnvName, secret)
-}
-
-// bindAgentSecret is the binding itself, without a request in front of it: the
-// same shape whether an agent asked for the credential or somebody granted it
-// ahead of time.
-func (s *Service) bindAgentSecret(ctx context.Context, projectID, sandboxID, envName string, secret *model.Secret) error {
-	existing, err := s.store.FindAgentSandboxSecret(ctx, projectID, sandboxID, envName)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return err
-	}
-	if existing != nil {
-		if existing.SecretID == secret.ID {
-			return nil
-		}
-		// One environment variable, one credential. Rebinding it would leave any
-		// live activation resolving to a different secret, and silently changing
-		// which credential an agent's next command carries is exactly the
-		// surprise this flow exists to prevent.
-		return apperrors.NewStatusError(http.StatusConflict,
-			fmt.Sprintf("sandbox already has an agent credential bound to %s from a different secret; revoke that grant first", envName))
-	}
-	binding, err := newAgentBinding(projectID, sandboxID, envName, secret)
-	if err != nil {
-		return err
-	}
-	return s.store.CreateSandboxSecret(ctx, binding)
-}
-
-// newAgentBinding is an agent credential's binding: the stable sentinel the
-// pool translates a use's ephemeral one to, never injected into the sandbox.
-func newAgentBinding(projectID, sandboxID, envName string, secret *model.Secret) (*model.SandboxSecret, error) {
-	sentinel, err := secretformat.MintSentinel(secret.Format)
-	if err != nil {
-		return nil, err
-	}
-	return &model.SandboxSecret{
-		ProjectID:      projectID,
-		SandboxID:      sandboxID,
-		SecretID:       secret.ID,
-		EnvName:        envName,
-		Sentinel:       sentinel,
-		AgentRequested: true,
-	}, nil
 }
 
 // requestedUses validates and normalizes the uses an agent asked for. Supplied
@@ -403,7 +300,8 @@ func AgentCredentialRequestStatus(req *model.SecretRequest, grant *model.SecretG
 
 // ApprovedUse names what a request carrying this use may be judged against:
 // the sentence a person approved, the credential in the words they read it as,
-// and the host the grant is limited to.
+// and the one of the grant's hosts this request falls under (ADR 26-10-02-393
+// §2) — where it is approved for, not a list the judge must match itself.
 //
 // It is the control plane's to answer and not the pool's to assert (ADR 26-09-22-838
 // §4). It refuses unless the use, the credential, the discobox and the
@@ -421,7 +319,7 @@ func (s *Service) ApprovedUse(ctx context.Context, poolID, sandboxID, useID, hos
 	if err != nil {
 		return services.ApprovedUse{}, err
 	}
-	credentials, err := s.store.ListLiveAgentCredentials(ctx, sandbox.ProjectID, sandbox.ID, agentGrantScopes(sandbox))
+	credentials, err := s.store.ListLiveAgentCredentials(ctx, sandbox.ProjectID, sandbox.ID, store.SandboxGrantScopes(sandbox))
 	if err != nil {
 		return services.ApprovedUse{}, err
 	}
@@ -434,16 +332,12 @@ func (s *Service) ApprovedUse(ctx context.Context, poolID, sandboxID, useID, hos
 		// The use is live. Whether it covers where this request is going is a
 		// separate question, and the answer is no rather than a different use:
 		// an approved use is approved for somewhere.
-		if !hostscope.Covers(credential.Grant.Host, host) {
+		approvedFor, covered := hostscope.Covering(credential.Grant.Hosts, host)
+		if !covered {
 			return services.ApprovedUse{}, apperrors.NewStatusError(http.StatusForbidden,
 				fmt.Sprintf("that use is not approved for %s", host))
 		}
-		return services.ApprovedUse{
-			Purpose:    use.Description,
-			Credential: credential.Name,
-			Host:       credential.Grant.Host,
-			GrantID:    credential.Grant.ID,
-		}, nil
+		return approvedCredentialUse(credential, use, approvedFor), nil
 	}
 	// Not a credential's use. It may still be a host trust's: a person who
 	// pins a host approves uses for it the same way, and every request to that
@@ -457,6 +351,42 @@ func (s *Service) ApprovedUse(ctx context.Context, poolID, sandboxID, useID, hos
 	// answer here on purpose: which it was is the approval trail's to say, and
 	// saying it back to a pool would describe grants it is not party to.
 	return services.ApprovedUse{}, apperrors.NewStatusError(http.StatusForbidden, "no live approved use by that ID")
+}
+
+// ApprovedCredentialUse names what a command run under this use may be judged
+// against (ADR 26-09-22-838 §3): ApprovedUse for a command rather than a
+// request. There is no destination to check yet, since nothing has been sent;
+// the hosts are the grant's, every one of them, and the request that follows
+// is held to them. Only a
+// credential's use takes a value, so a host trust's is not one.
+func (s *Service) ApprovedCredentialUse(ctx context.Context, poolID, sandboxID, useID string) (services.ApprovedUse, error) {
+	useID = strings.TrimSpace(useID)
+	if useID == "" {
+		return services.ApprovedUse{}, apperrors.NewStatusError(http.StatusBadRequest, "use ID is required")
+	}
+	sandbox, err := s.sandboxOwnedByPool(ctx, poolID, sandboxID)
+	if err != nil {
+		return services.ApprovedUse{}, err
+	}
+	credentials, err := s.store.ListLiveAgentCredentials(ctx, sandbox.ProjectID, sandbox.ID, store.SandboxGrantScopes(sandbox))
+	if err != nil {
+		return services.ApprovedUse{}, err
+	}
+	for _, credential := range credentials {
+		if use, ok := credential.Grant.FindUse(useID); ok {
+			return approvedCredentialUse(credential, use, strings.Join(credential.Grant.Hosts, ", ")), nil
+		}
+	}
+	return services.ApprovedUse{}, apperrors.NewStatusError(http.StatusForbidden, "no live approved use by that ID")
+}
+
+func approvedCredentialUse(credential store.AgentCredential, use model.SecretUse, host string) services.ApprovedUse {
+	return services.ApprovedUse{
+		Purpose:    use.Description,
+		Credential: credential.Name,
+		Host:       host,
+		GrantID:    credential.Grant.ID,
+	}
 }
 
 // trustedUse names a use a host trust was granted for. It reports ok only for

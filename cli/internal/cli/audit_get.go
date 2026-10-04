@@ -49,21 +49,15 @@ escaped.`,
 			if err != nil {
 				return err
 			}
-			recordID := strings.TrimSpace(args[1])
-			switch {
-			case auditid.IsExchange(recordID):
-				return a.printHTTPAuditRecord(cmd, client, projectID, poolID, sandboxID, recordID)
-			case auditid.IsDNSQuery(recordID):
-				return a.printDNSAuditRecord(cmd, client, projectID, poolID, sandboxID, recordID)
-			case strings.HasPrefix(recordID, "cvd_"):
-				return a.printCredentialVerdictRecord(cmd, client, projectID, sandboxID, recordID)
-			case strings.HasPrefix(recordID, "sreq_"):
-				return a.printSecretRefreshRecord(cmd, client, projectID, sandboxID, recordID)
-			case strings.HasPrefix(recordID, "evt_"):
-				return a.printSandboxTrailRecord(cmd, client, projectID, sandboxID, recordID)
-			default:
-				return fmt.Errorf("%q is not an audit record ID: they are written http_<row>, dns_<row>, cvd_…, sreq_… or evt_…", terminalSafe(recordID))
+			recordings, err := a.writeAuditRecord(cmd.Context(), cmd.OutOrStdout(), a.output == "json", client, projectID, poolID, sandboxID, args[1])
+			if err != nil {
+				return err
 			}
+			if len(recordings) > 0 {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "recorded bytes: discobox admin audit http --discobox-id %s --body %s [--part request|stream]\n",
+					terminalSafe(sandboxID), terminalSafe(strings.TrimSpace(args[1])))
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&poolID, "pool", "", "Pool that recorded an http_ or dns_ record, when the discobox is gone and cannot name it")
@@ -71,32 +65,57 @@ escaped.`,
 	return cmd
 }
 
+// writeAuditRecord writes one audit record in full, by the ID the timeline
+// reports for it: `audit get`, and the console's audit screen, which shows
+// what that command prints. recordings are the parts of an http record whose
+// bytes were kept and are not printed (httpAuditPart*), for the caller to say
+// how to read.
+func (a *App) writeAuditRecord(ctx context.Context, out io.Writer, asJSON bool, client *apiclientgen.Client, projectID, poolID, sandboxID, recordID string) (recordings []string, err error) {
+	recordID = strings.TrimSpace(recordID)
+	switch {
+	case auditid.IsExchange(recordID):
+		return a.printHTTPAuditRecord(ctx, out, asJSON, client, projectID, poolID, sandboxID, recordID)
+	case auditid.IsDNSQuery(recordID):
+		return nil, a.printDNSAuditRecord(ctx, out, asJSON, client, projectID, poolID, sandboxID, recordID)
+	case strings.HasPrefix(recordID, "cvd_"):
+		return nil, a.printCredentialVerdictRecord(ctx, out, asJSON, client, projectID, sandboxID, recordID)
+	case strings.HasPrefix(recordID, "sreq_"):
+		return nil, a.printSecretRefreshRecord(ctx, out, asJSON, client, projectID, sandboxID, recordID)
+	case strings.HasPrefix(recordID, "evt_"):
+		return nil, a.printSandboxTrailRecord(ctx, out, asJSON, client, projectID, sandboxID, recordID)
+	default:
+		return nil, fmt.Errorf("%q is not an audit record ID: they are written http_<row>, dns_<row>, cvd_…, sreq_… or evt_…", terminalSafe(recordID))
+	}
+}
+
 // printHTTPAuditRecord reads one audited exchange from the pool that recorded
 // it. The ID is only unique there, and the discobox is what names the pool.
-func (a *App) printHTTPAuditRecord(cmd *cobra.Command, client *apiclientgen.Client, projectID, poolID, sandboxID, recordID string) error {
+// recordings are the parts the pool kept bytes of — the bodies and an upgraded
+// stream — which are unbounded and so not printed here.
+func (a *App) printHTTPAuditRecord(ctx context.Context, out io.Writer, asJSON bool, client *apiclientgen.Client, projectID, poolID, sandboxID, recordID string) (recordings []string, err error) {
 	id, err := auditid.ParseExchange(recordID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	pool, err := a.auditRecordPool(cmd.Context(), client, projectID, poolID, sandboxID)
+	pool, err := a.auditRecordPool(ctx, client, projectID, poolID, sandboxID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	res, err := client.GetHTTPAudit(cmd.Context(), apiclientgen.GetHTTPAuditParams{
+	res, err := client.GetHTTPAudit(ctx, apiclientgen.GetHTTPAuditParams{
 		ProjectId:  projectID,
 		PoolId:     pool,
 		ExchangeId: id.String(),
 		SandboxId:  apiclientgen.NewOptString(sandboxID),
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	detail, err := expectResponse[apimodel.HTTPAuditExchangeDetail](res)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if a.output == "json" {
-		return writeTerminalSafeJSON(cmd.OutOrStdout(), detail)
+	if asJSON {
+		return nil, writeTerminalSafeJSON(out, detail)
 	}
 	// The method, URL and host are what the discobox sent, and every other
 	// value here passed through it or through a service it chose to call
@@ -112,6 +131,7 @@ func (a *App) printHTTPAuditRecord(cmd *cobra.Command, client *apiclientgen.Clie
 		{"host", terminalSafe(detail.Host)},
 		{"status", httpAuditDetailStatus(detail)},
 		{"duration", (time.Duration(detail.DurationMillis.Or(0)) * time.Millisecond).String()},
+		{"secrets", a.auditSecretNames(ctx, client, projectID, detail.SwappedSecretIds)},
 		{"uses", terminalSafe(strings.Join(detail.SwappedUseIds, ", "))},
 		{"rule", auditFieldPair(detail.AppliedRuleId.Or(""), detail.AppliedPattern.Or(""))},
 		{"set headers", terminalSafe(strings.Join(detail.AppliedHeaders, ", "))},
@@ -120,28 +140,33 @@ func (a *App) printHTTPAuditRecord(cmd *cobra.Command, client *apiclientgen.Clie
 		{"response body", auditBodyField(detail.ResponseBodyRecorded.Or(false), detail.ResponseBytes.Or(0), detail.ResponseBodyFormat.Or(""), detail.ResponseBodyError.Or(""))},
 		{"upgrade", httpAuditUpgradeField(detail)},
 	}
-	if err := writeAuditFields(cmd.OutOrStdout(), fields); err != nil {
-		return err
+	if err := writeAuditFields(out, fields); err != nil {
+		return nil, err
 	}
-	if err := writeAuditHeaders(cmd.OutOrStdout(), "request headers", detail.RequestHeaders); err != nil {
-		return err
+	if err := writeAuditHeaders(out, "request headers", detail.RequestHeaders); err != nil {
+		return nil, err
 	}
-	if err := writeAuditHeaders(cmd.OutOrStdout(), "response headers", detail.ResponseHeaders); err != nil {
-		return err
+	if err := writeAuditHeaders(out, "response headers", detail.ResponseHeaders); err != nil {
+		return nil, err
 	}
-	if detail.RequestBodyRecorded.Or(false) || detail.ResponseBodyRecorded.Or(false) || detail.StreamRecorded.Or(false) {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "recorded bytes: discobox admin audit http --discobox-id %s --body %s [--part request|stream]\n",
-			terminalSafe(sandboxID), detail.ID)
+	if detail.RequestBodyRecorded.Or(false) {
+		recordings = append(recordings, httpAuditPartRequest)
 	}
-	return nil
+	if detail.ResponseBodyRecorded.Or(false) {
+		recordings = append(recordings, httpAuditPartResponse)
+	}
+	if detail.StreamRecorded.Or(false) {
+		recordings = append(recordings, httpAuditPartStream)
+	}
+	return recordings, nil
 }
 
 // printCredentialVerdictRecord reads one verdict from the control plane's own
 // trail, through the list it is filtered out of by ID: the trail is
 // project-scoped for the reason ADR 0130 §5 gives, and a verdict outlives the
 // discobox it describes.
-func (a *App) printCredentialVerdictRecord(cmd *cobra.Command, client *apiclientgen.Client, projectID, sandboxID, recordID string) error {
-	res, err := client.ListCredentialVerdicts(cmd.Context(), apiclientgen.ListCredentialVerdictsParams{
+func (a *App) printCredentialVerdictRecord(ctx context.Context, out io.Writer, asJSON bool, client *apiclientgen.Client, projectID, sandboxID, recordID string) error {
+	res, err := client.ListCredentialVerdicts(ctx, apiclientgen.ListCredentialVerdictsParams{
 		ProjectId: projectID,
 		SandboxId: apiclientgen.NewOptString(sandboxID),
 		ID:        apiclientgen.NewOptString(recordID),
@@ -158,21 +183,21 @@ func (a *App) printCredentialVerdictRecord(cmd *cobra.Command, client *apiclient
 	if len(verdicts) == 0 {
 		return auditRecordNotFound(recordID, sandboxID)
 	}
-	if a.output == "json" {
-		return writeTerminalSafeJSON(cmd.OutOrStdout(), &verdicts[0])
+	if asJSON {
+		return writeTerminalSafeJSON(out, &verdicts[0])
 	}
-	return writeCredentialVerdictBlocks(cmd.OutOrStdout(), verdicts[:1])
+	return writeCredentialVerdictBlocks(out, verdicts[:1])
 }
 
 // printSandboxTrailRecord reads one record the discobox keeps inside itself.
 // Hooks and exec events are numbered from the same sequence, so an evt_ ID does
 // not say which trail it is in; it is in at most one, and both reads are the
 // same scope, so both are asked.
-func (a *App) printSandboxTrailRecord(cmd *cobra.Command, client *apiclientgen.Client, projectID, sandboxID, recordID string) error {
-	hooks, hookErr := a.readOneHarnessHook(cmd.Context(), client, projectID, sandboxID, recordID)
+func (a *App) printSandboxTrailRecord(ctx context.Context, out io.Writer, asJSON bool, client *apiclientgen.Client, projectID, sandboxID, recordID string) error {
+	hooks, hookErr := a.readOneHarnessHook(ctx, client, projectID, sandboxID, recordID)
 	if hookErr == nil && len(hooks) > 0 {
-		if a.output == "json" {
-			return writeTerminalSafeJSON(cmd.OutOrStdout(), &hooks[0])
+		if asJSON {
+			return writeTerminalSafeJSON(out, &hooks[0])
 		}
 		hook := hooks[0]
 		fields := []auditField{
@@ -189,15 +214,15 @@ func (a *App) printSandboxTrailRecord(cmd *cobra.Command, client *apiclientgen.C
 			fields = append(fields, auditField{"canonical", terminalSafe(canonical)})
 		}
 		fields = append(fields, auditField{"payload", terminalSafeMultiline(indentAuditJSON(hook.Payload))})
-		return writeAuditFields(cmd.OutOrStdout(), fields)
+		return writeAuditFields(out, fields)
 	}
-	events, eventErr := a.readOneExecEvent(cmd.Context(), client, projectID, sandboxID, recordID)
+	events, eventErr := a.readOneExecEvent(ctx, client, projectID, sandboxID, recordID)
 	if eventErr == nil && len(events) > 0 {
-		if a.output == "json" {
-			return writeTerminalSafeJSON(cmd.OutOrStdout(), &events[0])
+		if asJSON {
+			return writeTerminalSafeJSON(out, &events[0])
 		}
 		event := events[0]
-		return writeAuditFields(cmd.OutOrStdout(), []auditField{
+		return writeAuditFields(out, []auditField{
 			{"record", terminalSafe(event.ID)},
 			{"discobox", terminalSafe(sandboxID)},
 			{"recorded", event.CreatedAt.Format(time.RFC3339)},
@@ -247,6 +272,24 @@ func (a *App) readOneExecEvent(ctx context.Context, client *apiclientgen.Client,
 		return nil, err
 	}
 	return body.GetEvents(), nil
+}
+
+// auditSecretNames is the secrets a request carried, each by its ID and the
+// name it has now. A record outlives a secret's name and the secret itself, so
+// one that cannot be read is shown by its ID alone rather than failing the
+// record it is a line of.
+func (a *App) auditSecretNames(ctx context.Context, client *apiclientgen.Client, projectID string, ids []string) string {
+	named := make([]string, 0, len(ids))
+	for _, id := range ids {
+		label := terminalSafe(id)
+		if res, err := client.GetSecret(ctx, apiclientgen.GetSecretParams{ProjectId: projectID, SecretId: id}); err == nil {
+			if secret, err := expectResponse[apimodel.Secret](res); err == nil && secret.Name != "" {
+				label += " (" + terminalSafe(secret.Name) + ")"
+			}
+		}
+		named = append(named, label)
+	}
+	return strings.Join(named, ", ")
 }
 
 func auditRecordNotFound(recordID, sandboxID string) error {

@@ -11,8 +11,9 @@ import (
 
 // DefaultArchiveRetention is how long an archived sandbox is kept when neither
 // the project nor the server has chosen otherwise. It is a policy, not a
-// mechanism: the pool agent's volume reaper has a same-length window for
-// accidentally orphaned trees, and the two are unrelated (ADR 0022 §4).
+// mechanism: the pool agent's volume reaper has a same-length window for trees
+// whose sandbox the control plane no longer holds, and the two are unrelated
+// (ADR 0022 §4, ADR 26-10-01-876).
 const DefaultArchiveRetention = 24 * time.Hour
 
 // serverArchiveRetention is the default every project that has not set its own

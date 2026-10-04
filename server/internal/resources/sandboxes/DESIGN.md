@@ -378,12 +378,27 @@ recoverable and collected by the project's ordinary retention.
 A discobox may create discoboxes through the discobox API, in the sandbox role
 ([ADR 0140](../../../../docs/adr/0140-a-discobox-reaches-the-discobox-api-through-its-pool-with-a-fixed-role.md)).
 What it creates is created as the user who created it (`auth.ActingUserID`),
-and it may give the new discobox uses of project secrets — grants minted in
-the create's own transaction (see the secrets package's
+and it may give the new discobox uses of project secrets it was delegated —
+grants minted in the create's own transaction, each held to a delegation
+grant it holds and its uses to the judge's reading of that delegation's (see
+the secrets package's
 [DESIGN.md](../secrets/DESIGN.md#a-discobox-created-with-uses)). It may not give
 inline secrets, which put a value inside the new discobox where anything in it
-could read it. Nothing about the discobox records which discobox created it,
-and nothing is authorized or cascades by it.
+could read it.
+
+The new discobox records its creator (`CreatedBySandboxID`, immutable after
+create), and the creator is authorized by it for these things and no others:
+delivering the new discobox's source
+([ADR 26-09-24-630](../../../../docs/adr/26-09-24-630-a-discobox-delivers-the-source-of-the-discoboxes-it-creates.md) §2);
+reading and typing into its terminals
+([ADR 26-10-01-397](../../../../docs/adr/26-10-01-397-a-discobox-reads-and-types-into-the-terminals-of-the-discoboxes-it-creates.md));
+starting, stopping, and restarting it
+([ADR 26-10-02-478](../../../../docs/adr/26-10-02-478-a-discobox-starts-and-stops-the-discoboxes-it-creates.md)),
+which are the same power instructions a person sends and need nothing of the
+service beyond the role's ownership check; and reading and answering the
+secret requests it files, within what the creator was delegated
+([ADR 26-09-30-782](../../../../docs/adr/26-09-30-782-a-discobox-answers-its-own-discoboxes-requests-within-what-it-may-delegate.md)
+§§2–3). Nothing cascades by it: no archive, no purge, no inherited grant.
 
 ## Display name
 
@@ -582,7 +597,9 @@ launch.
 `ensure` also rebinds the sandbox's assignments to its harness config's current
 bindings (`rebindSandboxSecretRows`) before building the create options. That
 catches a binding change the live fan-out (`RebindHarnessConfigSecrets`) missed
-while the sandbox was down.
+while the sandbox was down. Both repoint only injected assignments: an agent
+credential's binding may share a variable with one, and it keeps the secret it
+was granted.
 
 ## The Sandbox's Own Address
 

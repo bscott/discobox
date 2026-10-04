@@ -102,6 +102,7 @@ func (m *Model) draftToSave() (folder, prompt string, ok bool) {
 // Every key that closes the window goes through here.
 func (m *Model) closeWindow() tea.Cmd {
 	m.saveDraftNow()
+	m.saveViewNow()
 	m.quit = true
 	return tea.Quit
 }

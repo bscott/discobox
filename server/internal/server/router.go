@@ -9,11 +9,13 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/discobox-ai/discobox/devimage"
+	"github.com/discobox-ai/discobox/judge/jev"
 	"github.com/discobox-ai/discobox/server/internal/auth"
 	poolagentauth "github.com/discobox-ai/discobox/server/internal/auth/poolagent"
 	sandboxauth "github.com/discobox-ai/discobox/server/internal/auth/sandbox"
 	"github.com/discobox-ai/discobox/server/internal/handlers"
 	"github.com/discobox-ai/discobox/server/internal/reconcile"
+	"github.com/discobox-ai/discobox/server/internal/resources/judges"
 	sandbox "github.com/discobox-ai/discobox/server/internal/sandbox"
 	"github.com/discobox-ai/discobox/server/internal/secrets"
 	"github.com/discobox-ai/discobox/server/internal/service"
@@ -99,10 +101,17 @@ type AppOptions struct {
 	// package default is the production answer. See config.Config.
 	ArchiveRetention time.Duration
 
-	// JudgeCredentials turns the judge on. False is the default everywhere,
-	// including here: a server judges credential-bearing requests only when
-	// its configuration says to. See config.Config.
-	JudgeCredentials bool
+	// Judging is what this server judges. Its zero value judges nothing, and
+	// that is the default here: production wiring reads it from the
+	// configuration, whose own defaults judge commands and not requests
+	// (ADR 26-10-02-054). See config.Config.
+	Judging judges.Judging
+	// JudgeJev is the Jev a server judges with instead of a judge discobox
+	// per project, or nil for the judge discobox (ADR 26-10-01-324).
+	JudgeJev *jev.Client
+	// JudgeJevFallback puts what Jev is unsure of to the project's judge
+	// discobox rather than refusing it.
+	JudgeJevFallback bool
 }
 
 // DefaultAppOptions returns the production defaults for the app.
@@ -190,7 +199,9 @@ func NewApp(ctx context.Context, writeDB, readDB *gorm.DB, options ...AppOptions
 		ListenEndpoints:                opts.ListenEndpoints,
 		ArchiveRetention:               opts.ArchiveRetention,
 		ServerPeerID:                   addressPeerID,
-		JudgeCredentials:               opts.JudgeCredentials,
+		Judging:                        opts.Judging,
+		JudgeJev:                       opts.JudgeJev,
+		JudgeJevFallback:               opts.JudgeJevFallback,
 		ServerDefaults:                 opts.ServerDefaults,
 		WSLCCommand:                    opts.WSLCCommand,
 	})

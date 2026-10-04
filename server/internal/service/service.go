@@ -4,10 +4,12 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/discobox-ai/discobox/devimage"
 	"github.com/discobox-ai/discobox/endpoint"
+	"github.com/discobox-ai/discobox/judge/jev"
 	poolagentauth "github.com/discobox-ai/discobox/server/internal/auth/poolagent"
 	sandboxauth "github.com/discobox-ai/discobox/server/internal/auth/sandbox"
 	"github.com/discobox-ai/discobox/server/internal/reconcile"
@@ -87,9 +89,16 @@ type Options struct {
 	// a sandbox is started with. Empty when the server does not listen on iroh,
 	// where that address would reach nothing; sandboxes then get none.
 	ServerPeerID string
-	// JudgeCredentials turns the judge on. It is off unless a server opted in,
-	// and while it is off no project has a judge and nothing is asked one.
-	JudgeCredentials bool
+	// Judging is what this server judges: commands, credential-bearing
+	// requests, both or neither (ADR 26-10-02-054). While it judges nothing,
+	// no project has a judge and nothing is asked one.
+	Judging judges.Judging
+	// JudgeJev, when set, is what judges instead of a judge discobox per
+	// project (ADR 26-10-01-324).
+	JudgeJev *jev.Client
+	// JudgeJevFallback puts what Jev is unsure of to the project's judge
+	// discobox, which every project then keeps, rather than refusing it.
+	JudgeJevFallback bool
 }
 
 func New(store *store.Store, engine *reconcile.Engine, options Options) *Service {
@@ -121,10 +130,14 @@ func New(store *store.Store, engine *reconcile.Engine, options Options) *Service
 	// One service answers both: host trust is the credential broker's act
 	// about a different thing (ADR 0149), and shares its pool-ownership check.
 	secretService := secrets.NewService(store)
+	// A create's grants are prepared by the credential broker, which holds a
+	// discobox giving them to what it was delegated (ADR 26-09-30-782 §1).
+	sandboxService.SetSecrets(secretService)
 	// The project's judge is converged like any other resource (ADR 26-09-22-838 §1):
 	// it exists when the project has a pool for it and a configured default
-	// harness, and is replaced when that harness is.
-	judgeService := judges.New(store, sandboxService, nil, options.JudgeCredentials)
+	// harness, and is replaced when that harness is — unless the server judges
+	// with Jev, when no project has a judge discobox (ADR 26-10-01-324 §2).
+	judgeService := judges.New(store, sandboxService, nil, options.Judging, options.JudgeJev, options.JudgeJevFallback)
 	// Reaching the judge's own agent is the sandbox service's to do; which
 	// discobox is the judge is this one's (ADR 26-09-22-838 §2).
 	judgeService.SetLeases(sandboxService)
@@ -133,6 +146,10 @@ func New(store *store.Store, engine *reconcile.Engine, options Options) *Service
 	// what the asking pool sent (ADR 26-09-22-838 §4). It is the same service that
 	// answers for host trust, built above.
 	judgeService.SetUses(secretService)
+	// And the other way: a discobox handing a credential on is asked of the
+	// project's judge — whether the uses fall within its delegation — while
+	// the credential broker approves (ADR 26-09-30-782 §3).
+	secretService.SetJudge(judgeService)
 	return &Service{
 		ProjectService:                 projects.NewService(store, providerService, poolService, harnessConfigService),
 		HarnessConfigService:           harnessConfigService,
@@ -187,6 +204,12 @@ func (s *Service) Start(ctx context.Context) error {
 	}
 	if err := s.store.BeginPoolHealthChecks(ctx); err != nil {
 		return err
+	}
+	// Before anything mints a sentinel: a stored shape read under an older
+	// provider table is brought up to date, so the first sandbox after an
+	// upgrade already gets the current one.
+	if err := s.store.RefreshSecretFormats(ctx); err != nil {
+		return fmt.Errorf("refresh secret formats: %w", err)
 	}
 	if err := s.engine.Start(ctx); err != nil {
 		return err

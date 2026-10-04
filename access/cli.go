@@ -20,21 +20,22 @@
 //
 // There is no "get" that hands back a bare value: every use this CLI supports
 // goes through "run", so it is always the judge's argv, never a value with no
-// command attached to it. See judge.go and DESIGN.md's "What it must never do"
-// for why. The protocol underneath still has a use call that mints one — a
-// scripted caller that cannot exec through this CLI needs it — but that is a
-// gap in what can be secured today, not a supported way to reach a credential.
+// command attached to it. See DESIGN.md's "What it must never do" for why. The
+// protocol's use call, which "run" makes, carries that command too, and a
+// caller that reaches it without this CLI has the command it declares judged
+// all the same: the judging happens on the service's side of the call.
 //
 // --json means "talk to me in JSON" for whichever direction the command has:
 // structured output everywhere, and a structured body on stdin for "request".
 //
 // # The judge
 //
-// "run" does not execute a command until a model has agreed the command is the
-// use a human approved it for (ADR 0079). The model is reached through
-// discobox-prompt, which the harness image provides, and every failure of that
-// gate — no wrapper, no answer, an unreadable answer, or a refusal — stops the
-// command. See judge.go for what the gate is and is not.
+// "run" does not execute a command until the service has handed it a value,
+// and a service may judge the command first: Discobox's pool asks the
+// project's judge, on trusted ground, and mints nothing unless it allows the
+// command (ADR 26-09-22-838 §3). This CLI judges nothing itself. It sends the
+// argv, what the command will read on stdin, and where it runs, and runs the
+// command only once a value comes back.
 package access
 
 import (
@@ -119,16 +120,24 @@ func usage(w io.Writer) {
       COMMAND's own status. Prefer this: the command it runs is the command it
       declares, and the value never leaves that one child process.
 
-      COMMAND is judged against the use it was approved for before it runs, by
-      a model reached through %[5]s. A command broader than the
-      approved use is refused with code "denied" and never started.
+      COMMAND is judged against the use it was approved for before it runs,
+      outside this sandbox. A command broader than the approved use is
+      refused with code "denied" and the judge's reason, and never started.
+      What COMMAND reads on stdin, from a file or a pipe, is shown to the
+      judge too, up to 8 KiB; COMMAND still reads every byte.
 
   %[1]s request [ID] [--json] [flags]
       Ask a human for a credential. Returns a request id immediately unless
       you wait for an answer.
 
       ID names a well-known credential (com.github.api), which says its own
-      name, variable, and host; give only --use and --why.
+      name, variable, and host; give only --use and --why. --hosts may still
+      name the hosts beneath the ID's you will reach: com.github.api for
+      Copilot CLI is --hosts api.github.com,githubcopilot.com.
+
+      A credential sent to several sites is one request: --hosts takes them
+      comma-separated or repeated, and --json takes "hosts" as a list. Each
+      host covers the hosts beneath it.
 
       With --json, the request is read from stdin, which keeps quotes and
       apostrophes in your justification out of the shell's hands:
@@ -137,7 +146,7 @@ func usage(w io.Writer) {
         {
           "name": "github",
           "envVar": "GITHUB_TOKEN",
-          "host": "api.github.com",
+          "hosts": ["api.github.com"],
           "justification": "the user's task asks me to open a PR",
           "uses": [{"description": "Open a PR against the current repo"}],
           "grantTTLSeconds": 14400,
@@ -156,7 +165,7 @@ func usage(w io.Writer) {
       for the uses you name, and run nothing with it yourself. Leave it out to
       ask to use the credential. Someone who needs both asks twice.
 
-      With flags: --name, --env-var, --host, --why, --use (repeatable),
+      With flags: --name, --env-var, --hosts, --why, --use (repeatable),
       --grant-ttl, --delegate, --wait, --timeout. --grant-ttl takes a Go
       duration -- "30m", "4h", "96h" for four days -- and the same thirty-day
       ceiling.
@@ -206,10 +215,8 @@ nowhere else, which is what lets a model judge the command before it runs.
 The value you receive is opaque and short-lived. Do not log it, write it to a
 file, or reuse it after it expires — ask for it again instead.
 
-Configured by %[2]s (default %[3]s) and %[4]s. The judge runs
-%[5]s, which every harness image provides; %[6]s names a
-different one.
-`, Name, agentcreds.URLEnv, agentcreds.DefaultBaseURL, agentcreds.TokenEnv, DefaultPromptCommand, PromptCommandEnv)
+Configured by %[2]s (default %[3]s) and %[4]s.
+`, Name, agentcreds.URLEnv, agentcreds.DefaultBaseURL, agentcreds.TokenEnv)
 }
 
 // usageError reports a mistake in how the command was invoked, which is
